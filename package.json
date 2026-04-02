@@ -1,0 +1,32 @@
+{
+  "name": "crm",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -n client,server -c blue,green \"vite\" \"node --experimental-sqlite server/index.js\"",
+    "server": "node --experimental-sqlite server/index.js",
+    "client": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@hello-pangea/dnd": "^17.0.0",
+    "concurrently": "^9.2.1",
+    "cors": "^2.8.6",
+    "csv-parse": "^6.2.1",
+    "express": "^5.2.1",
+    "lucide-react": "^0.460.0",
+    "multer": "^2.1.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.26.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.2",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.14",
+    "vite": "^5.4.10"
+  }
+}
