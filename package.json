@@ -8,7 +8,11 @@
     "server": "node --experimental-sqlite server/index.js",
     "client": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "start": "NODE_ENV=production node --experimental-sqlite server/index.js"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^17.0.0",
