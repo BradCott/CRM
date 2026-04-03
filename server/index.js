@@ -37,7 +37,7 @@ app.use('/api/portfolio-import', portfolioImportRouter)
 const distPath = join(__dirname, '..', 'dist')
 if (isProd && existsSync(distPath)) {
   app.use(express.static(distPath))
-  app.get('*', (_req, res) => res.sendFile(join(distPath, 'index.html')))
+  app.get('/{*path}', (_req, res) => res.sendFile(join(distPath, 'index.html')))
 }
 
 app.listen(PORT, () => {
