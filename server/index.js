@@ -40,6 +40,6 @@ if (isProd && existsSync(distPath)) {
   app.get('/{*path}', (_req, res) => res.sendFile(join(distPath, 'index.html')))
 }
 
-app.listen(PORT, () => {
-  console.log(`\n  CRM API  →  http://localhost:${PORT}  [${isProd ? 'production' : 'development'}]\n`)
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`\n  CRM API  →  http://0.0.0.0:${PORT}  [${isProd ? 'production' : 'development'}]\n`)
 })
