@@ -13,6 +13,9 @@ import savedSearchesRouter from './routes/savedSearches.js'
 import portfolioImportRouter from './routes/portfolioImport.js'
 import investorsRouter from './routes/investors.js'
 import dashboardRouter from './routes/dashboard.js'
+import authRouter from './routes/auth.js'
+import emailsRouter from './routes/emails.js'
+import { watchDrive } from './services/driveWatcher.js'
 
 // Initialize DB schema
 import './db.js'
@@ -36,6 +39,8 @@ app.use('/api/saved-searches',   savedSearchesRouter)
 app.use('/api/portfolio-import', portfolioImportRouter)
 app.use('/api/investors',       investorsRouter)
 app.use('/api/dashboard',       dashboardRouter)
+app.use('/api/auth',            authRouter)
+app.use('/api/emails',          emailsRouter)
 
 // In production, serve the built React app and handle SPA routing
 const distPath = join(__dirname, '..', 'dist')
@@ -47,4 +52,8 @@ if (isProd && existsSync(distPath)) {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n  CRM API  →  http://0.0.0.0:${PORT}  [${isProd ? 'production' : 'development'}]\n`)
+
+  // Poll Google Drive for new LOIs every 5 minutes
+  watchDrive().catch(() => {})
+  setInterval(() => watchDrive().catch(() => {}), 5 * 60 * 1000)
 })

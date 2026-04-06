@@ -9,6 +9,7 @@ import ReportsPage from './components/reports/ReportsPage'
 import PortfolioPage from './components/portfolio/PortfolioPage'
 import InvestorsPage from './components/investors/InvestorsPage'
 import DashboardPage from './components/dashboard/DashboardPage'
+import SettingsPage from './components/settings/SettingsPage'
 
 export default function App() {
   return (
@@ -25,6 +26,7 @@ export default function App() {
             <Route path="/investors"  element={<InvestorsPage />} />
             <Route path="/reports"    element={<ReportsPage />} />
             <Route path="/import"     element={<ImportPage />} />
+            <Route path="/settings"  element={<SettingsPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

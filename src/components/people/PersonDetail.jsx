@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { X, Pencil, Phone, Mail, MapPin, FileText, Building2, AlertCircle, User, TrendingUp } from 'lucide-react'
-import { getPerson } from '../../api/client'
+import { X, Pencil, Phone, Mail, MapPin, FileText, Building2, AlertCircle, User, TrendingUp, Send, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
+import { getPerson, getEmails, createEmail, deleteEmail } from '../../api/client'
 import Button from '../ui/Button'
 import Avatar from '../ui/Avatar'
 
@@ -24,13 +24,41 @@ function fmt$(v) {
 }
 
 export default function PersonDetail({ personId, onClose, onEdit }) {
-  const [data, setData] = useState(null)
+  const [data, setData]         = useState(null)
+  const [emails, setEmails]     = useState([])
+  const [logOpen, setLogOpen]   = useState(false)
+  const [logForm, setLogForm]   = useState({ subject: '', body_preview: '', direction: 'outbound', date: new Date().toISOString().slice(0, 10) })
+  const [saving, setSaving]     = useState(false)
 
   useEffect(() => {
     if (!personId) return
     setData(null)
+    setEmails([])
+    setLogOpen(false)
     getPerson(personId).then(setData).catch(console.error)
+    getEmails(personId).then(setEmails).catch(() => {})
   }, [personId])
+
+  async function handleLogEmail(e) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      await createEmail({ ...logForm, person_id: personId, date: new Date(logForm.date).toISOString() })
+      const updated = await getEmails(personId)
+      setEmails(updated)
+      setLogOpen(false)
+      setLogForm({ subject: '', body_preview: '', direction: 'outbound', date: new Date().toISOString().slice(0, 10) })
+    } catch (_) {}
+    setSaving(false)
+  }
+
+  async function handleDeleteEmail(id) {
+    if (!confirm('Delete this email log?')) return
+    try {
+      await deleteEmail(id)
+      setEmails(prev => prev.filter(e => e.id !== id))
+    } catch (_) {}
+  }
 
   if (!data) return (
     <div className="fixed inset-y-0 right-0 w-[460px] bg-white border-l border-slate-200 shadow-2xl z-40 flex items-center justify-center">
@@ -201,10 +229,115 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
           </Section>
         )}
 
+        {/* Email History */}
+        <Section icon={Mail} title={`Email History${emails.length > 0 ? ` (${emails.length})` : ''}`}>
+          <div className="space-y-2">
+            {emails.length === 0 && (
+              <p className="text-sm text-slate-400 italic">No email history</p>
+            )}
+            {emails.map(em => (
+              <div key={em.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 group">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
+                        em.direction === 'inbound'  ? 'bg-blue-50 text-blue-600' :
+                        em.direction === 'outbound' ? 'bg-emerald-50 text-emerald-600' :
+                        'bg-slate-100 text-slate-500'
+                      }`}>
+                        {em.direction === 'inbound' ? 'Received' : em.direction === 'outbound' ? 'Sent' : 'Manual'}
+                      </span>
+                      <span className="text-xs text-slate-400">{fmtEmailDate(em.date)}</span>
+                    </div>
+                    <p className="text-sm font-medium text-slate-800 mt-1 truncate">{em.subject || '(no subject)'}</p>
+                    {em.body_preview && (
+                      <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{em.body_preview}</p>
+                    )}
+                  </div>
+                  {em.is_manual ? (
+                    <button
+                      onClick={() => handleDeleteEmail(em.id)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity w-6 h-6 flex items-center justify-center text-slate-300 hover:text-red-500 shrink-0"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ))}
+
+            {/* Log email button / form */}
+            <button
+              onClick={() => setLogOpen(v => !v)}
+              className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 mt-1"
+            >
+              {logOpen ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              Log an email
+            </button>
+
+            {logOpen && (
+              <form onSubmit={handleLogEmail} className="space-y-2 pt-1">
+                <div className="grid grid-cols-2 gap-2">
+                  <select
+                    value={logForm.direction}
+                    onChange={e => setLogForm(f => ({ ...f, direction: e.target.value }))}
+                    className="col-span-1 text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white"
+                  >
+                    <option value="outbound">Sent</option>
+                    <option value="inbound">Received</option>
+                  </select>
+                  <input
+                    type="date"
+                    value={logForm.date}
+                    onChange={e => setLogForm(f => ({ ...f, date: e.target.value }))}
+                    className="col-span-1 text-xs border border-slate-200 rounded-lg px-2 py-1.5"
+                  />
+                </div>
+                <input
+                  type="text"
+                  placeholder="Subject"
+                  value={logForm.subject}
+                  onChange={e => setLogForm(f => ({ ...f, subject: e.target.value }))}
+                  className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5"
+                />
+                <textarea
+                  placeholder="Notes / summary (optional)"
+                  value={logForm.body_preview}
+                  onChange={e => setLogForm(f => ({ ...f, body_preview: e.target.value }))}
+                  rows={2}
+                  className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 resize-none"
+                />
+                <div className="flex gap-2">
+                  <button
+                    type="submit"
+                    disabled={saving}
+                    className="flex items-center gap-1.5 text-xs bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    <Send className="w-3 h-3" /> {saving ? 'Saving...' : 'Save'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLogOpen(false)}
+                    className="text-xs text-slate-500 hover:text-slate-700 px-2"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+        </Section>
+
         <div className="h-8" />
       </div>
     </div>
   )
+}
+
+function fmtEmailDate(iso) {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 /* ── Sub-components ─────────────────────────────────────────── */

@@ -144,6 +144,38 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_investors_name  ON investors(name);
   CREATE INDEX IF NOT EXISTS idx_investors_type  ON investors(type);
   CREATE INDEX IF NOT EXISTS idx_investors_state ON investors(state);
+
+  CREATE TABLE IF NOT EXISTS oauth_tokens (
+    provider         TEXT PRIMARY KEY,
+    access_token     TEXT,
+    refresh_token    TEXT,
+    expiry_date      INTEGER,
+    email            TEXT,
+    last_gmail_sync  TEXT,
+    drive_folder_id  TEXT,
+    last_drive_check TEXT,
+    lois_processed   TEXT DEFAULT '[]',
+    created_at       TEXT DEFAULT (datetime('now')),
+    updated_at       TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS emails (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id        INTEGER REFERENCES people(id) ON DELETE CASCADE,
+    gmail_message_id TEXT UNIQUE,
+    thread_id        TEXT,
+    direction        TEXT CHECK(direction IN ('inbound','outbound','manual')),
+    subject          TEXT,
+    body_preview     TEXT,
+    from_address     TEXT,
+    to_address       TEXT,
+    date             TEXT,
+    is_manual        INTEGER DEFAULT 0,
+    created_at       TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_emails_person ON emails(person_id);
+  CREATE INDEX IF NOT EXISTS idx_emails_date   ON emails(date);
 `)
 
 // ── Migrations ────────────────────────────────────────────────────────────────
@@ -179,6 +211,8 @@ const migrations = [
   `ALTER TABLE properties ADD COLUMN dd_end_date       TEXT`,
   `ALTER TABLE properties ADD COLUMN close_date        TEXT`,
   `ALTER TABLE people ADD COLUMN owner_type TEXT DEFAULT 'Individual'`,
+  `ALTER TABLE deals ADD COLUMN title  TEXT`,
+  `ALTER TABLE deals ADD COLUMN source TEXT DEFAULT 'manual'`,
 ]
 for (const sql of migrations) {
   try { db.exec(sql) } catch (_) { /* column already exists — ignore */ }

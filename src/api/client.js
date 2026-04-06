@@ -80,6 +80,15 @@ export const getImportStats = () => req('GET', '/import/stats')
 // Dashboard
 export const getDashboard = () => req('GET', '/dashboard')
 
+// Google OAuth / Drive
+export const getGoogleStatus  = ()     => req('GET',    '/auth/google/status')
+export const disconnectGoogle = ()     => req('DELETE', '/auth/google')
+
+// Emails
+export const getEmails    = (personId) => req('GET',    `/emails?person_id=${personId}`)
+export const createEmail  = (data)     => req('POST',   '/emails', data)
+export const deleteEmail  = (id)       => req('DELETE', `/emails/${id}`)
+
 // Investors
 export const getInvestors    = (params = {}) => {
   const qs = new URLSearchParams(params).toString()

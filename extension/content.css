@@ -1,0 +1,42 @@
+/* Knox CRM — Gmail button styles */
+
+.knox-log-btn {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 12px;
+  margin-right: 6px;
+  font-family: 'Google Sans', Roboto, Arial, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  color: #1967d2;
+  background: #e8f0fe;
+  border: 1px solid #d2e3fc;
+  border-radius: 14px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s, color 0.15s;
+  vertical-align: middle;
+}
+
+.knox-log-btn:hover {
+  background: #d2e3fc;
+  color: #185abc;
+}
+
+.knox-log-btn:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.knox-log-btn.knox-logged {
+  color: #137333;
+  background: #e6f4ea;
+  border-color: #ceead6;
+}
+
+.knox-log-btn.knox-error {
+  color: #c5221f;
+  background: #fce8e6;
+  border-color: #f5c6c5;
+}

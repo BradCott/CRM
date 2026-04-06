@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Users, KanbanSquare, Building2, Upload, BarChart3, FileSearch, Landmark, TrendingUp, LayoutDashboard } from 'lucide-react'
+import { Users, KanbanSquare, Building2, Upload, BarChart3, FileSearch, Landmark, TrendingUp, LayoutDashboard, Settings } from 'lucide-react'
 
 const NAV = [
   { to: '/dashboard',  label: 'Dashboard',         icon: LayoutDashboard },
@@ -83,8 +83,23 @@ export default function Sidebar() {
         </div>
       </nav>
 
-      <div className="px-5 py-4 border-t border-slate-200">
-        <p className="text-xs text-slate-400">v0.3.0 · SQLite</p>
+      <div className="px-3 py-3 border-t border-slate-200">
+        <NavLink
+          to="/settings"
+          className={({ isActive }) =>
+            `flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+              isActive ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-100 hover:text-slate-900'
+            }`
+          }
+        >
+          {({ isActive }) => (
+            <>
+              <Settings className={`w-4 h-4 ${isActive ? 'text-blue-600' : 'text-slate-400'}`} />
+              Settings
+            </>
+          )}
+        </NavLink>
+        <p className="px-3 pt-2 text-xs text-slate-400">v0.3.0 · SQLite</p>
       </div>
     </aside>
   )

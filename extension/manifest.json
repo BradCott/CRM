@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Knox CRM",
+  "version": "1.0.0",
+  "description": "Log Gmail emails to Knox CRM with one click",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "https://mail.google.com/*",
+    "http://localhost:3001/*",
+    "https://*/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://mail.google.com/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Knox CRM Settings"
+  }
+}

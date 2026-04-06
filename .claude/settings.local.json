@@ -42,7 +42,10 @@
       "Bash(node -e \"const {spawn}=require\\(''child_process''\\); const p=spawn\\(process.execPath,[''--experimental-sqlite'',''server/index.js''],{cwd:''C:/Users/brad/crm'',detached:true,stdio:''ignore''}\\); p.unref\\(\\); console.log\\(''Express started, pid:'',p.pid\\);\")",
       "Bash(curl -s http://localhost:3001/api/import/stats)",
       "Bash(node -e \"setTimeout\\(\\(\\) => require\\(''child_process''\\).execSync\\(''curl -s http://localhost:3001/api/import/stats'', {stdio:''inherit''}\\), 3000\\)\")",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "mcp__mcp-registry__search_mcp_registry",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\(json.dumps\\(d.get\\(''''mcpServers'''',{}\\), indent=2\\)\\)\")",
+      "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); mcps=d.get\\(''''mcpServers'''',{}\\); print\\(json.dumps\\(list\\(mcps.keys\\(\\)\\), indent=2\\)\\)\")"
     ]
   }
 }
