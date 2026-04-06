@@ -182,14 +182,35 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
         {/* Financials */}
         <Section icon={TrendingUp} title="Financials">
           <Grid2>
-            <Field label="Cap Rate"       value={fmtPct(data.cap_rate)} accent="emerald" />
-            <Field label="NOI"            value={fmt$(data.noi)} />
-            <Field label="List Price"     value={fmt$(data.list_price)} />
-            <Field label="Purchase Price"   value={fmt$(data.purchase_price)} />
+            <Field label="Cap Rate"        value={fmtPct(data.cap_rate)} accent="emerald" />
+            <Field label="NOI"             value={fmt$(data.noi)} />
+            <Field label="List Price"      value={fmt$(data.list_price)} />
+            <Field label="Purchase Price"  value={fmt$(data.purchase_price)} />
             <Field label="Estimated Value" value={fmt$(data.estimated_value)} />
             <Field label="Expense"         value={fmt$(data.expense)} />
             <Field label="Taxes"           value={fmt$(data.taxes)} />
             <Field label="Insurance"       value={fmt$(data.insurance)} />
+            <Field label="Listing Status" value={
+              data.listing_status === 'listed'           ? <span className="text-blue-700 font-semibold">Listed</span>
+              : data.listing_status === 'under_contract' ? <span className="text-amber-700 font-semibold">Under Contract</span>
+              : data.listing_status === 'sold'           ? <span className="text-slate-500 font-semibold">Sold</span>
+              : null
+            } />
+            <Field label="Fee" value={(() => {
+              const effective = data.fee_amount != null
+                ? data.fee_amount
+                : data.purchase_price ? data.purchase_price * 1.1 * 0.015 : null
+              if (!effective) return null
+              return (
+                <span className="text-emerald-700 font-semibold">
+                  {fmt$(effective)}
+                  {data.fee_amount != null
+                    ? <span className="ml-1.5 text-xs font-normal text-amber-600">override</span>
+                    : <span className="ml-1.5 text-xs font-normal text-slate-400">auto</span>
+                  }
+                </span>
+              )
+            })()} />
           </Grid2>
         </Section>
 

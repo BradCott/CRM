@@ -41,7 +41,8 @@
       "Bash(node -e \"const r=require\\(''child_process''\\).execSync\\(''ngrok config add-authtoken 3BocTw4VWI7iZ62HVsv8P9xYJR0_6ixFqj9xzpzJDBtFYyw9C'',{encoding:''utf8'',timeout:15000}\\); console.log\\(r.trim\\(\\)\\);\")",
       "Bash(node -e \"const {spawn}=require\\(''child_process''\\); const p=spawn\\(process.execPath,[''--experimental-sqlite'',''server/index.js''],{cwd:''C:/Users/brad/crm'',detached:true,stdio:''ignore''}\\); p.unref\\(\\); console.log\\(''Express started, pid:'',p.pid\\);\")",
       "Bash(curl -s http://localhost:3001/api/import/stats)",
-      "Bash(node -e \"setTimeout\\(\\(\\) => require\\(''child_process''\\).execSync\\(''curl -s http://localhost:3001/api/import/stats'', {stdio:''inherit''}\\), 3000\\)\")"
+      "Bash(node -e \"setTimeout\\(\\(\\) => require\\(''child_process''\\).execSync\\(''curl -s http://localhost:3001/api/import/stats'', {stdio:''inherit''}\\), 3000\\)\")",
+      "Bash(npm install:*)"
     ]
   }
 }

@@ -10,13 +10,14 @@ const BASE_SELECT = `
   LEFT JOIN people c ON c.id = p.company_id
 `
 
-// GET /api/people?search=&role=&sub_label=&do_not_contact=&limit=50&offset=0
+// GET /api/people?search=&role=&sub_label=&do_not_contact=&owner_type=&limit=50&offset=0
 router.get('/', (req, res) => {
   const {
     search = '',
     role = '',
     sub_label = '',
     do_not_contact = '',
+    owner_type = '',
     limit = 50,
     offset = 0,
   } = req.query
@@ -32,6 +33,12 @@ router.get('/', (req, res) => {
   if (role) { conditions.push(`p.role = ?`); params.push(role) }
   if (sub_label) { conditions.push(`p.sub_label = ?`); params.push(sub_label) }
   if (do_not_contact !== '') { conditions.push(`p.do_not_contact = ?`); params.push(parseInt(do_not_contact)) }
+  if (owner_type === 'Individual') {
+    conditions.push(`(p.owner_type = 'Individual' OR p.owner_type IS NULL)`)
+  } else if (owner_type) {
+    conditions.push(`p.owner_type = ?`)
+    params.push(owner_type)
+  }
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
 
@@ -77,8 +84,8 @@ router.post('/', (req, res) => {
     INSERT INTO people
       (name,first_name,last_name,role,sub_label,company_id,phone,phone2,mobile,
        email,email2,address,city,state,zip,address2,city2,state2,zip2,
-       do_not_contact,notes,sf_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       do_not_contact,notes,sf_id,owner_type)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     f.name, f.first_name||null, f.last_name||null,
     f.role||'owner', f.sub_label||null, f.company_id||null,
@@ -86,7 +93,8 @@ router.post('/', (req, res) => {
     f.email||null, f.email2||null,
     f.address||null, f.city||null, f.state||null, f.zip||null,
     f.address2||null, f.city2||null, f.state2||null, f.zip2||null,
-    f.do_not_contact ? 1 : 0, f.notes||null, f.sf_id||null
+    f.do_not_contact ? 1 : 0, f.notes||null, f.sf_id||null,
+    f.owner_type||'Individual'
   )
   res.status(201).json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(r.lastInsertRowid))
 })
@@ -100,7 +108,7 @@ router.put('/:id', (req, res) => {
       phone=?,phone2=?,mobile=?,email=?,email2=?,
       address=?,city=?,state=?,zip=?,
       address2=?,city2=?,state2=?,zip2=?,
-      do_not_contact=?,notes=?,sf_id=?
+      do_not_contact=?,notes=?,sf_id=?,owner_type=?
     WHERE id=?
   `).run(
     f.name, f.first_name||null, f.last_name||null,
@@ -110,6 +118,7 @@ router.put('/:id', (req, res) => {
     f.address||null, f.city||null, f.state||null, f.zip||null,
     f.address2||null, f.city2||null, f.state2||null, f.zip2||null,
     f.do_not_contact ? 1 : 0, f.notes||null, f.sf_id||null,
+    f.owner_type||'Individual',
     req.params.id
   )
   res.json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id))

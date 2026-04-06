@@ -11,6 +11,8 @@ import importRouter from './routes/import.js'
 import reportsRouter from './routes/reports.js'
 import savedSearchesRouter from './routes/savedSearches.js'
 import portfolioImportRouter from './routes/portfolioImport.js'
+import investorsRouter from './routes/investors.js'
+import dashboardRouter from './routes/dashboard.js'
 
 // Initialize DB schema
 import './db.js'
@@ -32,6 +34,8 @@ app.use('/api/import',           importRouter)
 app.use('/api/reports',          reportsRouter)
 app.use('/api/saved-searches',   savedSearchesRouter)
 app.use('/api/portfolio-import', portfolioImportRouter)
+app.use('/api/investors',       investorsRouter)
+app.use('/api/dashboard',       dashboardRouter)
 
 // In production, serve the built React app and handle SPA routing
 const distPath = join(__dirname, '..', 'dist')

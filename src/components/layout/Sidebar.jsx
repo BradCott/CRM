@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { NavLink } from 'react-router-dom'
-import { Users, KanbanSquare, Building2, Upload, BarChart3, FileSearch, Landmark } from 'lucide-react'
+import { Users, KanbanSquare, Building2, Upload, BarChart3, FileSearch, Landmark, TrendingUp, LayoutDashboard } from 'lucide-react'
 
 const NAV = [
+  { to: '/dashboard',  label: 'Dashboard',         icon: LayoutDashboard },
   { to: '/people',     label: 'People',            icon: Users },
   { to: '/properties', label: 'Market Properties', icon: Building2 },
   { to: '/portfolio',  label: 'Knox Portfolio',     icon: Landmark },
+  { to: '/investors',  label: 'Investors',          icon: TrendingUp },
   { to: '/pipeline',   label: 'Pipeline',          icon: KanbanSquare },
   { to: '/reports',    label: 'Reports',           icon: FileSearch },
 ]

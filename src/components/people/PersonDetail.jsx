@@ -58,6 +58,13 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
                   <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${ROLE_COLORS[data.role]}`}>
                     {ROLE_LABELS[data.role]}
                   </span>
+                  {data.owner_type && data.owner_type !== 'Individual' && (
+                    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${
+                      data.owner_type === 'LLC'         ? 'bg-purple-50 text-purple-700' :
+                      data.owner_type === 'Institution' ? 'bg-teal-50 text-teal-700' :
+                      'bg-slate-100 text-slate-600'
+                    }`}>{data.owner_type}</span>
+                  )}
                   {data.sub_label && (
                     <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 capitalize">
                       {data.sub_label}
@@ -88,6 +95,18 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
 
       {/* ── Body ────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
+
+        {/* Owner type */}
+        <Section icon={User} title="Classification">
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-slate-400 w-20 shrink-0">Owner type</span>
+            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+              data.owner_type === 'LLC'         ? 'bg-purple-50 text-purple-700' :
+              data.owner_type === 'Institution' ? 'bg-teal-50 text-teal-700' :
+              'bg-slate-100 text-slate-600'
+            }`}>{data.owner_type || 'Individual'}</span>
+          </div>
+        </Section>
 
         {/* Contact info */}
         <Section icon={Phone} title="Contact Info">

@@ -54,6 +54,31 @@ router.get('/', (req, res) => {
   res.json({ total, rows })
 })
 
+// Fee summary — total fees for listed/under_contract portfolio properties
+router.get('/fee-summary', (req, res) => {
+  const row = db.prepare(`
+    SELECT
+      COUNT(*) AS count_total,
+      COUNT(CASE WHEN listing_status IN ('listed','under_contract') THEN 1 END) AS count_active,
+      SUM(COALESCE(
+        fee_amount,
+        CASE WHEN purchase_price > 0 THEN purchase_price * 1.1 * 0.015 ELSE 0 END
+      )) AS total_fees,
+      SUM(CASE WHEN listing_status IN ('listed','under_contract')
+               THEN COALESCE(fee_amount, CASE WHEN purchase_price > 0 THEN purchase_price * 1.1 * 0.015 ELSE 0 END)
+               ELSE 0 END) AS active_fees
+    FROM properties
+    WHERE is_portfolio = 1
+      AND (purchase_price > 0 OR fee_amount IS NOT NULL)
+  `).get()
+  res.json({
+    total_fees:   row.total_fees   || 0,
+    active_fees:  row.active_fees  || 0,
+    count_active: row.count_active || 0,
+    count_total:  row.count_total  || 0,
+  })
+})
+
 // Lightweight list for deal dropdowns
 router.get('/all', (req, res) => {
   res.json(db.prepare(`
@@ -112,8 +137,9 @@ router.post('/', (req, res) => {
       (address,city,state,zip,tenant_brand_id,owner_id,building_size,land_area,
        year_built,property_type,construction_type,lease_type,lease_start,lease_end,
        annual_rent,rent_bumps,renewal_options,noi,cap_rate,list_price,taxes,insurance,
-       roof_year,hvac_year,parking_lot,notes,sf_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       roof_year,hvac_year,parking_lot,notes,sf_id,fee_pct,listing_status,fee_amount,
+       purchase_price,dd_end_date,close_date)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     f.address, f.city||null, f.state||null, f.zip||null,
     f.tenant_brand_id||null, f.owner_id||null,
@@ -124,7 +150,11 @@ router.post('/', (req, res) => {
     f.noi||null, f.cap_rate||null, f.list_price||null,
     f.taxes||null, f.insurance||null,
     f.roof_year||null, f.hvac_year||null, f.parking_lot||null,
-    f.notes||null, f.sf_id||null
+    f.notes||null, f.sf_id||null,
+    f.fee_pct != null ? f.fee_pct : 2.0,
+    f.listing_status||null,
+    f.fee_amount != null ? f.fee_amount : null,
+    f.purchase_price||null, f.dd_end_date||null, f.close_date||null,
   )
   res.status(201).json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(r.lastInsertRowid))
 })
@@ -137,7 +167,8 @@ router.put('/:id', (req, res) => {
       building_size=?,land_area=?,year_built=?,property_type=?,construction_type=?,
       lease_type=?,lease_start=?,lease_end=?,annual_rent=?,rent_bumps=?,renewal_options=?,
       noi=?,cap_rate=?,list_price=?,taxes=?,insurance=?,
-      roof_year=?,hvac_year=?,parking_lot=?,notes=?,sf_id=?
+      roof_year=?,hvac_year=?,parking_lot=?,notes=?,sf_id=?,fee_pct=?,listing_status=?,fee_amount=?,
+      purchase_price=?,dd_end_date=?,close_date=?
     WHERE id=?
   `).run(
     f.address, f.city||null, f.state||null, f.zip||null,
@@ -150,6 +181,10 @@ router.put('/:id', (req, res) => {
     f.taxes||null, f.insurance||null,
     f.roof_year||null, f.hvac_year||null, f.parking_lot||null,
     f.notes||null, f.sf_id||null,
+    f.fee_pct != null ? f.fee_pct : 2.0,
+    f.listing_status||null,
+    f.fee_amount != null ? f.fee_amount : null,
+    f.purchase_price||null, f.dd_end_date||null, f.close_date||null,
     req.params.id
   )
   res.json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id))

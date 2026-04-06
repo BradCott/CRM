@@ -36,7 +36,8 @@ export const getProperties   = (params = {}) => {
   const qs = new URLSearchParams(params).toString()
   return req('GET', `/properties${qs ? '?' + qs : ''}`)
 }
-export const getAllProperties = ()       => req('GET',    '/properties/all')
+export const getAllProperties     = ()       => req('GET',    '/properties/all')
+export const getPropertyFeeSummary = ()   => req('GET',    '/properties/fee-summary')
 export const getPropertyStates = ()     => req('GET',    '/properties/states')
 export const getProperty     = (id)     => req('GET',    `/properties/${id}`)
 export const createProperty  = (data)   => req('POST',   '/properties', data)
@@ -75,3 +76,16 @@ export async function importCsv(endpoint, file) {
 }
 
 export const getImportStats = () => req('GET', '/import/stats')
+
+// Dashboard
+export const getDashboard = () => req('GET', '/dashboard')
+
+// Investors
+export const getInvestors    = (params = {}) => {
+  const qs = new URLSearchParams(params).toString()
+  return req('GET', `/investors${qs ? '?' + qs : ''}`)
+}
+export const getInvestor     = (id)     => req('GET',    `/investors/${id}`)
+export const createInvestor  = (data)   => req('POST',   '/investors', data)
+export const updateInvestor  = (id, d)  => req('PUT',    `/investors/${id}`, d)
+export const deleteInvestor  = (id)     => req('DELETE', `/investors/${id}`)

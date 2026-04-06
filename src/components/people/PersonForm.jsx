@@ -5,7 +5,7 @@ import { useApp } from '../../context/AppContext'
 
 const EMPTY = {
   name: '', first_name: '', last_name: '',
-  role: 'owner', sub_label: '',
+  role: 'owner', sub_label: '', owner_type: 'Individual',
   company_id: '',
   phone: '', phone2: '', mobile: '',
   email: '', email2: '',
@@ -27,6 +27,7 @@ export default function PersonForm({ person, onSave, onClose }) {
     ...EMPTY, ...person,
     company_id: person.company_id || '',
     sub_label: person.sub_label || '',
+    owner_type: person.owner_type || 'Individual',
     do_not_contact: !!person.do_not_contact,
   } : { ...EMPTY })
   const [saving, setSaving] = useState(false)
@@ -75,6 +76,13 @@ export default function PersonForm({ person, onSave, onClose }) {
           <option value="seller">Seller</option>
         </Select>
       </div>
+
+      {/* Owner type */}
+      <Select label="Owner type" value={form.owner_type} onChange={set('owner_type')}>
+        <option value="Individual">Individual</option>
+        <option value="LLC">LLC</option>
+        <option value="Institution">Institution</option>
+      </Select>
 
       {/* Name fields */}
       {isPerson ? (

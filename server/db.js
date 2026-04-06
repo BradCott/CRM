@@ -120,6 +120,30 @@ db.exec(`
     close_date     TEXT,
     notes          TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS investors (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    name                    TEXT NOT NULL,
+    type                    TEXT DEFAULT 'individual'
+                            CHECK(type IN ('individual','company')),
+    email                   TEXT,
+    phone                   TEXT,
+    address                 TEXT,
+    city                    TEXT,
+    state                   TEXT,
+    zip                     TEXT,
+    total_investments       REAL,
+    preferred_tenant_brands TEXT,
+    preferred_states        TEXT,
+    min_deal_size           REAL,
+    max_deal_size           REAL,
+    notes                   TEXT,
+    created_at              TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_investors_name  ON investors(name);
+  CREATE INDEX IF NOT EXISTS idx_investors_type  ON investors(type);
+  CREATE INDEX IF NOT EXISTS idx_investors_state ON investors(state);
 `)
 
 // ── Migrations ────────────────────────────────────────────────────────────────
@@ -149,10 +173,27 @@ const migrations = [
   `ALTER TABLE properties ADD COLUMN policy_number     TEXT`,
   `ALTER TABLE properties ADD COLUMN account_number    TEXT`,
   `ALTER TABLE properties ADD COLUMN insurance_exp     TEXT`,
+  `ALTER TABLE properties ADD COLUMN fee_pct           REAL DEFAULT 2.0`,
+  `ALTER TABLE properties ADD COLUMN listing_status    TEXT`,
+  `ALTER TABLE properties ADD COLUMN fee_amount        REAL`,
+  `ALTER TABLE properties ADD COLUMN dd_end_date       TEXT`,
+  `ALTER TABLE properties ADD COLUMN close_date        TEXT`,
+  `ALTER TABLE people ADD COLUMN owner_type TEXT DEFAULT 'Individual'`,
 ]
 for (const sql of migrations) {
   try { db.exec(sql) } catch (_) { /* column already exists — ignore */ }
 }
+
+// Auto-tag existing owners whose name suggests LLC/entity type
+db.exec(`
+  UPDATE people SET owner_type = 'LLC'
+  WHERE (owner_type IS NULL OR owner_type = 'Individual')
+    AND (
+      name LIKE '%LLC%'   OR name LIKE '%LP%'    OR name LIKE '%L.P.%'  OR
+      name LIKE '%Trust%' OR name LIKE '%Holdings%' OR
+      name LIKE '%Partners%' OR name LIKE '%Group%'
+    )
+`)
 
 // Ensure indexes on new columns exist (IF NOT EXISTS handles re-runs)
 db.exec(`
