@@ -1,13 +1,20 @@
 import { DatabaseSync } from 'node:sqlite'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { mkdirSync } from 'node:fs'
+import { mkdirSync, existsSync, statSync } from 'node:fs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = join(__dirname, '..', 'data')
 mkdirSync(DATA_DIR, { recursive: true })
 
-const db = new DatabaseSync(join(DATA_DIR, 'crm.db'))
+const DB_PATH = join(DATA_DIR, 'crm.db')
+const dbExists = existsSync(DB_PATH)
+console.log(`[db] __dirname   : ${__dirname}`)
+console.log(`[db] DATA_DIR    : ${DATA_DIR}`)
+console.log(`[db] DB_PATH     : ${DB_PATH}`)
+console.log(`[db] file exists : ${dbExists}${dbExists ? ` (${statSync(DB_PATH).size} bytes)` : ''}`)
+
+const db = new DatabaseSync(DB_PATH)
 
 db.exec(`PRAGMA journal_mode = WAL`)
 db.exec(`PRAGMA foreign_keys = ON`)
