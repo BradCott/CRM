@@ -205,7 +205,7 @@ export default function PropertiesPage() {
   const load = useCallback(async (s, tenant, state, pg) => {
     setFetching(true)
     try {
-      const params = { limit: PAGE_SIZE, offset: pg * PAGE_SIZE }
+      const params = { portfolio: '0', limit: PAGE_SIZE, offset: pg * PAGE_SIZE }
       if (s)      params.search = s
       if (tenant) params.tenant = tenant
       if (state)  params.state  = state
@@ -221,7 +221,8 @@ export default function PropertiesPage() {
     searchTimer.current = setTimeout(() => { setPage(0); load(val, tenantFilter, stateFilter, 0) }, 300)
   }
   const handleSave = async (data) => {
-    if (editTarget) await editProperty(editTarget.id, data); else await addProperty(data)
+    const marketData = { ...data, is_portfolio: 0 }
+    if (editTarget) await editProperty(editTarget.id, marketData); else await addProperty(marketData)
     load(search, tenantFilter, stateFilter, page)
   }
   const handleDelete = async () => {

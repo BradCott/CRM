@@ -144,7 +144,8 @@ export default function PortfolioPage() {
     searchTimer.current = setTimeout(() => { setPage(0); load(val, tenantFilter, stateFilter, 0) }, 300)
   }
   const handleSave = async (data) => {
-    if (editTarget) await editProperty(editTarget.id, data); else await addProperty(data)
+    const portfolioData = { ...data, is_portfolio: 1 }
+    if (editTarget) await editProperty(editTarget.id, portfolioData); else await addProperty(portfolioData)
     load(search, tenantFilter, stateFilter, page)
   }
   const handleDelete = async () => {

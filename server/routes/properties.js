@@ -140,8 +140,8 @@ router.post('/', (req, res) => {
          year_built,property_type,construction_type,lease_type,lease_start,lease_end,
          annual_rent,rent_bumps,renewal_options,noi,cap_rate,list_price,taxes,insurance,
          roof_year,hvac_year,parking_lot,notes,sf_id,fee_pct,listing_status,fee_amount,
-         purchase_price,dd_end_date,close_date)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         purchase_price,dd_end_date,close_date,is_portfolio)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       f.address, f.city||null, f.state||null, f.zip||null,
       f.tenant_brand_id||null, f.owner_id||null,
@@ -156,7 +156,8 @@ router.post('/', (req, res) => {
       f.fee_pct != null ? f.fee_pct : 2.0,
       f.listing_status||null,
       f.fee_amount != null ? f.fee_amount : null,
-      f.purchase_price||null, f.dd_end_date||null, f.close_date||null
+      f.purchase_price||null, f.dd_end_date||null, f.close_date||null,
+      f.is_portfolio ? 1 : 0
     )
     console.log('[POST /api/properties] inserted rowid:', r.lastInsertRowid)
     const row = db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(r.lastInsertRowid)
@@ -183,7 +184,7 @@ router.put('/:id', (req, res) => {
         lease_type=?,lease_start=?,lease_end=?,annual_rent=?,rent_bumps=?,renewal_options=?,
         noi=?,cap_rate=?,list_price=?,taxes=?,insurance=?,
         roof_year=?,hvac_year=?,parking_lot=?,notes=?,sf_id=?,fee_pct=?,listing_status=?,fee_amount=?,
-        purchase_price=?,dd_end_date=?,close_date=?
+        purchase_price=?,dd_end_date=?,close_date=?,is_portfolio=?
       WHERE id=?
     `).run(
       f.address, f.city||null, f.state||null, f.zip||null,
@@ -200,6 +201,7 @@ router.put('/:id', (req, res) => {
       f.listing_status||null,
       f.fee_amount != null ? f.fee_amount : null,
       f.purchase_price||null, f.dd_end_date||null, f.close_date||null,
+      f.is_portfolio ? 1 : 0,
       req.params.id
     )
     console.log('[PUT /api/properties/:id] updated id:', req.params.id)
