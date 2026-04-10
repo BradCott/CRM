@@ -35,36 +35,43 @@ app.use(cors({ origin: true, credentials: true }))
 app.use(express.json())
 app.use(cookieParser())
 
-// ── Public routes (no auth required) ─────────────────────────────────────────
-app.use('/api/auth', authRouter)
-
-// ── All routes below require a valid session ──────────────────────────────────
-app.use(requireAuth)
-
-// ── Admin-only routes ─────────────────────────────────────────────────────────
-app.use('/api/admin/users',   requireRole('admin'), usersRouter)
-
-// ── Role-restricted routes (admin + full_agent only) ─────────────────────────
-app.use('/api/accounting',    requireRole('admin', 'full_agent'), requireWrite, accountingRouter)
-app.use('/api/investors',     requireRole('admin', 'full_agent'), requireWrite, investorsRouter)
-
-// ── Standard data routes (all authenticated users can read; only admin can write) ─
-app.use('/api/tenant-brands',    requireWrite, tenantBrandsRouter)
-app.use('/api/people',           requireWrite, peopleRouter)
-app.use('/api/properties',       requireWrite, propertiesRouter)
-app.use('/api/deals',            requireWrite, dealsRouter)
-app.use('/api/import',           requireRole('admin'), importRouter)
-app.use('/api/reports',          reportsRouter)
-app.use('/api/saved-searches',   requireWrite, savedSearchesRouter)
-app.use('/api/portfolio-import', requireRole('admin'), portfolioImportRouter)
-app.use('/api/dashboard',        dashboardRouter)
-app.use('/api/emails',           requireWrite, emailsRouter)
-app.use('/api/loi-import',       requireRole('admin'), loiImportRouter)
-
-// ── Production: serve built React app ────────────────────────────────────────
+// ── Production: serve built React app for all non-API routes ──────────────────
+// Must be before API routes so the SPA loads for unauthenticated users.
+// The React app handles auth redirects client-side.
 const distPath = join(__dirname, '..', 'dist')
 if (isProd && existsSync(distPath)) {
   app.use(express.static(distPath))
+}
+
+// ── Public API routes (no auth required) ─────────────────────────────────────
+app.use('/api/auth', authRouter)
+
+// ── Protected API routes (requireAuth applied per-route, not globally) ────────
+// Admin-only
+app.use('/api/admin/users',      requireAuth, requireRole('admin'), usersRouter)
+
+// Admin + full_agent only
+app.use('/api/accounting',       requireAuth, requireRole('admin', 'full_agent'), requireWrite, accountingRouter)
+app.use('/api/investors',        requireAuth, requireRole('admin', 'full_agent'), requireWrite, investorsRouter)
+
+// All authenticated users can read; only admin can write
+app.use('/api/tenant-brands',    requireAuth, requireWrite, tenantBrandsRouter)
+app.use('/api/people',           requireAuth, requireWrite, peopleRouter)
+app.use('/api/properties',       requireAuth, requireWrite, propertiesRouter)
+app.use('/api/deals',            requireAuth, requireWrite, dealsRouter)
+app.use('/api/reports',          requireAuth, reportsRouter)
+app.use('/api/saved-searches',   requireAuth, requireWrite, savedSearchesRouter)
+app.use('/api/dashboard',        requireAuth, dashboardRouter)
+app.use('/api/emails',           requireAuth, requireWrite, emailsRouter)
+
+// Admin-only write routes
+app.use('/api/import',           requireAuth, requireRole('admin'), importRouter)
+app.use('/api/portfolio-import', requireAuth, requireRole('admin'), portfolioImportRouter)
+app.use('/api/loi-import',       requireAuth, requireRole('admin'), loiImportRouter)
+
+// ── SPA fallback: serve index.html for all remaining routes ──────────────────
+// Handles client-side routing (React Router) — must be last.
+if (isProd && existsSync(distPath)) {
   app.use((_req, res) => res.sendFile(join(distPath, 'index.html')))
 }
 
