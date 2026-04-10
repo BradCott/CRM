@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import db from '../db.js'
+import { requireRole } from '../middleware/auth.js'
 
 const router = Router()
 
@@ -245,6 +246,64 @@ router.patch('/:id/portfolio', (req, res) => {
 router.delete('/:id', (req, res) => {
   db.prepare('DELETE FROM properties WHERE id = ?').run(req.params.id)
   res.status(204).end()
+})
+
+// POST /api/properties/:id/lease-data
+// Cowork automation endpoint — admin only.
+// Accepts a subset of lease fields and does a targeted UPDATE so that
+// callers only need to send the fields they know about.
+// Note: rent_per_sf is informational — it is not stored as a dedicated
+// column but can be derived from annual_rent / building_size.
+router.post('/:id/lease-data', requireRole('admin'), (req, res) => {
+  const propId = parseInt(req.params.id, 10)
+  const { tenant, lease_expiration, annual_rent, building_sf, cap_rate, lease_type, notes } = req.body
+
+  const VALID_LEASE_TYPES = ['NNN', 'Gross', 'Modified Gross']
+  if (lease_type != null && !VALID_LEASE_TYPES.includes(lease_type)) {
+    return res.status(400).json({ error: `Invalid lease_type — must be one of: ${VALID_LEASE_TYPES.join(', ')}` })
+  }
+
+  try {
+    if (!db.prepare('SELECT id FROM properties WHERE id = ?').get(propId)) {
+      return res.status(404).json({ error: `Property ${propId} not found` })
+    }
+
+    const sets = []
+    const vals = []
+
+    // Resolve tenant name → tenant_brand_id (look up existing brand or create one)
+    if (tenant != null) {
+      const name = String(tenant).trim()
+      let brandId = null
+      if (name) {
+        const brand = db.prepare('SELECT id FROM tenant_brands WHERE name = ?').get(name)
+        brandId = brand
+          ? brand.id
+          : Number(db.prepare('INSERT INTO tenant_brands (name) VALUES (?)').run(name).lastInsertRowid)
+      }
+      sets.push('tenant_brand_id = ?'); vals.push(brandId)
+    }
+
+    // Direct column mappings — only include fields that were actually sent
+    if (lease_expiration != null) { sets.push('lease_end = ?');     vals.push(lease_expiration) }
+    if (annual_rent      != null) { sets.push('annual_rent = ?');   vals.push(Number(annual_rent)) }
+    if (building_sf      != null) { sets.push('building_size = ?'); vals.push(Number(building_sf)) }
+    if (cap_rate         != null) { sets.push('cap_rate = ?');      vals.push(Number(cap_rate)) }
+    if (lease_type       != null) { sets.push('lease_type = ?');    vals.push(lease_type) }
+    if (notes            != null) { sets.push('notes = ?');         vals.push(notes) }
+
+    if (sets.length === 0) {
+      return res.status(400).json({ error: 'No recognised fields provided' })
+    }
+
+    vals.push(propId)
+    db.prepare(`UPDATE properties SET ${sets.join(', ')} WHERE id = ?`).run(...vals)
+
+    res.json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(propId))
+  } catch (err) {
+    console.error('[POST /api/properties/:id/lease-data] error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 export default router
