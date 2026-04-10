@@ -116,26 +116,25 @@ export default function LedgerPage() {
     acc.push({ ...tx, running_balance: prev + Number(tx.amount) })
     return acc
   }, [])
+  const handleSort = col => setSortState(prev => ({
+    col,
+    dir: prev.col === col && prev.dir === 'asc' ? 'desc' : 'asc',
+  }))
+
   // Sort transactions for display
   const sorted = [...transactions].sort((a, b) => {
     const { col, dir } = sortState
     let av, bv
-    if      (col === 'date')        { av = a.date;                         bv = b.date }
+    if      (col === 'date')        { av = a.date;                              bv = b.date }
     else if (col === 'description') { av = (a.description || '').toLowerCase(); bv = (b.description || '').toLowerCase() }
-    else if (col === 'category')    { av = a.category;                     bv = b.category }
-    else if (col === 'amount')      { av = Number(a.amount);               bv = Number(b.amount) }
-    else if (col === 'source')      { av = a.source;                       bv = b.source }
+    else if (col === 'category')    { av = a.category;                          bv = b.category }
+    else if (col === 'amount')      { av = Number(a.amount);                    bv = Number(b.amount) }
+    else if (col === 'source')      { av = a.source;                            bv = b.source }
+    else                            { av = 0; bv = 0 }
     if (av < bv) return dir === 'asc' ? -1 : 1
     if (av > bv) return dir === 'asc' ?  1 : -1
     return 0
   })
-
-  function handleSort(col) {
-    setSortState(prev => ({
-      col,
-      dir: prev.col === col && prev.dir === 'asc' ? 'desc' : 'asc',
-    }))
-  }
 
   const totals = {
     balance:   withBalance.length > 0 ? withBalance[withBalance.length - 1].running_balance : 0,
@@ -457,17 +456,27 @@ function Th({ children, right }) {
 
 function SortTh({ col, sort, onSort, right, children }) {
   const active = sort.col === col
-  const Icon = active
-    ? (sort.dir === 'asc' ? ChevronUp : ChevronDown)
-    : ChevronsUpDown
+  const asc    = active && sort.dir === 'asc'
+
   return (
     <th
       onClick={() => onSort(col)}
-      className={`px-4 py-3 text-xs font-semibold uppercase tracking-wide whitespace-nowrap first:pl-6 cursor-pointer select-none transition-colors hover:bg-slate-100 ${active ? 'text-blue-600' : 'text-slate-500 hover:text-slate-700'} ${right ? 'text-right' : 'text-left'}`}
+      style={{ cursor: 'pointer', userSelect: 'none' }}
+      className={[
+        'px-4 py-3 text-xs font-semibold uppercase tracking-wide whitespace-nowrap transition-colors',
+        right ? 'text-right' : 'text-left',
+        active ? 'text-blue-600 bg-blue-50' : 'text-slate-500 bg-slate-50 hover:bg-slate-100 hover:text-slate-700',
+      ].join(' ')}
     >
-      <span className={`inline-flex items-center gap-1 ${right ? 'flex-row-reverse' : ''}`}>
+      <span className={`inline-flex items-center gap-1.5 ${right ? 'justify-end' : 'justify-start'}`}>
         {children}
-        <Icon className={`w-3.5 h-3.5 shrink-0 ${active ? 'text-blue-500' : 'text-slate-300'}`} />
+        {active ? (
+          asc
+            ? <ChevronUp   className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+            : <ChevronDown className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+        ) : (
+          <ChevronsUpDown className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+        )}
       </span>
     </th>
   )
