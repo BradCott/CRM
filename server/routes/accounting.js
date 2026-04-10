@@ -153,14 +153,16 @@ router.post('/:propertyId/investors/upload', upload.single('file'), async (req, 
   console.log(`[accounting] Investor upload: ${originalname} (${buffer.length} bytes)`)
 
   try {
-    // Convert Excel to CSV text so Claude can read it
+    // Convert Excel to CSV text so Claude can read it — only the investor sheet
     const workbook = XLSX.read(buffer, { type: 'buffer' })
-    const sheets = workbook.SheetNames.map(name => {
-      const sheet = workbook.Sheets[name]
-      const csv = XLSX.utils.sheet_to_csv(sheet, { skipHidden: true })
-      return `=== Sheet: ${name} ===\n${csv}`
-    })
-    const excelText = sheets.join('\n\n')
+    const names = workbook.SheetNames
+    const sheetName =
+      names.find(n => n === 'Investors & Distributions') ||
+      names.find(n => n.toLowerCase().includes('investor')) ||
+      names[0]
+    console.log(`[accounting] Using sheet: "${sheetName}" (available: ${names.join(', ')})`)
+    const csv = XLSX.utils.sheet_to_csv(workbook.Sheets[sheetName], { skipHidden: true })
+    const excelText = `=== Sheet: ${sheetName} ===\n${csv}`
     console.log(`[accounting] Excel text (first 500 chars):`, excelText.slice(0, 500))
 
     const result = await parseInvestorContributions(apiKey, excelText)
