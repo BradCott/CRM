@@ -1,5 +1,5 @@
 // Knox CRM — Gmail content script
-// Uses stable aria-label/data attributes instead of obfuscated class names
+// Polls every second for Reply buttons and injects a "Log to CRM" button next to each.
 
 const CRM_URL_KEY = 'knoxCrmUrl'
 let crmUrl = 'http://localhost:3001'
@@ -7,50 +7,57 @@ let crmUrl = 'http://localhost:3001'
 chrome.storage.sync.get([CRM_URL_KEY], (r) => { if (r[CRM_URL_KEY]) crmUrl = r[CRM_URL_KEY] })
 chrome.storage.onChanged.addListener((c) => { if (c[CRM_URL_KEY]) crmUrl = c[CRM_URL_KEY].newValue })
 
-// ── Observation ───────────────────────────────────────────────────────────────
-// Gmail is a SPA — watch for DOM mutations with a debounced scan
+// ── Polling ───────────────────────────────────────────────────────────────────
+// setInterval is more reliable than MutationObserver for Gmail's async rendering.
+// It naturally catches buttons that appear at any point after page load.
 
-let scanTimer = null
-function scheduleScan() {
-  clearTimeout(scanTimer)
-  scanTimer = setTimeout(scanAndInject, 800)
-}
+setInterval(scan, 1000)
+scan()
 
-new MutationObserver(scheduleScan).observe(document.body, { childList: true, subtree: true })
-scheduleScan()
+function scan() {
+  // Anchor on the Forward button — it ONLY appears in the bottom action toolbar,
+  // never in the email header area. This prevents the button landing at the top
+  // of the email (which happens when matching the header's Reply icon).
+  const forwardBtns = [
+    ...document.querySelectorAll('[aria-label="Forward"]'),
+    ...document.querySelectorAll('[data-tooltip="Forward"]'),
+    ...document.querySelectorAll('[title="Forward"]'),
+  ]
 
-// ── Injection ─────────────────────────────────────────────────────────────────
-// Strategy: find every Reply button by aria-label (stable, accessibility-required).
-// Insert our button directly before it — no toolbar class needed.
+  for (const fwdBtn of forwardBtns) {
+    // Skip if we already handled this toolbar
+    if (fwdBtn.dataset.knoxDone) continue
 
-function scanAndInject() {
-  // Gmail must keep aria-label="Reply" for accessibility — much more stable than class names.
-  // data-tooltip="Reply" is a secondary signal; both are queried together.
-  const replyBtns = document.querySelectorAll(
-    '[role="button"][aria-label="Reply"], [role="button"][data-tooltip="Reply"]'
-  )
+    // Find the Reply button in the same toolbar container.
+    // Walk up to 3 levels to handle varying wrapper depths.
+    let toolbar = fwdBtn.parentElement
+    let replyBtn = null
+    for (let i = 0; i < 3; i++) {
+      if (!toolbar) break
+      replyBtn =
+        toolbar.querySelector('[aria-label="Reply"]:not([aria-label*="all"])') ||
+        toolbar.querySelector('[data-tooltip="Reply"]') ||
+        toolbar.querySelector('[title="Reply"]')
+      if (replyBtn) break
+      toolbar = toolbar.parentElement
+    }
 
-  for (const replyBtn of replyBtns) {
-    // Skip "Reply all" variants
-    const label = replyBtn.getAttribute('aria-label') || replyBtn.getAttribute('data-tooltip') || ''
-    if (/reply\s+all/i.test(label)) continue
+    if (!replyBtn || !toolbar) continue
+    if (toolbar.querySelector('.knox-log-btn')) continue // already injected
 
-    // The marker lives on the immediate parent so we survive Gmail re-renders
-    // within the same email (parent rarely changes even when children re-render)
-    const anchor = replyBtn.parentElement
-    if (!anchor || anchor.dataset.knoxDone) continue
+    fwdBtn.dataset.knoxDone = '1'
 
-    // Find the email container — Gmail consistently sets data-message-id
     const emailEl =
-      replyBtn.closest('[data-message-id]') ||
-      replyBtn.closest('[data-legacy-message-id]') ||
+      fwdBtn.closest('[data-message-id]') ||
+      fwdBtn.closest('[data-legacy-message-id]') ||
       null
 
-    const btn = buildButton(emailEl)
-    replyBtn.insertAdjacentElement('beforebegin', btn)
-    anchor.dataset.knoxDone = '1'
+    // Insert immediately after the Reply button so we sit between Reply and Reply All
+    replyBtn.insertAdjacentElement('afterend', buildButton(emailEl))
   }
 }
+
+// ── Button ────────────────────────────────────────────────────────────────────
 
 function buildButton(emailEl) {
   const btn = document.createElement('button')
@@ -66,60 +73,50 @@ function buildButton(emailEl) {
 }
 
 // ── Email data extraction ─────────────────────────────────────────────────────
-// All selectors use stable HTML attributes, not obfuscated class names.
 
 function extractEmailData(emailEl) {
   const root = emailEl || document
 
-  // ── From ──────────────────────────────────────────────────────────────────
-  // Gmail sets an "email" attribute on the sender span — very reliable
-  const senderEl   = root.querySelector('[email]') || root.querySelector('[data-hovercard-id]')
-  const fromEmail  = (
-    senderEl?.getAttribute('email') ||
-    senderEl?.getAttribute('data-hovercard-id') ||
-    ''
-  ).toLowerCase().trim()
-  const fromName   = senderEl?.textContent?.trim() || fromEmail
+  // From — Gmail puts the sender email in an [email] attribute on a span
+  const allEmailEls = Array.from(root.querySelectorAll('[email]'))
+  const senderEl    = allEmailEls[0] || null
+  const fromEmail   = (senderEl?.getAttribute('email') || '').toLowerCase().trim()
+  const fromName    = senderEl?.textContent?.trim() || fromEmail
 
-  // ── To ────────────────────────────────────────────────────────────────────
-  // Recipients also carry the [email] attribute; skip the first hit (that's From)
-  const allAddrEls = Array.from(root.querySelectorAll('[email]'))
-  const toEmail    = (
-    allAddrEls.find(el => el !== senderEl)?.getAttribute('email') || ''
-  ).toLowerCase().trim()
+  // To — second [email] element in the container, if present
+  const toEmail = (allEmailEls[1]?.getAttribute('email') || '').toLowerCase().trim()
 
-  // ── Subject ───────────────────────────────────────────────────────────────
-  // Gmail wraps the thread subject in an <h2>; data-thread-perm-id is optional
+  // Subject — Gmail uses an <h2> for the thread subject
   const subject =
     document.querySelector('h2[data-thread-perm-id]')?.textContent?.trim() ||
     document.querySelector('h2')?.textContent?.trim() ||
     ''
 
-  // ── Date ──────────────────────────────────────────────────────────────────
-  // Gmail puts a human-readable timestamp in a span; the title attribute often
-  // has the full date string (e.g. "Mon, Apr 6, 2026, 10:30 AM")
-  const timeEl = root.querySelector('[title][data-datestring], [title][data-hovercard-id] ~ * [title]') ||
-                 root.querySelector('span[title]')
-  const dateRaw = timeEl?.getAttribute('title') || timeEl?.textContent?.trim() || ''
-  let dateIso
-  try { dateIso = dateRaw ? new Date(dateRaw).toISOString() : new Date().toISOString() }
-  catch (_) { dateIso = new Date().toISOString() }
-
-  // ── Body preview ──────────────────────────────────────────────────────────
-  // .gmail_quote is a stable class (it's added by Gmail to all quoted text)
-  const bodyContainer = root.querySelector('[dir="ltr"]') || root.querySelector('div[class]')
-  let bodyPreview = ''
-  if (bodyContainer) {
-    const clone = bodyContainer.cloneNode(true)
-    clone.querySelectorAll('.gmail_quote, blockquote, style, script').forEach(n => n.remove())
-    bodyPreview = clone.innerText?.replace(/\s+/g, ' ').trim().slice(0, 600) || ''
+  // Date — look for a span whose title attribute contains a parseable date
+  let dateIso = new Date().toISOString()
+  const titleEls = Array.from(root.querySelectorAll('[title]'))
+  for (const el of titleEls) {
+    const t = el.getAttribute('title') || ''
+    // Gmail date titles look like "Mon, Apr 6, 2026, 10:30 AM"
+    if (/\d{4}/.test(t)) {
+      const parsed = new Date(t)
+      if (!isNaN(parsed)) { dateIso = parsed.toISOString(); break }
+    }
   }
 
-  // ── Direction ─────────────────────────────────────────────────────────────
-  // The logged-in account email appears in the account menu button
+  // Body preview — strip quoted text (.gmail_quote is a stable Gmail class)
+  let bodyPreview = ''
+  const bodyEl = root.querySelector('[dir="ltr"]') || root.querySelector('.a3s') || null
+  if (bodyEl) {
+    const clone = bodyEl.cloneNode(true)
+    clone.querySelectorAll('.gmail_quote, blockquote, style, script').forEach(n => n.remove())
+    bodyPreview = (clone.innerText || '').trim().slice(0, 8000)
+  }
+
+  // Direction — compare sender to the logged-in Google account
   const myEmail = (
+    document.querySelector('a[aria-label*="Google Account"]')?.getAttribute('aria-label')?.match(/\(([^)]+)\)/)?.[1] ||
     document.querySelector('[data-email]')?.getAttribute('data-email') ||
-    document.querySelector('a[href*="accounts.google.com"] [aria-label]')?.getAttribute('aria-label') ||
     ''
   ).toLowerCase().trim()
 
@@ -153,7 +150,7 @@ async function handleLog(emailEl, btn) {
         body_preview:  bodyPreview,
         direction,
         date:          dateIso,
-        from_address:  fromName !== fromEmail ? `${fromName} <${fromEmail}>` : fromEmail,
+        from_address:  fromName && fromName !== fromEmail ? `${fromName} <${fromEmail}>` : fromEmail,
         to_address:    toEmail,
       }),
     })

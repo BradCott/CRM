@@ -3,6 +3,7 @@ const BASE = '/api'
 async function req(method, path, body) {
   const res = await fetch(BASE + path, {
     method,
+    credentials: 'include',
     headers: body && !(body instanceof FormData) ? { 'Content-Type': 'application/json' } : {},
     body: body instanceof FormData ? body : body ? JSON.stringify(body) : undefined,
   })
@@ -47,10 +48,14 @@ export const togglePortfolio       = (id, val) => req('PATCH',  `/properties/${i
 
 // Deals
 export const getDeals       = ()       => req('GET',    '/deals')
+export const getDroppedDeals = ()      => req('GET',    '/deals/dropped')
 export const createDeal     = (data)   => req('POST',   '/deals', data)
 export const updateDeal     = (id, d)  => req('PUT',    `/deals/${id}`, d)
 export const patchDealStage = (id, s)  => req('PATCH',  `/deals/${id}/stage`, { stage: s })
 export const deleteDeal     = (id)     => req('DELETE', `/deals/${id}`)
+export const closeDealApi   = (id)     => req('POST',   `/deals/${id}/close`)
+export const dropDealApi    = (id)     => req('POST',   `/deals/${id}/drop`)
+export const restoreDealApi = (id)     => req('POST',   `/deals/${id}/restore`)
 
 // Reports
 export const getReports       = (params = {}) => {
@@ -88,6 +93,22 @@ export const disconnectGoogle = ()     => req('DELETE', '/auth/google')
 export const getEmails    = (personId) => req('GET',    `/emails?person_id=${personId}`)
 export const createEmail  = (data)     => req('POST',   '/emails', data)
 export const deleteEmail  = (id)       => req('DELETE', `/emails/${id}`)
+
+// Accounting
+export const getAccountingSummary     = ()              => req('GET',    '/accounting/summary')
+export const getLedger                = (propertyId)    => req('GET',    `/accounting/${propertyId}/transactions`)
+export const createTransactions       = (propertyId, d) => req('POST',   `/accounting/${propertyId}/transactions`, d)
+export const deleteTransaction        = (id)            => req('DELETE', `/accounting/transactions/${id}`)
+export async function uploadSettlement(propertyId, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return req('POST', `/accounting/${propertyId}/settlement`, fd)
+}
+export async function uploadBankStatement(propertyId, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return req('POST', `/accounting/${propertyId}/bank-statement`, fd)
+}
 
 // Investors
 export const getInvestors    = (params = {}) => {

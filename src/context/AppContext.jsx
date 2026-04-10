@@ -5,6 +5,7 @@ import {
   getAllProperties, getPropertyStates,
   createProperty, updateProperty, deleteProperty,
   getDeals, createDeal, updateDeal, patchDealStage, deleteDeal,
+  closeDealApi, dropDealApi, restoreDealApi,
   getImportStats,
 } from '../api/client'
 import { DEFAULT_STAGES } from '../utils/constants'
@@ -137,6 +138,32 @@ export function AppProvider({ children }) {
     notify('Deal deleted')
   }, [notify])
 
+  const closeDeal = useCallback(async (id) => {
+    console.log('[AppContext] closeDeal called, id:', id)
+    const result = await closeDealApi(id)
+    console.log('[AppContext] closeDealApi response:', result)
+    setDeals(prev => prev.filter(x => x.id !== id))
+    // Refresh allProperties so the newly-created portfolio property shows up
+    const props = await getAllProperties()
+    setAllProperties(props)
+    notify('Deal closed — moved to Portfolio')
+  }, [notify])
+
+  const dropDeal = useCallback(async (id) => {
+    console.log('[AppContext] dropDeal called, id:', id)
+    const result = await dropDealApi(id)
+    console.log('[AppContext] dropDealApi response:', result)
+    setDeals(prev => prev.filter(x => x.id !== id))
+    notify('Deal dropped')
+  }, [notify])
+
+  const restoreDeal = useCallback(async (id) => {
+    const row = await restoreDealApi(id)
+    setDeals(prev => [row, ...prev])
+    notify('Deal restored')
+    return row
+  }, [notify])
+
   const moveDeal = useCallback(async (id, newStage) => {
     setDeals(prev => prev.map(d => d.id === id ? { ...d, stage: newStage } : d))
     try {
@@ -160,7 +187,7 @@ export function AppProvider({ children }) {
       allPeople, addPerson, editPerson, removePerson,
       allProperties, addProperty, editProperty, removeProperty,
       propertyStates,
-      deals, addDeal, editDeal, removeDeal, moveDeal,
+      deals, addDeal, editDeal, removeDeal, moveDeal, closeDeal, dropDeal, restoreDeal,
       stages,
       toast, notify,
       loading,

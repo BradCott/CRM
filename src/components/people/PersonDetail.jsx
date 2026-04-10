@@ -26,6 +26,7 @@ function fmt$(v) {
 export default function PersonDetail({ personId, onClose, onEdit }) {
   const [data, setData]         = useState(null)
   const [emails, setEmails]     = useState([])
+  const [expandedEmail, setExpandedEmail] = useState(null)
   const [logOpen, setLogOpen]   = useState(false)
   const [logForm, setLogForm]   = useState({ subject: '', body_preview: '', direction: 'outbound', date: new Date().toISOString().slice(0, 10) })
   const [saving, setSaving]     = useState(false)
@@ -35,6 +36,7 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
     setData(null)
     setEmails([])
     setLogOpen(false)
+    setExpandedEmail(null)
     getPerson(personId).then(setData).catch(console.error)
     getEmails(personId).then(setEmails).catch(() => {})
   }, [personId])
@@ -235,36 +237,77 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
             {emails.length === 0 && (
               <p className="text-sm text-slate-400 italic">No email history</p>
             )}
-            {emails.map(em => (
-              <div key={em.id} className="p-3 bg-slate-50 rounded-xl border border-slate-100 group">
-                <div className="flex items-start justify-between gap-2">
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <span className={`text-xs font-medium px-1.5 py-0.5 rounded ${
-                        em.direction === 'inbound'  ? 'bg-blue-50 text-blue-600' :
-                        em.direction === 'outbound' ? 'bg-emerald-50 text-emerald-600' :
-                        'bg-slate-100 text-slate-500'
-                      }`}>
-                        {em.direction === 'inbound' ? 'Received' : em.direction === 'outbound' ? 'Sent' : 'Manual'}
-                      </span>
-                      <span className="text-xs text-slate-400">{fmtEmailDate(em.date)}</span>
+            {emails.map(em => {
+              const isExpanded = expandedEmail === em.id
+              return (
+                <div key={em.id} className="rounded-xl border border-slate-100 group">
+                  {/* Header row — click to expand/collapse */}
+                  <button
+                    onClick={() => setExpandedEmail(isExpanded ? null : em.id)}
+                    className={`w-full text-left p-3 flex items-start justify-between gap-2 rounded-xl transition-colors ${
+                      isExpanded ? 'bg-white' : 'bg-slate-50 hover:bg-slate-100'
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-xs font-medium px-1.5 py-0.5 rounded shrink-0 ${
+                          em.direction === 'inbound'  ? 'bg-blue-50 text-blue-600' :
+                          em.direction === 'outbound' ? 'bg-emerald-50 text-emerald-600' :
+                          'bg-slate-100 text-slate-500'
+                        }`}>
+                          {em.direction === 'inbound' ? 'Received' : em.direction === 'outbound' ? 'Sent' : 'Manual'}
+                        </span>
+                        <span className="text-xs text-slate-400 shrink-0">{fmtEmailDate(em.date)}</span>
+                      </div>
+                      <p className="text-sm font-medium text-slate-800 mt-1 truncate">{em.subject || '(no subject)'}</p>
+                      {!isExpanded && em.body_preview && (
+                        <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">{em.body_preview}</p>
+                      )}
                     </div>
-                    <p className="text-sm font-medium text-slate-800 mt-1 truncate">{em.subject || '(no subject)'}</p>
-                    {em.body_preview && (
-                      <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{em.body_preview}</p>
-                    )}
-                  </div>
-                  {em.is_manual ? (
-                    <button
-                      onClick={() => handleDeleteEmail(em.id)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity w-6 h-6 flex items-center justify-center text-slate-300 hover:text-red-500 shrink-0"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  ) : null}
+                    <div className="flex items-center gap-1 shrink-0 mt-0.5">
+                      {em.is_manual && (
+                        <span
+                          role="button"
+                          onClick={(e) => { e.stopPropagation(); handleDeleteEmail(em.id) }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity w-6 h-6 flex items-center justify-center text-slate-300 hover:text-red-500"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </span>
+                      )}
+                      {isExpanded
+                        ? <ChevronUp className="w-3.5 h-3.5 text-slate-400" />
+                        : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                      }
+                    </div>
+                  </button>
+
+                  {/* Expanded body */}
+                  {isExpanded && (
+                    <div className="px-3 pb-3 pt-2 border-t border-slate-100 bg-white rounded-b-xl">
+                      <div className="space-y-0.5 mb-2">
+                        {em.from_address && (
+                          <p className="text-xs text-slate-500">
+                            <span className="font-semibold">From:</span> {em.from_address}
+                          </p>
+                        )}
+                        {em.to_address && (
+                          <p className="text-xs text-slate-500">
+                            <span className="font-semibold">To:</span> {em.to_address}
+                          </p>
+                        )}
+                      </div>
+                      {em.body_preview ? (
+                        <div className="max-h-72 overflow-y-auto">
+                          <p className="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{em.body_preview}</p>
+                        </div>
+                      ) : (
+                        <p className="text-xs text-slate-400 italic">No body content captured</p>
+                      )}
+                    </div>
+                  )}
                 </div>
-              </div>
-            ))}
+              )
+            })}
 
             {/* Log email button / form */}
             <button

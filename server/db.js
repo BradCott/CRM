@@ -218,9 +218,66 @@ const migrations = [
   `ALTER TABLE properties ADD COLUMN dd_end_date       TEXT`,
   `ALTER TABLE properties ADD COLUMN close_date        TEXT`,
   `ALTER TABLE people ADD COLUMN owner_type TEXT DEFAULT 'Individual'`,
-  `ALTER TABLE deals ADD COLUMN title  TEXT`,
-  `ALTER TABLE deals ADD COLUMN source TEXT DEFAULT 'manual'`,
+  `ALTER TABLE deals ADD COLUMN title              TEXT`,
+  `ALTER TABLE deals ADD COLUMN source             TEXT DEFAULT 'manual'`,
+  `ALTER TABLE deals ADD COLUMN purchase_price     REAL`,
+  `ALTER TABLE deals ADD COLUMN address            TEXT`,
+  `ALTER TABLE deals ADD COLUMN city               TEXT`,
+  `ALTER TABLE deals ADD COLUMN state              TEXT`,
+  `ALTER TABLE deals ADD COLUMN tenant             TEXT`,
+  `ALTER TABLE deals ADD COLUMN cap_rate           REAL`,
+  `ALTER TABLE deals ADD COLUMN due_diligence_days INTEGER`,
+  `ALTER TABLE deals ADD COLUMN dd_deadline        TEXT`,
+  `ALTER TABLE deals ADD COLUMN earnest_money      REAL`,
+  `ALTER TABLE deals ADD COLUMN status             TEXT DEFAULT 'active'`,
 ]
+
+// ── Auth — users and invitations ─────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS users (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    email         TEXT UNIQUE NOT NULL,
+    name          TEXT,
+    role          TEXT NOT NULL DEFAULT 'junior_agent'
+                  CHECK(role IN ('admin','full_agent','junior_agent')),
+    auth_provider TEXT NOT NULL DEFAULT 'local'
+                  CHECK(auth_provider IN ('local','google')),
+    google_id     TEXT UNIQUE,
+    password_hash TEXT,
+    status        TEXT NOT NULL DEFAULT 'active'
+                  CHECK(status IN ('active','inactive')),
+    created_at    TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_users_email     ON users(email);
+  CREATE INDEX IF NOT EXISTS idx_users_google_id ON users(google_id);
+
+  CREATE TABLE IF NOT EXISTS invitations (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    email       TEXT NOT NULL,
+    role        TEXT NOT NULL DEFAULT 'junior_agent',
+    token       TEXT UNIQUE NOT NULL,
+    invited_by  INTEGER REFERENCES users(id),
+    created_at  TEXT DEFAULT (datetime('now')),
+    accepted_at TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_invitations_token ON invitations(token);
+`)
+
+// ── Accounting ────────────────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS accounting_transactions (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    date        TEXT NOT NULL,
+    description TEXT NOT NULL,
+    category    TEXT NOT NULL,
+    amount      REAL NOT NULL,
+    source      TEXT NOT NULL DEFAULT 'Manual',
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_acct_property ON accounting_transactions(property_id);
+  CREATE INDEX IF NOT EXISTS idx_acct_date     ON accounting_transactions(date);
+`)
 for (const sql of migrations) {
   try { db.exec(sql) } catch (_) { /* column already exists — ignore */ }
 }
