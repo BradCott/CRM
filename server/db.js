@@ -290,6 +290,17 @@ db.exec(`
     created_at       TEXT DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_prop_investors_property ON property_investors(property_id);
+
+  CREATE TABLE IF NOT EXISTS property_journal_entries (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    entry_type  TEXT NOT NULL DEFAULT 'acquisition',
+    entry_date  TEXT,
+    label       TEXT,
+    content     TEXT NOT NULL,
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_journal_property ON property_journal_entries(property_id);
 `)
 for (const sql of migrations) {
   try { db.exec(sql) } catch (_) { /* column already exists — ignore */ }

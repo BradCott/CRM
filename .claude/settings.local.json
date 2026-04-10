@@ -48,7 +48,16 @@
       "Bash(python3 -c \"import sys,json; d=json.load\\(sys.stdin\\); mcps=d.get\\(''''mcpServers'''',{}\\); print\\(json.dumps\\(list\\(mcps.keys\\(\\)\\), indent=2\\)\\)\")",
       "Bash(git filter-repo:*)",
       "Bash(node \"C:/Users/brad/AppData/Local/Temp/knox_strip.js\")",
-      "Bash(FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --force --tree-filter 'node \"\"C:/Users/brad/AppData/Local/Temp/knox_strip.js\"\"' f9d7559^..HEAD)"
+      "Bash(FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --force --tree-filter 'node \"\"C:/Users/brad/AppData/Local/Temp/knox_strip.js\"\"' f9d7559^..HEAD)",
+      "Bash(cmd /c \"npm install @anthropic-ai/sdk\")",
+      "Bash(node -e \"const {randomBytes} = require\\('crypto'\\); console.log\\(randomBytes\\(48\\).toString\\('base64url'\\)\\)\")",
+      "Bash(git add:*)",
+      "Bash(git commit -m ':*)",
+      "Bash(git push:*)",
+      "Bash(node -e \"import\\('xlsx'\\).then\\(m => console.log\\('xlsx OK, version:', m.version || 'loaded'\\)\\)\")",
+      "Bash(node -e \"const XLSX = require\\('xlsx'\\); console.log\\('OK'\\)\")",
+      "Bash(node -e \"const l = require\\('C:/Users/brad/crm/node_modules/lucide-react'\\); console.log\\('ChevronsUpDown:', !!l.ChevronsUpDown, 'ChevronUp:', !!l.ChevronUp\\)\")",
+      "Bash(npx vite:*)"
     ]
   }
 }

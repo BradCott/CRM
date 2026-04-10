@@ -110,6 +110,10 @@ export async function uploadBankStatement(propertyId, file) {
   return req('POST', `/accounting/${propertyId}/bank-statement`, fd)
 }
 
+// Journal entries
+export const getJournalEntries  = (propertyId)    => req('GET',  `/accounting/${propertyId}/journal-entries`)
+export const saveJournalEntry   = (propertyId, d) => req('POST', `/accounting/${propertyId}/journal-entries`, d)
+
 // Investor contributions
 export const getInvestors              = (propertyId)    => req('GET',    `/accounting/${propertyId}/investors`)
 export const saveInvestors             = (propertyId, d) => req('POST',   `/accounting/${propertyId}/investors`, d)

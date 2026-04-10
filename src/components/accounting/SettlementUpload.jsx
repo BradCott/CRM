@@ -1,23 +1,105 @@
-import { useState, useRef } from 'react'
-import { X, Upload, Loader2, CheckCircle, AlertCircle, Pencil } from 'lucide-react'
+import { useState, useRef, useCallback } from 'react'
+import { X, Upload, Loader2, CheckCircle, AlertCircle, Copy, Check } from 'lucide-react'
 import Button from '../ui/Button'
-import { uploadSettlement, createTransactions } from '../../api/client'
+import { uploadSettlement, createTransactions, saveJournalEntry } from '../../api/client'
 
 const CATEGORIES = ['Equity Contribution', 'Purchase', 'Rent', 'Mortgage', 'Repair', 'Sale', 'Other']
 
-function fmt$(v) {
-  if (v === null || v === undefined) return '—'
+const $ = v => v != null ? '$' + Math.abs(Math.round(Number(v))).toLocaleString() : '—'
+const fmtSigned = (v, pos = false) => {
+  if (v == null || v === '') return '—'
   const n = Number(v)
-  const abs = '$' + Math.abs(Math.round(n)).toLocaleString()
-  return n >= 0 ? `+${abs}` : `-${abs}`
+  if (!isFinite(n) || n === 0) return '—'
+  return (pos ? '+' : '-') + '$' + Math.abs(Math.round(n)).toLocaleString()
+}
+
+// Build QuickBooks journal entry lines from fields + split
+function buildJournal(f, buildingPct, landPct) {
+  const pp    = Number(f.purchase_price)  || 0
+  const loan  = Number(f.loan_amount)     || 0
+  const ctc   = Number(f.cash_to_close)  || 0
+  const em    = Number(f.earnest_money)   || 0
+  const rent  = Number(f.prorated_rent)  || 0
+  const tax   = Number(f.tax_credits)    || 0
+
+  const bPct  = Math.max(0, Math.min(100, Number(buildingPct) || 75)) / 100
+  const lPct  = Math.max(0, Math.min(100, Number(landPct)     || 25)) / 100
+
+  const debits = [
+    { account: 'Building',                           amount: pp * bPct },
+    { account: 'Land',                               amount: pp * lPct },
+    { account: 'Loan Origination Fee',               amount: Number(f.loan_origination_fee) || 0 },
+    { account: 'Appraisal Fee',                      amount: Number(f.appraisal_fee) || 0 },
+    { account: 'Title and Closing Fees',             amount: Number(f.title_and_closing_fees) || 0 },
+    { account: 'Recording Fees',                     amount: Number(f.recording_fees) || 0 },
+    { account: 'Survey Fee',                         amount: Number(f.survey_fee) || 0 },
+    { account: 'Environmental / Phase I Fees',       amount: Number(f.environmental_fees) || 0 },
+    { account: 'Consulting / Acquisition Fee',       amount: Number(f.acquisition_fee) || 0 },
+    { account: 'Property Tax Proration',             amount: Number(f.tax_credits) || 0 },
+  ].filter(d => d.amount > 0)
+
+  const credits = [
+    { account: 'Mortgage Loan Payable',              amount: loan },
+    { account: 'Cash / Checking Account',            amount: ctc },
+    { account: 'Prorated Rent Received',             amount: rent },
+    { account: 'Earnest Money Deposit Applied',      amount: em },
+  ].filter(c => c.amount > 0)
+
+  const totalDebits  = debits.reduce((s, d) => s + d.amount, 0)
+  const totalCredits = credits.reduce((s, c) => s + c.amount, 0)
+  const diff = totalDebits - totalCredits
+
+  return { debits, credits, totalDebits, totalCredits, diff }
+}
+
+function buildClipboardText(journal, fields, date) {
+  const lines = [
+    `ACQUISITION JOURNAL ENTRY`,
+    date ? `Date: ${date}` : '',
+    fields.property_address ? `Property: ${fields.property_address}` : '',
+    '',
+    'DEBITS',
+    ...journal.debits.map(d  => `  ${d.account.padEnd(40)} $${Math.round(d.amount).toLocaleString()}`),
+    '',
+    'CREDITS',
+    ...journal.credits.map(c => `  ${c.account.padEnd(40)} $${Math.round(c.amount).toLocaleString()}`),
+    '',
+    `Total Debits:  $${Math.round(journal.totalDebits).toLocaleString()}`,
+    `Total Credits: $${Math.round(journal.totalCredits).toLocaleString()}`,
+    journal.diff !== 0 ? `Difference:    $${Math.round(Math.abs(journal.diff)).toLocaleString()} (${journal.diff > 0 ? 'debits exceed credits' : 'credits exceed debits'})` : 'Balanced: Yes',
+  ].filter(l => l !== undefined)
+  return lines.join('\n')
+}
+
+function Field({ label, value, onChange, prefix = '$' }) {
+  return (
+    <div className="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
+      <span className="text-xs text-slate-500 shrink-0 mr-3">{label}</span>
+      <div className="flex items-center gap-1">
+        {prefix && <span className="text-xs text-slate-400">{prefix}</span>}
+        <input
+          type="number"
+          min="0"
+          value={value ?? ''}
+          onChange={e => onChange(e.target.value === '' ? null : Number(e.target.value))}
+          className="w-32 text-right text-sm font-medium text-slate-900 border border-slate-200 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-blue-300 tabular-nums"
+          placeholder="—"
+        />
+      </div>
+    </div>
+  )
 }
 
 export default function SettlementUpload({ propertyId, onSaved, onClose }) {
   const inputRef = useRef()
-  const [step, setStep]     = useState('upload') // 'upload' | 'parsing' | 'review' | 'saving'
-  const [error, setError]   = useState(null)
-  const [parsed, setParsed] = useState(null)   // { settlement_date, property_address, transactions[] }
-  const [rows, setRows]     = useState([])     // editable rows
+  const [step, setStep]       = useState('upload')
+  const [error, setError]     = useState(null)
+  const [fields, setFields]   = useState(null)
+  const [buildingPct, setBuildingPct] = useState(75)
+  const [landPct, setLandPct]         = useState(25)
+  const [copied, setCopied]   = useState(false)
+
+  const setField = useCallback((key, val) => setFields(prev => ({ ...prev, [key]: val })), [])
 
   async function handleFile(file) {
     if (!file) return
@@ -25,15 +107,7 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
     setError(null)
     try {
       const data = await uploadSettlement(propertyId, file)
-      const txs = (data.transactions || []).map((t, i) => ({
-        _key:        i,
-        date:        data.settlement_date || new Date().toISOString().slice(0, 10),
-        description: t.description,
-        category:    t.category,
-        amount:      t.amount,
-      }))
-      setParsed(data)
-      setRows(txs)
+      setFields(data)
       setStep('review')
     } catch (err) {
       setError(err.message)
@@ -41,27 +115,53 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
     }
   }
 
-  function updateRow(key, field, value) {
-    setRows(prev => prev.map(r => r._key === key ? { ...r, [field]: value } : r))
-  }
-
-  function removeRow(key) {
-    setRows(prev => prev.filter(r => r._key !== key))
-  }
+  const journal = fields ? buildJournal(fields, buildingPct, landPct) : null
 
   async function handleSave() {
-    if (rows.length === 0) return
+    if (!fields) return
     setStep('saving')
     setError(null)
     try {
-      const payload = rows.map(r => ({
-        date:        r.date,
-        description: r.description,
-        category:    r.category,
-        amount:      parseFloat(r.amount),
-        source:      'Settlement Statement',
-      }))
-      await createTransactions(propertyId, payload)
+      const date = fields.settlement_date || new Date().toISOString().slice(0, 10)
+      const pp   = Number(fields.purchase_price) || 0
+      const bPct = (Number(buildingPct) || 75) / 100
+      const lPct = (Number(landPct) || 25) / 100
+
+      // Build transactions for ledger
+      const txs = [
+        fields.purchase_price       && { description: 'Purchase Price',              category: 'Purchase',            amount: -pp },
+        pp > 0                      && { description: 'Building Value',               category: 'Purchase',            amount: -(pp * bPct) },
+        pp > 0                      && { description: 'Land Value',                   category: 'Purchase',            amount: -(pp * lPct) },
+        fields.loan_amount          && { description: 'Loan Proceeds',                category: 'Other',               amount:  Number(fields.loan_amount) },
+        fields.earnest_money        && { description: 'Earnest Money Deposit',        category: 'Other',               amount: -Number(fields.earnest_money) },
+        fields.cash_to_close        && { description: 'Cash to Close',                category: 'Equity Contribution', amount: -Number(fields.cash_to_close) },
+        fields.loan_origination_fee && { description: 'Loan Origination Fee',         category: 'Other',               amount: -Number(fields.loan_origination_fee) },
+        fields.appraisal_fee        && { description: 'Appraisal Fee',                category: 'Other',               amount: -Number(fields.appraisal_fee) },
+        fields.title_and_closing_fees && { description: 'Title and Closing Fees',     category: 'Other',               amount: -Number(fields.title_and_closing_fees) },
+        fields.recording_fees       && { description: 'Recording Fees',               category: 'Other',               amount: -Number(fields.recording_fees) },
+        fields.survey_fee           && { description: 'Survey Fee',                   category: 'Other',               amount: -Number(fields.survey_fee) },
+        fields.environmental_fees   && { description: 'Environmental / Phase I Fees', category: 'Other',               amount: -Number(fields.environmental_fees) },
+        fields.acquisition_fee      && { description: 'Knox Capital Acquisition Fee', category: 'Other',               amount: -Number(fields.acquisition_fee) },
+        fields.prorated_rent        && { description: 'Prorated Rent Credit',         category: 'Rent',                amount:  Number(fields.prorated_rent) },
+        fields.tax_credits          && { description: 'Property Tax Proration',       category: 'Other',               amount:  Number(fields.tax_credits) },
+      ].filter(Boolean).map(t => ({ ...t, date, source: 'Settlement Statement' }))
+
+      // Remove the plain "Purchase Price" line since building+land replace it
+      const filteredTxs = txs.filter(t => t.description !== 'Purchase Price')
+
+      if (filteredTxs.length > 0) {
+        await createTransactions(propertyId, filteredTxs)
+      }
+
+      // Save journal entry
+      const content = buildClipboardText(journal, fields, date)
+      await saveJournalEntry(propertyId, {
+        entry_type: 'acquisition',
+        entry_date: date,
+        label:      fields.property_address || 'Acquisition',
+        content,
+      })
+
       onSaved()
       onClose()
     } catch (err) {
@@ -70,18 +170,28 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
     }
   }
 
+  function handleCopy() {
+    if (!journal || !fields) return
+    const text = buildClipboardText(journal, fields, fields.settlement_date)
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    })
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col">
+
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
           <div>
             <h2 className="text-base font-semibold text-slate-900">Settlement Statement</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              {step === 'upload'  && 'Upload a PDF to extract closing transactions automatically'}
+              {step === 'upload'  && 'Upload a PDF — supports First American Title and HUD-1 formats'}
               {step === 'parsing' && 'AI is reading your settlement statement…'}
-              {step === 'review'  && `Review ${rows.length} extracted transactions before saving`}
-              {step === 'saving'  && 'Saving transactions to ledger…'}
+              {step === 'review'  && 'Review extracted fields and journal entry before saving'}
+              {step === 'saving'  && 'Saving to ledger…'}
             </p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600">
@@ -98,23 +208,18 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
             </div>
           )}
 
-          {/* Upload step */}
+          {/* Upload */}
           {(step === 'upload' || step === 'parsing') && (
             <div
-              className={`border-2 border-dashed rounded-xl p-12 text-center cursor-pointer transition-all ${
+              className={`border-2 border-dashed rounded-xl p-12 text-center transition-all ${
                 step === 'parsing'
                   ? 'border-blue-300 bg-blue-50/50 cursor-default'
-                  : 'border-slate-300 hover:border-blue-300 hover:bg-blue-50/40'
+                  : 'border-slate-300 hover:border-blue-300 hover:bg-blue-50/40 cursor-pointer'
               }`}
               onClick={() => step === 'upload' && inputRef.current?.click()}
             >
-              <input
-                ref={inputRef}
-                type="file"
-                accept=".pdf"
-                className="hidden"
-                onChange={e => handleFile(e.target.files[0])}
-              />
+              <input ref={inputRef} type="file" accept=".pdf" className="hidden"
+                onChange={e => handleFile(e.target.files[0])} />
               {step === 'parsing' ? (
                 <>
                   <Loader2 className="w-10 h-10 mx-auto mb-3 text-blue-400 animate-spin" />
@@ -125,79 +230,131 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
                 <>
                   <Upload className="w-10 h-10 mx-auto mb-3 text-slate-300" />
                   <p className="text-sm font-medium text-slate-700">Drop PDF or click to browse</p>
-                  <p className="text-xs text-slate-400 mt-1">HUD-1, ALTA Closing Disclosure, or similar</p>
+                  <p className="text-xs text-slate-400 mt-1">First American Title or HUD-1 format</p>
                 </>
               )}
             </div>
           )}
 
-          {/* Review step */}
-          {(step === 'review' || step === 'saving') && (
-            <>
-              {parsed?.property_address && (
-                <div className="mb-4 px-4 py-3 bg-slate-50 rounded-lg text-sm text-slate-600">
-                  <span className="font-medium text-slate-800">Property: </span>
-                  {parsed.property_address}
-                  {parsed.settlement_date && (
-                    <span className="ml-3 text-slate-400">
-                      · Closed {new Date(parsed.settlement_date + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
-                    </span>
-                  )}
+          {/* Review */}
+          {(step === 'review' || step === 'saving') && fields && (
+            <div className="space-y-6">
+              {/* Property info */}
+              {(fields.property_address || fields.settlement_date) && (
+                <div className="px-4 py-3 bg-slate-50 rounded-lg text-sm text-slate-600">
+                  {fields.property_address && <span className="font-medium text-slate-800">{fields.property_address}</span>}
+                  {fields.settlement_date  && <span className="ml-3 text-slate-400">· Closed {new Date(fields.settlement_date + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</span>}
                 </div>
               )}
 
-              {rows.length === 0 ? (
-                <p className="text-sm text-slate-400 italic text-center py-8">
-                  No transactions extracted. Try a different file.
-                </p>
-              ) : (
-                <table className="w-full text-sm border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-200">
-                      <th className="text-left text-xs font-semibold text-slate-500 uppercase py-2 pr-3">Description</th>
-                      <th className="text-left text-xs font-semibold text-slate-500 uppercase py-2 pr-3">Category</th>
-                      <th className="text-right text-xs font-semibold text-slate-500 uppercase py-2 pr-3">Amount</th>
-                      <th className="w-8" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {rows.map(row => (
-                      <tr key={row._key} className="border-b border-slate-100">
-                        <td className="py-2 pr-3">
-                          <input
-                            value={row.description}
-                            onChange={e => updateRow(row._key, 'description', e.target.value)}
-                            className="w-full text-sm text-slate-800 border-0 bg-transparent outline-none focus:bg-slate-50 rounded px-1 -mx-1"
-                          />
-                        </td>
-                        <td className="py-2 pr-3">
-                          <select
-                            value={row.category}
-                            onChange={e => updateRow(row._key, 'category', e.target.value)}
-                            className="text-xs border border-slate-200 rounded px-2 py-1 bg-white text-slate-700 outline-none focus:ring-1 focus:ring-blue-300"
-                          >
-                            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                          </select>
-                        </td>
-                        <td className={`py-2 pr-3 text-right font-semibold tabular-nums text-sm whitespace-nowrap ${
-                          Number(row.amount) >= 0 ? 'text-emerald-600' : 'text-red-600'
-                        }`}>
-                          {fmt$(row.amount)}
-                        </td>
-                        <td className="py-2 text-right">
-                          <button
-                            onClick={() => removeRow(row._key)}
-                            className="text-slate-300 hover:text-red-400 transition-colors"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              )}
-            </>
+              <div className="grid grid-cols-2 gap-6">
+                {/* Left — Extracted Fields */}
+                <div>
+                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Extracted Fields</h3>
+                  <div className="bg-slate-50 rounded-xl px-4 py-2">
+                    <Field label="Purchase Price"          value={fields.purchase_price}        onChange={v => setField('purchase_price', v)} />
+                    <Field label="Loan Amount"             value={fields.loan_amount}           onChange={v => setField('loan_amount', v)} />
+                    <Field label="Earnest Money Deposit"   value={fields.earnest_money}         onChange={v => setField('earnest_money', v)} />
+                    <Field label="Cash to Close"           value={fields.cash_to_close}         onChange={v => setField('cash_to_close', v)} />
+                    <Field label="Loan Origination Fee"    value={fields.loan_origination_fee}  onChange={v => setField('loan_origination_fee', v)} />
+                    <Field label="Appraisal Fee"           value={fields.appraisal_fee}         onChange={v => setField('appraisal_fee', v)} />
+                    <Field label="Title & Closing Fees"    value={fields.title_and_closing_fees} onChange={v => setField('title_and_closing_fees', v)} />
+                    <Field label="Recording Fees"          value={fields.recording_fees}        onChange={v => setField('recording_fees', v)} />
+                    <Field label="Survey Fee"              value={fields.survey_fee}            onChange={v => setField('survey_fee', v)} />
+                    <Field label="Environmental / PCA"     value={fields.environmental_fees}    onChange={v => setField('environmental_fees', v)} />
+                    <Field label="Knox Acquisition Fee"    value={fields.acquisition_fee}       onChange={v => setField('acquisition_fee', v)} />
+                    <Field label="Prorated Rent (Credit)"  value={fields.prorated_rent}         onChange={v => setField('prorated_rent', v)} />
+                    <Field label="Tax Credits / Prorations" value={fields.tax_credits}          onChange={v => setField('tax_credits', v)} />
+                  </div>
+
+                  {/* Building / Land split */}
+                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mt-4 mb-2">Building / Land Split</h3>
+                  <div className="bg-slate-50 rounded-xl px-4 py-2">
+                    <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
+                      <span className="text-xs text-slate-500">Building %</span>
+                      <div className="flex items-center gap-2">
+                        <input type="number" min="0" max="100" value={buildingPct}
+                          onChange={e => { setBuildingPct(Number(e.target.value)); setLandPct(100 - Number(e.target.value)) }}
+                          className="w-20 text-right text-sm font-medium border border-slate-200 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-blue-300"
+                        />
+                        <span className="text-xs text-slate-400">%</span>
+                      </div>
+                    </div>
+                    <div className="flex items-center justify-between py-1.5">
+                      <span className="text-xs text-slate-500">Land %</span>
+                      <div className="flex items-center gap-2">
+                        <input type="number" min="0" max="100" value={landPct}
+                          onChange={e => { setLandPct(Number(e.target.value)); setBuildingPct(100 - Number(e.target.value)) }}
+                          className="w-20 text-right text-sm font-medium border border-slate-200 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-blue-300"
+                        />
+                        <span className="text-xs text-slate-400">%</span>
+                      </div>
+                    </div>
+                    {fields.purchase_price && (
+                      <div className="pt-2 pb-1 text-xs text-slate-400 text-right border-t border-slate-100 mt-1">
+                        Building: {$(fields.purchase_price * buildingPct / 100)} · Land: {$(fields.purchase_price * landPct / 100)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right — Journal Entry */}
+                <div>
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">QuickBooks Journal Entry</h3>
+                    <button
+                      onClick={handleCopy}
+                      className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-slate-200 hover:bg-slate-50 text-slate-600 transition-colors"
+                    >
+                      {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                      {copied ? 'Copied!' : 'Copy'}
+                    </button>
+                  </div>
+
+                  {journal && (
+                    <div className="border border-slate-200 rounded-xl overflow-hidden text-xs">
+                      <table className="w-full border-collapse">
+                        <thead>
+                          <tr className="bg-slate-50 border-b border-slate-200">
+                            <th className="text-left px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide">Account</th>
+                            <th className="text-right px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide">Debit</th>
+                            <th className="text-right px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide">Credit</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {journal.debits.map((d, i) => (
+                            <tr key={i} className="border-b border-slate-100">
+                              <td className="px-3 py-1.5 text-slate-800">{d.account}</td>
+                              <td className="px-3 py-1.5 text-right text-slate-900 font-medium tabular-nums">{$(d.amount)}</td>
+                              <td className="px-3 py-1.5 text-right text-slate-400">—</td>
+                            </tr>
+                          ))}
+                          {journal.credits.map((c, i) => (
+                            <tr key={i} className="border-b border-slate-100 bg-slate-50/40">
+                              <td className="px-3 py-1.5 text-slate-800 pl-6">{c.account}</td>
+                              <td className="px-3 py-1.5 text-right text-slate-400">—</td>
+                              <td className="px-3 py-1.5 text-right text-slate-900 font-medium tabular-nums">{$(c.amount)}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                        <tfoot>
+                          <tr className="border-t-2 border-slate-300 bg-slate-50">
+                            <td className="px-3 py-2 font-semibold text-slate-700">Totals</td>
+                            <td className="px-3 py-2 text-right font-bold text-slate-900 tabular-nums">{$(journal.totalDebits)}</td>
+                            <td className="px-3 py-2 text-right font-bold text-slate-900 tabular-nums">{$(journal.totalCredits)}</td>
+                          </tr>
+                          <tr>
+                            <td colSpan={3} className={`px-3 py-1.5 text-center text-xs font-medium ${Math.abs(journal.diff) < 1 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                              {Math.abs(journal.diff) < 1 ? '✓ Balanced' : `⚠ Difference: ${$(Math.abs(journal.diff))} — adjust fields until balanced`}
+                            </td>
+                          </tr>
+                        </tfoot>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
           )}
         </div>
 
@@ -205,11 +362,11 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
         <div className="shrink-0 flex items-center justify-between px-6 py-4 border-t border-slate-100 bg-slate-50 rounded-b-2xl">
           <button onClick={onClose} className="text-sm text-slate-400 hover:text-slate-600">Cancel</button>
           {(step === 'review' || step === 'saving') && (
-            <Button onClick={handleSave} disabled={rows.length === 0 || step === 'saving'}>
+            <Button onClick={handleSave} disabled={!fields || step === 'saving'}>
               {step === 'saving' ? (
                 <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</>
               ) : (
-                <><CheckCircle className="w-4 h-4" /> Save {rows.length} Transaction{rows.length !== 1 ? 's' : ''}</>
+                <><CheckCircle className="w-4 h-4" /> Save to Ledger</>
               )}
             </Button>
           )}

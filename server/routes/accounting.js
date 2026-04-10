@@ -181,6 +181,29 @@ router.post('/:propertyId/investors/upload', upload.single('file'), async (req, 
   }
 })
 
+// ── Journal entries ───────────────────────────────────────────────────────────
+
+router.get('/:propertyId/journal-entries', (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, property_id, entry_type, entry_date, label, content, created_at
+    FROM property_journal_entries
+    WHERE property_id = ?
+    ORDER BY created_at DESC
+  `).all(req.params.propertyId)
+  res.json(rows)
+})
+
+router.post('/:propertyId/journal-entries', (req, res) => {
+  const { propertyId } = req.params
+  const { entry_type = 'acquisition', entry_date, label, content } = req.body
+  if (!content) return res.status(400).json({ error: 'content is required' })
+  const r = db.prepare(`
+    INSERT INTO property_journal_entries (property_id, entry_type, entry_date, label, content)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(propertyId, entry_type, entry_date || null, label || null, content)
+  res.status(201).json({ id: r.lastInsertRowid, property_id: Number(propertyId), entry_type, entry_date, label, content })
+})
+
 // ── Settlement Statement AI parse ─────────────────────────────────────────────
 
 router.post('/:propertyId/settlement', upload.single('file'), async (req, res) => {
@@ -225,32 +248,48 @@ router.post('/:propertyId/bank-statement', upload.single('file'), async (req, re
 
 // ── AI helpers ────────────────────────────────────────────────────────────────
 
-const SETTLEMENT_PROMPT = `You are extracting financial data from a real estate settlement statement (HUD-1, ALTA Closing Disclosure, or similar).
+const SETTLEMENT_PROMPT = `You are extracting financial data from a real estate settlement statement. This may be a First American Title format (with Buyer Charge / Buyer Credit columns) or a HUD-1 format (with numbered sections 100-1400 and Borrower/Seller columns).
 
-Return ONLY a valid JSON object in exactly this format:
+Return ONLY a valid JSON object in exactly this format — every field is required (use null if not found):
 {
   "settlement_date": "YYYY-MM-DD or null",
   "property_address": "street address or null",
-  "transactions": [
-    { "description": "...", "category": "...", "amount": number }
-  ]
+  "purchase_price": number or null,
+  "loan_amount": number or null,
+  "earnest_money": number or null,
+  "cash_to_close": number or null,
+  "loan_origination_fee": number or null,
+  "appraisal_fee": number or null,
+  "title_and_closing_fees": number or null,
+  "recording_fees": number or null,
+  "survey_fee": number or null,
+  "environmental_fees": number or null,
+  "acquisition_fee": number or null,
+  "prorated_rent": number or null,
+  "tax_credits": number or null,
+  "total_closing_costs": number or null
 }
 
-Extract each of the following as separate transaction objects. Amount is NEGATIVE for money you pay out, POSITIVE for money you receive:
+Field extraction rules:
+- All amounts as POSITIVE numbers (the sign/direction is handled by the journal entry logic)
+- "purchase_price": Contract sales price / purchase price line item
+- "loan_amount": Principal amount of new mortgage/loan
+- "earnest_money": Earnest money deposit already paid
+- "cash_to_close": Net cash from borrower / cash to close / amount due from borrower
+- "loan_origination_fee": Loan origination fee, points, or lender fee
+- "appraisal_fee": Appraisal or property valuation fee
+- "title_and_closing_fees": Sum ALL title company charges — title insurance, escrow fee, settlement fee, closing fee, owner's policy, lender's policy, title search, title exam, notary fee, wire fee, document prep
+- "recording_fees": County recording or filing fees
+- "survey_fee": Survey fee
+- "environmental_fees": Phase I ESA, Phase II ESA, PCA (Property Condition Assessment), environmental report fees — sum all
+- "acquisition_fee": Any fee paid to Knox Capital, acquisition fee, or advisory/consulting fee at closing
+- "prorated_rent": Prorated rent credited to buyer (positive = credit to buyer)
+- "tax_credits": Property tax proration or credit to buyer
+- "total_closing_costs": Total closing costs line if present, else null
 
-1. Purchase Price — category "Purchase", amount NEGATIVE (e.g. -1500000)
-2. Loan Amount / Mortgage — category "Other", description "Loan Proceeds", amount POSITIVE (e.g. +1000000)
-3. Loan Origination / Lender Fee — category "Other", description "Loan Origination Fee", amount NEGATIVE
-4. Appraisal Fee — category "Other", description "Appraisal Fee", amount NEGATIVE
-5. Title Insurance — category "Other", description "Title Insurance", amount NEGATIVE
-6. Escrow / Settlement Fee — category "Other", description "Escrow/Settlement Fee", amount NEGATIVE
-7. Broker Compensation / Commission (buyer side) — category "Other", description "Broker Compensation", amount NEGATIVE
-8. Acquisition Fee — category "Other", description "Acquisition Fee", amount NEGATIVE
-9. Environmental / Phase I / Survey Fees — category "Other", description "Environmental/Survey Fee", amount NEGATIVE
-10. Cash to Close / Cash From Borrower — category "Equity Contribution", description "Cash to Close", amount NEGATIVE (this is your equity invested)
+For HUD-1: line 101 = purchase price, lines 800s = loan charges, lines 1100s = title charges, lines 1200s = recording, line 201 = earnest money, line 120/303 = cash to close
+For First American: look for Buyer Charge column (costs) and Buyer Credit column (credits/loans)
 
-Only include items that are actually present in the document. Skip items not found. Do not invent numbers.
-category must be exactly one of: "Equity Contribution", "Purchase", "Rent", "Mortgage", "Repair", "Sale", "Other"
 Return ONLY the JSON object, no markdown, no explanation.`
 
 const BANK_STATEMENT_PROMPT = `You are extracting all transactions from a bank statement PDF.
@@ -349,19 +388,29 @@ function cleanDate(v) {
 async function parseSettlementStatement(buffer, apiKey) {
   const raw = await callClaudeWithPrompt(apiKey, buffer, SETTLEMENT_PROMPT)
 
-  const settlement_date    = cleanDate(raw.settlement_date)
-  const property_address   = typeof raw.property_address === 'string' ? raw.property_address.trim() : null
+  const cn = v => {
+    const n = cleanNum(v)
+    return (n !== null && isFinite(n) && n > 0) ? n : null
+  }
 
-  const transactions = (raw.transactions || [])
-    .map(t => ({
-      description: String(t.description || '').trim(),
-      category:    CATEGORIES.includes(t.category) ? t.category : 'Other',
-      amount:      cleanNum(t.amount) ?? 0,
-    }))
-    .filter(t => t.description && t.amount !== 0)
-
-  // Apply the settlement date to all transactions so the client can use it
-  return { settlement_date, property_address, transactions }
+  return {
+    settlement_date:      cleanDate(raw.settlement_date),
+    property_address:     typeof raw.property_address === 'string' ? raw.property_address.trim() : null,
+    purchase_price:       cn(raw.purchase_price),
+    loan_amount:          cn(raw.loan_amount),
+    earnest_money:        cn(raw.earnest_money),
+    cash_to_close:        cn(raw.cash_to_close),
+    loan_origination_fee: cn(raw.loan_origination_fee),
+    appraisal_fee:        cn(raw.appraisal_fee),
+    title_and_closing_fees: cn(raw.title_and_closing_fees),
+    recording_fees:       cn(raw.recording_fees),
+    survey_fee:           cn(raw.survey_fee),
+    environmental_fees:   cn(raw.environmental_fees),
+    acquisition_fee:      cn(raw.acquisition_fee),
+    prorated_rent:        cn(raw.prorated_rent),
+    tax_credits:          cn(raw.tax_credits),
+    total_closing_costs:  cn(raw.total_closing_costs),
+  }
 }
 
 const INVESTOR_PROMPT = `You are extracting investor contribution data from a real estate investment spreadsheet.
