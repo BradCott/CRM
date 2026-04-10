@@ -3,7 +3,7 @@ import {
   TrendingUp, Plus, MoreHorizontal, Pencil, Trash2, Loader2,
   ChevronLeft, ChevronRight, Building2, User, X, DollarSign,
 } from 'lucide-react'
-import { getInvestors, createInvestor, updateInvestor, deleteInvestor } from '../../api/client'
+import { getCRMInvestors, createInvestor, updateInvestor, deleteInvestorRecord } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import TopBar from '../layout/TopBar'
 import Button from '../ui/Button'
@@ -66,7 +66,7 @@ export default function InvestorsPage() {
       const params = { limit: PAGE_SIZE, offset: pg * PAGE_SIZE }
       if (s)    params.search = s
       if (type) params.type   = type
-      const res = await getInvestors(params)
+      const res = await getCRMInvestors(params)
       setRows(res.rows)
       setTotal(res.total)
     } finally { setFetching(false) }
@@ -87,7 +87,7 @@ export default function InvestorsPage() {
   }
 
   const handleDelete = async () => {
-    await deleteInvestor(deleteTarget.id)
+    await deleteInvestorRecord(deleteTarget.id)
     load(search, typeFilter, page)
   }
 

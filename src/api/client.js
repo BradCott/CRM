@@ -120,12 +120,13 @@ export async function uploadInvestorContributions(propertyId, file) {
   return req('POST', `/accounting/${propertyId}/investors/upload`, fd)
 }
 
-// Investors
-export const getInvestors    = (params = {}) => {
-  const qs = new URLSearchParams(params).toString()
-  return req('GET', `/investors${qs ? '?' + qs : ''}`)
-}
+// Investors (CRM)
 export const getInvestor     = (id)     => req('GET',    `/investors/${id}`)
 export const createInvestor  = (data)   => req('POST',   '/investors', data)
 export const updateInvestor  = (id, d)  => req('PUT',    `/investors/${id}`, d)
-export const deleteInvestor  = (id)     => req('DELETE', `/investors/${id}`)
+export const deleteInvestorRecord = (id) => req('DELETE', `/investors/${id}`)
+
+export const getCRMInvestors = (params = {}) => {
+  const qs = new URLSearchParams(params).toString()
+  return req('GET', `/investors${qs ? '?' + qs : ''}`)
+}
