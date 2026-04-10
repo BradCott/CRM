@@ -188,9 +188,12 @@ router.post('/', (req, res) => {
 
 router.put('/:id', (req, res) => {
   const f = req.body
-  console.log('[PUT /api/properties/:id] id:', req.params.id)
+  const propId = parseInt(req.params.id, 10)
+  console.log('[PUT /api/properties/:id] id:', propId, '| address:', f.address, '| owner_name:', f.owner_name)
   try {
-    db.prepare(`
+    const ownerId = resolveOwner(f)
+    console.log('[PUT /api/properties/:id] resolvedOwnerId:', ownerId)
+    const result = db.prepare(`
       UPDATE properties SET
         address=?,city=?,state=?,zip=?,tenant_brand_id=?,owner_id=?,
         building_size=?,land_area=?,year_built=?,property_type=?,construction_type=?,
@@ -201,7 +204,7 @@ router.put('/:id', (req, res) => {
       WHERE id=?
     `).run(
       f.address, f.city||null, f.state||null, f.zip||null,
-      f.tenant_brand_id||null, resolveOwner(f),
+      f.tenant_brand_id||null, ownerId,
       f.building_size||null, f.land_area||null, f.year_built||null,
       f.property_type||null, f.construction_type||null,
       f.lease_type||null, f.lease_start||null, f.lease_end||null,
@@ -215,10 +218,15 @@ router.put('/:id', (req, res) => {
       f.fee_amount != null ? f.fee_amount : null,
       f.purchase_price||null, f.dd_end_date||null, f.close_date||null,
       f.is_portfolio ? 1 : 0,
-      req.params.id
+      propId
     )
-    console.log('[PUT /api/properties/:id] updated id:', req.params.id)
-    const row = db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id)
+    console.log('[PUT /api/properties/:id] changes:', result.changes, '| lastInsertRowid:', result.lastInsertRowid)
+    if (result.changes === 0) {
+      console.warn('[PUT /api/properties/:id] WARNING: 0 rows updated — id not found?', propId)
+      return res.status(404).json({ error: `Property ${propId} not found` })
+    }
+    const row = db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(propId)
+    console.log('[PUT /api/properties/:id] returning row id:', row?.id, 'address:', row?.address)
     res.json(row)
   } catch (err) {
     console.error('[PUT /api/properties/:id] SQL error:', err.message)

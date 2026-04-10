@@ -106,7 +106,9 @@ export function AppProvider({ children }) {
   }, [notify])
 
   const editProperty = useCallback(async (id, data) => {
+    console.log('[AppContext] editProperty id:', id, '| sending keys:', Object.keys(data))
     const row = await updateProperty(id, data)
+    console.log('[AppContext] editProperty server response id:', row?.id, '| address:', row?.address)
     setAllProperties(prev => prev.map(x => x.id === id ? { id: row.id, address: row.address, city: row.city, state: row.state, tenant_brand_name: row.tenant_brand_name } : x))
     notify('Property updated')
     return row

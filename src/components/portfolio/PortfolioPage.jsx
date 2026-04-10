@@ -145,6 +145,7 @@ export default function PortfolioPage() {
   }
   const handleSave = async (data) => {
     const portfolioData = { ...data, is_portfolio: 1 }
+    console.log('[PortfolioPage] handleSave editTarget:', editTarget?.id, '| is_portfolio:', portfolioData.is_portfolio)
     if (editTarget) await editProperty(editTarget.id, portfolioData); else await addProperty(portfolioData)
     load(search, tenantFilter, stateFilter, page)
   }
