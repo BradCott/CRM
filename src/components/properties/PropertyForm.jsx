@@ -43,6 +43,7 @@ export default function PropertyForm({ property, onSave, onClose }) {
   const [form, setForm]   = useState(property ? sanitize({ ...EMPTY, ...property }) : { ...EMPTY })
   const [errors, setErrors] = useState({})
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState(null)
 
   // fee_amount = null → auto mode; string value → manual override
   const [feeOverride, setFeeOverride] = useState(property?.fee_amount != null)
@@ -79,6 +80,7 @@ export default function PropertyForm({ property, onSave, onClose }) {
     const errs = validate(form)
     if (Object.keys(errs).length) { setErrors(errs); return }
     setSaving(true)
+    setSaveError(null)
     try {
       const payload = { ...form }
       for (const f of ['building_size','land_area','year_built','annual_rent','noi','cap_rate','list_price','purchase_price','taxes','insurance','roof_year','hvac_year']) {
@@ -91,6 +93,8 @@ export default function PropertyForm({ property, onSave, onClose }) {
       payload.fee_amount = feeOverride && feeInput !== '' ? parseFloat(feeInput) : null
       await onSave(payload)
       onClose()
+    } catch (err) {
+      setSaveError(err.message || 'Failed to save property. Please try again.')
     } finally {
       setSaving(false)
     }
@@ -102,6 +106,11 @@ export default function PropertyForm({ property, onSave, onClose }) {
 
   return (
     <form onSubmit={handleSubmit} className="px-6 py-5 space-y-3">
+      {saveError && (
+        <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          {saveError}
+        </div>
+      )}
       <Section title="Location" />
       <Input label="Street address *" value={form.address} onChange={set('address')} error={errors.address} placeholder="123 Main St" autoFocus />
       <div className="grid grid-cols-3 gap-3">
