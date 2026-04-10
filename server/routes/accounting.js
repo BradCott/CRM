@@ -6,7 +6,7 @@ import db from '../db.js'
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
 
-const CATEGORIES = ['Equity Contribution', 'Purchase', 'Rent', 'Mortgage', 'Repair', 'Sale', 'Other']
+const CATEGORIES = ['Equity Contribution', 'Purchase', 'Loan', 'Rent', 'Mortgage', 'Repair', 'Sale', 'Other']
 const SOURCES    = ['Manual', 'Settlement Statement', 'Bank Statement', 'Excel Upload']
 
 // ── Summary — all portfolio properties with computed stats ────────────────────
