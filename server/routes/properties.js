@@ -3,6 +3,19 @@ import db from '../db.js'
 
 const router = Router()
 
+// Resolve a free-text owner name to a people.id.
+// If the name matches an existing person, returns their id.
+// If not, inserts a minimal new person record and returns the new id.
+// Returns null when name is blank.
+function resolveOwner(f) {
+  const name = (f.owner_name || '').toString().trim()
+  if (!name) return f.owner_id ? parseInt(f.owner_id, 10) : null
+  const existing = db.prepare('SELECT id FROM people WHERE name = ?').get(name)
+  if (existing) return existing.id
+  const r = db.prepare("INSERT INTO people (name, role) VALUES (?, 'owner')").run(name)
+  return Number(r.lastInsertRowid)
+}
+
 const BASE_SELECT = `
   SELECT p.*,
     t.name AS tenant_brand_name,
@@ -144,7 +157,7 @@ router.post('/', (req, res) => {
       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       f.address, f.city||null, f.state||null, f.zip||null,
-      f.tenant_brand_id||null, f.owner_id||null,
+      f.tenant_brand_id||null, resolveOwner(f),
       f.building_size||null, f.land_area||null, f.year_built||null,
       f.property_type||null, f.construction_type||null,
       f.lease_type||null, f.lease_start||null, f.lease_end||null,
@@ -188,7 +201,7 @@ router.put('/:id', (req, res) => {
       WHERE id=?
     `).run(
       f.address, f.city||null, f.state||null, f.zip||null,
-      f.tenant_brand_id||null, f.owner_id||null,
+      f.tenant_brand_id||null, resolveOwner(f),
       f.building_size||null, f.land_area||null, f.year_built||null,
       f.property_type||null, f.construction_type||null,
       f.lease_type||null, f.lease_start||null, f.lease_end||null,

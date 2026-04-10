@@ -5,7 +5,7 @@ import { useApp } from '../../context/AppContext'
 
 const EMPTY = {
   address: '', city: '', state: '', zip: '',
-  tenant_brand_id: '', owner_id: '',
+  tenant_brand_id: '', owner_name: '',
   building_size: '', land_area: '', year_built: '',
   property_type: '', construction_type: '',
   lease_type: '', lease_start: '', lease_end: '',
@@ -89,7 +89,7 @@ export default function PropertyForm({ property, onSave, onClose }) {
       for (const f of ['building_size','land_area','year_built','annual_rent','noi','cap_rate','list_price','purchase_price','taxes','insurance','roof_year','hvac_year']) {
         payload[f] = payload[f] !== '' ? parseFloat(payload[f]) : null
       }
-      for (const f of ['tenant_brand_id','owner_id']) {
+      for (const f of ['tenant_brand_id']) {
         payload[f] = payload[f] !== '' ? parseInt(payload[f], 10) : null
       }
       // fee_amount: null if auto, parsed float if override
@@ -147,12 +147,22 @@ export default function PropertyForm({ property, onSave, onClose }) {
             <option key={t.id} value={t.id}>{t.name}</option>
           ))}
         </Select>
-        <Select label="Owner" value={form.owner_id} onChange={set('owner_id')}>
-          <option value="">— None —</option>
-          {[...owners].sort((a,b)=>a.name.localeCompare(b.name)).map(o => (
-            <option key={o.id} value={o.id}>{o.name}</option>
-          ))}
-        </Select>
+        <div className="flex flex-col gap-1">
+          <label className="text-sm font-medium text-slate-700">Owner</label>
+          <input
+            list="owner-suggestions"
+            type="text"
+            value={form.owner_name}
+            onChange={set('owner_name')}
+            placeholder="e.g. KC SW Crossett LLC"
+            className="block w-full rounded-lg border px-3 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors border-slate-300 bg-white hover:border-slate-400"
+          />
+          <datalist id="owner-suggestions">
+            {[...owners].sort((a,b)=>a.name.localeCompare(b.name)).map(o => (
+              <option key={o.id} value={o.name} />
+            ))}
+          </datalist>
+        </div>
       </div>
 
       <Section title="Building Details" />
