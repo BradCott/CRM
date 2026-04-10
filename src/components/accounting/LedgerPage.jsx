@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check } from 'lucide-react'
+import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, ChevronDown, ChevronRight } from 'lucide-react'
 import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution } from '../../api/client'
 import Button from '../ui/Button'
 import AddTransactionModal from './AddTransactionModal'
@@ -56,6 +56,7 @@ export default function LedgerPage() {
   const [investors, setInvestors]           = useState([])
   const [deletingInv, setDeletingInv]       = useState(null)
   const [editingContrib, setEditingContrib] = useState(null) // { id, value }
+  const [ledgerOpen, setLedgerOpen]         = useState(false)
 
   const reload = useCallback(() => {
     setLoading(true)
@@ -301,79 +302,93 @@ export default function LedgerPage() {
         </div>
       )}
 
-      {/* Ledger table */}
-      <div className="flex-1 overflow-y-auto">
-        {transactions.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-24 text-slate-400 gap-2">
-            <p className="text-sm font-medium">No transactions yet</p>
-            <p className="text-xs">Add a transaction manually or upload a statement</p>
+      {/* Transaction Ledger — collapsible */}
+      <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
+        {/* Section header / toggle */}
+        <button
+          onClick={() => setLedgerOpen(o => !o)}
+          className="shrink-0 w-full flex items-center justify-between px-6 py-3 bg-white border-b border-slate-200 hover:bg-slate-50 transition-colors text-left"
+        >
+          <div className="flex items-center gap-2">
+            {ledgerOpen
+              ? <ChevronDown className="w-4 h-4 text-slate-400" />
+              : <ChevronRight className="w-4 h-4 text-slate-400" />
+            }
+            <span className="text-sm font-semibold text-slate-700">Transaction Ledger</span>
+            <span className="text-xs text-slate-400 font-normal">{transactions.length} transaction{transactions.length !== 1 ? 's' : ''}</span>
           </div>
-        ) : (
-          <table className="w-full text-sm border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-y border-slate-200 sticky top-0 z-10">
-                <Th>Date</Th>
-                <Th>Description</Th>
-                <Th>Category</Th>
-                <Th right>Amount</Th>
-                <Th right>Balance</Th>
-                <Th>Source</Th>
-                <th className="px-4 py-3 w-10" />
-              </tr>
-            </thead>
-            <tbody>
-              {displayed.map((tx, i) => {
-                const catStyle  = CATEGORY_COLORS[tx.category] || CATEGORY_COLORS['Other']
-                const srcConfig = SOURCE_LABELS[tx.source]     || SOURCE_LABELS['Manual']
-                const isPos     = Number(tx.amount) >= 0
+        </button>
 
-                return (
-                  <tr key={tx.id} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}>
-                    <td className="px-4 pl-6 py-3 border-b border-slate-100 text-slate-500 whitespace-nowrap text-xs">
-                      {fmtDate(tx.date)}
-                    </td>
-                    <td className="px-4 py-3 border-b border-slate-100 text-slate-800 max-w-[260px] truncate font-medium">
-                      {tx.description}
-                    </td>
-                    <td className="px-4 py-3 border-b border-slate-100">
-                      <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${catStyle}`}>
-                        {tx.category}
-                      </span>
-                    </td>
-                    <td className={`px-4 py-3 border-b border-slate-100 text-right font-semibold tabular-nums whitespace-nowrap ${
-                      isPos ? 'text-emerald-600' : 'text-red-600'
-                    }`}>
-                      {fmt$(tx.amount, true)}
-                    </td>
-                    <td className={`px-4 py-3 border-b border-slate-100 text-right tabular-nums whitespace-nowrap text-xs font-medium ${
-                      Number(tx.running_balance) >= 0 ? 'text-slate-600' : 'text-red-500'
-                    }`}>
-                      {fmt$(tx.running_balance)}
-                    </td>
-                    <td className="px-4 py-3 border-b border-slate-100">
-                      <span className="flex items-center gap-1.5 text-xs text-slate-500">
-                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${srcConfig.dot}`} />
-                        {srcConfig.label}
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 pr-6 border-b border-slate-100">
-                      <button
-                        onClick={() => handleDelete(tx.id)}
-                        disabled={deleting === tx.id}
-                        className="p-1.5 rounded text-slate-200 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
-                        title="Delete"
-                      >
-                        {deleting === tx.id
-                          ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                          : <Trash2 className="w-3.5 h-3.5" />
-                        }
-                      </button>
-                    </td>
+        {/* Table — only shown when open */}
+        {ledgerOpen && (
+          <div className="flex-1 overflow-y-auto">
+            {transactions.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-2">
+                <p className="text-sm font-medium">No transactions yet</p>
+                <p className="text-xs">Add a transaction manually or upload a statement</p>
+              </div>
+            ) : (
+              <table className="w-full text-sm border-collapse">
+                <thead>
+                  <tr className="bg-slate-50 border-y border-slate-200 sticky top-0 z-10">
+                    <Th>Date</Th>
+                    <Th>Description</Th>
+                    <Th>Category</Th>
+                    <Th right>Amount</Th>
+                    <Th>Source</Th>
+                    <th className="px-4 py-3 w-10" />
                   </tr>
-                )
-              })}
-            </tbody>
-          </table>
+                </thead>
+                <tbody>
+                  {displayed.map((tx, i) => {
+                    const catStyle  = CATEGORY_COLORS[tx.category] || CATEGORY_COLORS['Other']
+                    const srcConfig = SOURCE_LABELS[tx.source]     || SOURCE_LABELS['Manual']
+                    const isPos     = Number(tx.amount) >= 0
+
+                    return (
+                      <tr key={tx.id} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}>
+                        <td className="px-4 pl-6 py-3 border-b border-slate-100 text-slate-500 whitespace-nowrap text-xs">
+                          {fmtDate(tx.date)}
+                        </td>
+                        <td className="px-4 py-3 border-b border-slate-100 text-slate-800 max-w-[260px] truncate font-medium">
+                          {tx.description}
+                        </td>
+                        <td className="px-4 py-3 border-b border-slate-100">
+                          <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${catStyle}`}>
+                            {tx.category}
+                          </span>
+                        </td>
+                        <td className={`px-4 py-3 border-b border-slate-100 text-right font-semibold tabular-nums whitespace-nowrap ${
+                          isPos ? 'text-emerald-600' : 'text-red-600'
+                        }`}>
+                          {fmt$(tx.amount, true)}
+                        </td>
+                        <td className="px-4 py-3 border-b border-slate-100">
+                          <span className="flex items-center gap-1.5 text-xs text-slate-500">
+                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${srcConfig.dot}`} />
+                            {srcConfig.label}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 pr-6 border-b border-slate-100">
+                          <button
+                            onClick={() => handleDelete(tx.id)}
+                            disabled={deleting === tx.id}
+                            className="p-1.5 rounded text-slate-200 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
+                            title="Delete"
+                          >
+                            {deleting === tx.id
+                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                              : <Trash2 className="w-3.5 h-3.5" />
+                            }
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
         )}
       </div>
 
