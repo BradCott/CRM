@@ -11,6 +11,7 @@ import InvestorUpload from './InvestorUpload'
 const CATEGORY_COLORS = {
   'Equity Contribution': 'bg-blue-100 text-blue-700',
   'Purchase':            'bg-red-100 text-red-700',
+  'Loan':                'bg-teal-100 text-teal-700',
   'Rent':                'bg-emerald-100 text-emerald-700',
   'Mortgage':            'bg-amber-100 text-amber-700',
   'Repair':              'bg-orange-100 text-orange-700',
@@ -155,11 +156,22 @@ export default function LedgerPage() {
     return 0
   })
 
+  // Cash balance excludes Building Value and Land Value — those are asset entries,
+  // not cash movements, and would distort the cash position if included.
+  const NON_CASH = new Set(['Building Value', 'Land Value'])
+  const cashBalance = transactions
+    .filter(t => !NON_CASH.has(t.description))
+    .reduce((s, t) => s + Number(t.amount), 0)
+
+  // Equity Contributed comes from the investors table, not from transactions,
+  // so that settlement-statement categories don't inflate the figure.
+  const equityContributed = investors.reduce((s, i) => s + Number(i.contribution || 0), 0)
+
   const totals = {
-    balance:   withBalance.length > 0 ? withBalance[withBalance.length - 1].running_balance : 0,
-    equity:    transactions.filter(t => t.category === 'Equity Contribution' && t.amount > 0).reduce((s, t) => s + t.amount, 0),
-    rent:      transactions.filter(t => t.category === 'Rent'               && t.amount > 0).reduce((s, t) => s + t.amount, 0),
-    mortgage:  transactions.filter(t => t.category === 'Mortgage'           && t.amount < 0).reduce((s, t) => s + t.amount, 0),
+    balance:   cashBalance,
+    equity:    equityContributed,
+    rent:      transactions.filter(t => t.category === 'Rent'    && t.amount > 0).reduce((s, t) => s + Number(t.amount), 0),
+    mortgage:  transactions.filter(t => t.category === 'Mortgage' && t.amount < 0).reduce((s, t) => s + Number(t.amount), 0),
   }
 
   if (loading) return (

@@ -131,27 +131,28 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
       const bPct = (Number(buildingPct) || 75) / 100
       const lPct = (Number(landPct) || 25) / 100
 
-      // Build transactions for ledger
+      // Build transactions for ledger.
+      // Sign convention: negative = cash/asset out, positive = cash in.
+      // Building/Land are asset entries (not cash), excluded from cash balance in LedgerPage.
       const txs = [
-        fields.purchase_price       && { description: 'Purchase Price',              category: 'Purchase',            amount: -pp },
-        pp > 0                      && { description: 'Building Value',               category: 'Purchase',            amount: -(pp * bPct) },
-        pp > 0                      && { description: 'Land Value',                   category: 'Purchase',            amount: -(pp * lPct) },
-        fields.loan_amount          && { description: 'Loan Proceeds',                category: 'Other',               amount:  Number(fields.loan_amount) },
-        fields.earnest_money        && { description: 'Earnest Money Deposit',        category: 'Other',               amount: -Number(fields.earnest_money) },
-        fields.cash_to_close        && { description: 'Cash to Close',                category: 'Equity Contribution', amount: -Number(fields.cash_to_close) },
-        fields.loan_origination_fee && { description: 'Loan Origination Fee',         category: 'Other',               amount: -Number(fields.loan_origination_fee) },
-        fields.appraisal_fee        && { description: 'Appraisal Fee',                category: 'Other',               amount: -Number(fields.appraisal_fee) },
-        fields.title_and_closing_fees && { description: 'Title and Closing Fees',     category: 'Other',               amount: -Number(fields.title_and_closing_fees) },
-        fields.recording_fees       && { description: 'Recording Fees',               category: 'Other',               amount: -Number(fields.recording_fees) },
-        fields.survey_fee           && { description: 'Survey Fee',                   category: 'Other',               amount: -Number(fields.survey_fee) },
-        fields.environmental_fees   && { description: 'Environmental / Phase I Fees', category: 'Other',               amount: -Number(fields.environmental_fees) },
-        fields.acquisition_fee      && { description: 'Knox Capital Acquisition Fee', category: 'Other',               amount: -Number(fields.acquisition_fee) },
-        fields.prorated_rent        && { description: 'Prorated Rent Credit',         category: 'Rent',                amount:  Number(fields.prorated_rent) },
-        fields.tax_credits          && { description: 'Property Tax Proration',       category: 'Other',               amount:  Number(fields.tax_credits) },
+        pp > 0                        && { description: 'Building Value',               category: 'Purchase', amount: -(pp * bPct) },
+        pp > 0                        && { description: 'Land Value',                   category: 'Purchase', amount: -(pp * lPct) },
+        fields.loan_amount            && { description: 'Loan Proceeds',                category: 'Loan',     amount:  Number(fields.loan_amount) },
+        fields.earnest_money          && { description: 'Earnest Money Deposit',        category: 'Purchase', amount: -Number(fields.earnest_money) },
+        fields.cash_to_close          && { description: 'Cash to Close',                category: 'Purchase', amount: -Number(fields.cash_to_close) },
+        fields.loan_origination_fee   && { description: 'Loan Origination Fee',         category: 'Purchase', amount: -Number(fields.loan_origination_fee) },
+        fields.appraisal_fee          && { description: 'Appraisal Fee',                category: 'Purchase', amount: -Number(fields.appraisal_fee) },
+        fields.title_and_closing_fees && { description: 'Title and Closing Fees',       category: 'Purchase', amount: -Number(fields.title_and_closing_fees) },
+        fields.recording_fees         && { description: 'Recording Fees',               category: 'Purchase', amount: -Number(fields.recording_fees) },
+        fields.survey_fee             && { description: 'Survey Fee',                   category: 'Purchase', amount: -Number(fields.survey_fee) },
+        fields.environmental_fees     && { description: 'Environmental / Phase I Fees', category: 'Purchase', amount: -Number(fields.environmental_fees) },
+        fields.acquisition_fee        && { description: 'Knox Capital Acquisition Fee', category: 'Purchase', amount: -Number(fields.acquisition_fee) },
+        fields.buyer_taxes_paid       && { description: 'Property Taxes Paid at Closing', category: 'Purchase', amount: -Number(fields.buyer_taxes_paid) },
+        fields.prorated_rent          && { description: 'Prorated Rent Credit',         category: 'Rent',     amount:  Number(fields.prorated_rent) },
+        fields.tax_credits            && { description: 'Property Tax Proration',       category: 'Other',    amount:  Number(fields.tax_credits) },
       ].filter(Boolean).map(t => ({ ...t, date, source: 'Settlement Statement' }))
 
-      // Remove the plain "Purchase Price" line since building+land replace it
-      const filteredTxs = txs.filter(t => t.description !== 'Purchase Price')
+      const filteredTxs = txs
 
       if (filteredTxs.length > 0) {
         await createTransactions(propertyId, filteredTxs)
