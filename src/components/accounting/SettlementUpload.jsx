@@ -96,12 +96,13 @@ function Field({ label, value, onChange, prefix = '$' }) {
 
 export default function SettlementUpload({ propertyId, onSaved, onClose }) {
   const inputRef = useRef()
-  const [step, setStep]       = useState('upload')
-  const [error, setError]     = useState(null)
-  const [fields, setFields]   = useState(null)
+  const [step, setStep]           = useState('upload')
+  const [error, setError]         = useState(null)
+  const [fields, setFields]       = useState(null)
   const [buildingPct, setBuildingPct] = useState(75)
   const [landPct, setLandPct]         = useState(25)
-  const [copied, setCopied]   = useState(false)
+  const [copied, setCopied]       = useState(false)
+  const [dragOver, setDragOver]   = useState(false)
 
   const setField = useCallback((key, val) => setFields(prev => ({ ...prev, [key]: val })), [])
 
@@ -218,9 +219,20 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
               className={`border-2 border-dashed rounded-xl p-12 text-center transition-all ${
                 step === 'parsing'
                   ? 'border-blue-300 bg-blue-50/50 cursor-default'
-                  : 'border-slate-300 hover:border-blue-300 hover:bg-blue-50/40 cursor-pointer'
+                  : dragOver
+                    ? 'border-blue-400 bg-blue-50 cursor-copy'
+                    : 'border-slate-300 hover:border-blue-300 hover:bg-blue-50/40 cursor-pointer'
               }`}
               onClick={() => step === 'upload' && inputRef.current?.click()}
+              onDragOver={e => { e.preventDefault(); if (step === 'upload') setDragOver(true) }}
+              onDragLeave={e => { e.preventDefault(); setDragOver(false) }}
+              onDrop={e => {
+                e.preventDefault()
+                setDragOver(false)
+                if (step !== 'upload') return
+                const file = e.dataTransfer.files[0]
+                if (file) handleFile(file)
+              }}
             >
               <input ref={inputRef} type="file" accept=".pdf" className="hidden"
                 onChange={e => handleFile(e.target.files[0])} />
@@ -232,8 +244,8 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
                 </>
               ) : (
                 <>
-                  <Upload className="w-10 h-10 mx-auto mb-3 text-slate-300" />
-                  <p className="text-sm font-medium text-slate-700">Drop PDF or click to browse</p>
+                  <Upload className={`w-10 h-10 mx-auto mb-3 ${dragOver ? 'text-blue-400' : 'text-slate-300'}`} />
+                  <p className="text-sm font-medium text-slate-700">{dragOver ? 'Release to upload' : 'Drop PDF or click to browse'}</p>
                   <p className="text-xs text-slate-400 mt-1">First American Title or HUD-1 format</p>
                 </>
               )}
