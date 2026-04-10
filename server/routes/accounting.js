@@ -1,12 +1,13 @@
 import { Router } from 'express'
 import multer from 'multer'
+import * as XLSX from 'xlsx'
 import db from '../db.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
 
 const CATEGORIES = ['Equity Contribution', 'Purchase', 'Rent', 'Mortgage', 'Repair', 'Sale', 'Other']
-const SOURCES    = ['Manual', 'Settlement Statement', 'Bank Statement']
+const SOURCES    = ['Manual', 'Settlement Statement', 'Bank Statement', 'Excel Upload']
 
 // ── Summary — all portfolio properties with computed stats ────────────────────
 
@@ -85,6 +86,90 @@ router.post('/:propertyId/transactions', (req, res) => {
 router.delete('/transactions/:id', (req, res) => {
   db.prepare('DELETE FROM accounting_transactions WHERE id = ?').run(req.params.id)
   res.status(204).end()
+})
+
+// ── Investors for a property ──────────────────────────────────────────────────
+
+router.get('/:propertyId/investors', (req, res) => {
+  const { propertyId } = req.params
+  const rows = db.prepare(`
+    SELECT id, property_id, name, address, contribution, percentage, class, preferred_return, created_at
+    FROM property_investors
+    WHERE property_id = ?
+    ORDER BY contribution DESC
+  `).all(propertyId)
+  res.json(rows)
+})
+
+router.post('/:propertyId/investors', (req, res) => {
+  const { propertyId } = req.params
+  const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(propertyId)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+
+  const investors = Array.isArray(req.body) ? req.body : [req.body]
+  if (!investors.length) return res.status(400).json({ error: 'No investors provided' })
+
+  const today = new Date().toISOString().slice(0, 10)
+
+  const insertInvestor = db.prepare(`
+    INSERT INTO property_investors (property_id, name, address, contribution, percentage, class, preferred_return)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `)
+  const insertTx = db.prepare(`
+    INSERT INTO accounting_transactions (property_id, date, description, category, amount, source)
+    VALUES (?, ?, ?, 'Equity Contribution', ?, 'Excel Upload')
+  `)
+
+  const saved = []
+  const txn = db.transaction(() => {
+    for (const inv of investors) {
+      const { name, address, contribution, percentage, class: cls, preferred_return } = inv
+      if (!name || contribution === undefined) throw new Error(`Missing name or contribution for investor: ${JSON.stringify(inv)}`)
+      const amount = Math.abs(parseFloat(contribution))
+      const r = insertInvestor.run(propertyId, name.trim(), address || null, amount, percentage ?? null, cls || null, preferred_return ?? null)
+      insertTx.run(propertyId, today, name.trim(), amount)
+      saved.push({ id: r.lastInsertRowid, property_id: Number(propertyId), name: name.trim(), address, contribution: amount, percentage, class: cls, preferred_return })
+    }
+  })
+  txn()
+
+  res.status(201).json(saved)
+})
+
+router.delete('/investors/:id', (req, res) => {
+  db.prepare('DELETE FROM property_investors WHERE id = ?').run(req.params.id)
+  res.status(204).end()
+})
+
+// ── Investor Contributions Excel AI parse ─────────────────────────────────────
+
+router.post('/:propertyId/investors/upload', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set' })
+
+  const { originalname, buffer } = req.file
+  console.log(`[accounting] Investor upload: ${originalname} (${buffer.length} bytes)`)
+
+  try {
+    // Convert Excel to CSV text so Claude can read it
+    const workbook = XLSX.read(buffer, { type: 'buffer' })
+    const sheets = workbook.SheetNames.map(name => {
+      const sheet = workbook.Sheets[name]
+      const csv = XLSX.utils.sheet_to_csv(sheet, { skipHidden: true })
+      return `=== Sheet: ${name} ===\n${csv}`
+    })
+    const excelText = sheets.join('\n\n')
+    console.log(`[accounting] Excel text (first 500 chars):`, excelText.slice(0, 500))
+
+    const result = await parseInvestorContributions(apiKey, excelText)
+    console.log(`[accounting] Investor parse: ${result.investors?.length ?? 0} investors`)
+    res.json({ ok: true, ...result })
+  } catch (err) {
+    console.error('[accounting] Investor parse error:', err)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // ── Settlement Statement AI parse ─────────────────────────────────────────────
@@ -268,6 +353,77 @@ async function parseSettlementStatement(buffer, apiKey) {
 
   // Apply the settlement date to all transactions so the client can use it
   return { settlement_date, property_address, transactions }
+}
+
+const INVESTOR_PROMPT = `You are extracting investor contribution data from a real estate investment spreadsheet.
+
+Return ONLY a valid JSON object in exactly this format:
+{
+  "investors": [
+    {
+      "name": "Full Name",
+      "address": "full mailing address or null",
+      "contribution": 250000,
+      "percentage": 12.5,
+      "class": "Investor",
+      "preferred_return": 8.0
+    }
+  ]
+}
+
+Rules:
+- "name": the investor's full name (string, required)
+- "address": their mailing address if shown, otherwise null
+- "contribution": capital contribution amount as a positive number (no $ signs or commas)
+- "percentage": ownership percentage as a number 0-100 (e.g. 12.5 for 12.5%), or null if not shown
+- "class": "Sponsor" or "Investor" based on the column/label in the spreadsheet; if unclear use "Investor"
+- "preferred_return": preferred return as a percentage number (e.g. 8 for 8%), or null if not shown
+- Extract ALL rows that represent investor contributions
+- Skip header rows, totals rows, or blank rows
+- Return ONLY the JSON object, no markdown, no explanation`
+
+async function parseInvestorContributions(apiKey, excelText) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 4096,
+      messages: [{
+        role: 'user',
+        content: `${INVESTOR_PROMPT}\n\nHere is the spreadsheet data:\n\n${excelText}`,
+      }],
+    }),
+  })
+
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.error?.message || `Anthropic API error ${response.status}`)
+  }
+
+  const data = await response.json()
+  const text = data.content?.[0]?.text || ''
+  console.log('[accounting] Investor Claude raw (first 500):', text.slice(0, 500))
+
+  const clean = text.replace(/```(?:json)?/g, '').trim()
+  const match = clean.match(/\{[\s\S]*\}/)
+  if (!match) throw new Error('Claude did not return a valid JSON object')
+
+  const raw = JSON.parse(match[0])
+  const investors = (raw.investors || []).map(inv => ({
+    name:             String(inv.name || '').trim(),
+    address:          inv.address ? String(inv.address).trim() : null,
+    contribution:     Math.abs(cleanNum(inv.contribution) ?? 0),
+    percentage:       cleanNum(inv.percentage),
+    class:            ['Sponsor', 'Investor'].includes(inv.class) ? inv.class : 'Investor',
+    preferred_return: cleanNum(inv.preferred_return),
+  })).filter(inv => inv.name && inv.contribution > 0)
+
+  return { investors }
 }
 
 async function parseBankStatement(buffer, apiKey) {

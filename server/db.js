@@ -277,6 +277,19 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_acct_property ON accounting_transactions(property_id);
   CREATE INDEX IF NOT EXISTS idx_acct_date     ON accounting_transactions(date);
+
+  CREATE TABLE IF NOT EXISTS property_investors (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id      INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    name             TEXT NOT NULL,
+    address          TEXT,
+    contribution     REAL NOT NULL,
+    percentage       REAL,
+    class            TEXT,
+    preferred_return REAL,
+    created_at       TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_prop_investors_property ON property_investors(property_id);
 `)
 for (const sql of migrations) {
   try { db.exec(sql) } catch (_) { /* column already exists — ignore */ }

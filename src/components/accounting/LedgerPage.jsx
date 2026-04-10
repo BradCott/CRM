@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2 } from 'lucide-react'
-import { getLedger, deleteTransaction } from '../../api/client'
+import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users } from 'lucide-react'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor } from '../../api/client'
 import Button from '../ui/Button'
 import AddTransactionModal from './AddTransactionModal'
 import SettlementUpload from './SettlementUpload'
 import BankStatementReview from './BankStatementReview'
+import InvestorUpload from './InvestorUpload'
 
 const CATEGORY_COLORS = {
   'Equity Contribution': 'bg-blue-100 text-blue-700',
@@ -21,6 +22,7 @@ const SOURCE_LABELS = {
   'Manual':               { dot: 'bg-slate-400',   label: 'Manual' },
   'Settlement Statement': { dot: 'bg-blue-500',    label: 'Settlement' },
   'Bank Statement':       { dot: 'bg-emerald-500', label: 'Bank' },
+  'Excel Upload':         { dot: 'bg-violet-500',  label: 'Excel' },
 }
 
 function fmt$(v, signed = false) {
@@ -48,14 +50,22 @@ export default function LedgerPage() {
   const [showAdd, setShowAdd]               = useState(false)
   const [showSettlement, setShowSettlement] = useState(false)
   const [showBank, setShowBank]             = useState(false)
+  const [showInvestors, setShowInvestors]   = useState(false)
   const [deleting, setDeleting]             = useState(null)
+
+  const [investors, setInvestors]           = useState([])
+  const [deletingInv, setDeletingInv]       = useState(null)
 
   const reload = useCallback(() => {
     setLoading(true)
-    getLedger(propertyId)
-      .then(data => {
-        setProperty(data.property)
-        setTransactions(data.transactions)
+    Promise.all([
+      getLedger(propertyId),
+      getInvestors(propertyId),
+    ])
+      .then(([ledger, invs]) => {
+        setProperty(ledger.property)
+        setTransactions(ledger.transactions)
+        setInvestors(invs)
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
@@ -70,6 +80,16 @@ export default function LedgerPage() {
       setTransactions(prev => prev.filter(t => t.id !== id))
     } finally {
       setDeleting(null)
+    }
+  }
+
+  async function handleDeleteInvestor(id) {
+    setDeletingInv(id)
+    try {
+      await deleteInvestor(id)
+      setInvestors(prev => prev.filter(i => i.id !== id))
+    } finally {
+      setDeletingInv(null)
     }
   }
 
@@ -130,12 +150,15 @@ export default function LedgerPage() {
             )}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <Button variant="secondary" onClick={() => setShowSettlement(true)}>
               <FileText className="w-4 h-4" /> Settlement Statement
             </Button>
             <Button variant="secondary" onClick={() => setShowBank(true)}>
               <Landmark className="w-4 h-4" /> Bank Statement
+            </Button>
+            <Button variant="secondary" onClick={() => setShowInvestors(true)}>
+              <Users className="w-4 h-4" /> Investor Contributions
             </Button>
             <Button onClick={() => setShowAdd(true)}>
               <Plus className="w-4 h-4" /> Add Transaction
@@ -157,6 +180,52 @@ export default function LedgerPage() {
           <Stat label="Transactions"       value={transactions.length}    color="text-slate-700" />
         </div>
       </header>
+
+      {/* Investors section */}
+      {investors.length > 0 && (
+        <div className="shrink-0 px-6 py-4 bg-slate-50 border-b border-slate-200">
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
+            Investors — {investors.length} · {fmt$(investors.reduce((s, i) => s + i.contribution, 0))} total equity
+          </h3>
+          <div className="flex flex-wrap gap-3">
+            {investors.map(inv => (
+              <div key={inv.id} className="flex items-start gap-3 bg-white rounded-xl border border-slate-200 px-4 py-3 shadow-sm min-w-[200px]">
+                <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center shrink-0 mt-0.5">
+                  <span className="text-xs font-bold text-blue-700">{inv.name.charAt(0).toUpperCase()}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-slate-900 truncate">{inv.name}</p>
+                  <p className="text-xs text-emerald-700 font-medium tabular-nums">{fmt$(inv.contribution)}</p>
+                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                    {inv.percentage != null && (
+                      <span className="text-xs text-slate-500">{inv.percentage}% ownership</span>
+                    )}
+                    {inv.class && (
+                      <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
+                        inv.class === 'Sponsor' ? 'bg-violet-100 text-violet-700' : 'bg-blue-100 text-blue-700'
+                      }`}>{inv.class}</span>
+                    )}
+                    {inv.preferred_return != null && (
+                      <span className="text-xs text-slate-500">{inv.preferred_return}% pref</span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleDeleteInvestor(inv.id)}
+                  disabled={deletingInv === inv.id}
+                  className="p-1 rounded text-slate-200 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40 shrink-0"
+                  title="Remove investor"
+                >
+                  {deletingInv === inv.id
+                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    : <Trash2 className="w-3.5 h-3.5" />
+                  }
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Ledger table */}
       <div className="flex-1 overflow-y-auto">
@@ -256,6 +325,14 @@ export default function LedgerPage() {
           propertyId={propertyId}
           onSaved={reload}
           onClose={() => setShowBank(false)}
+        />
+      )}
+
+      {showInvestors && (
+        <InvestorUpload
+          propertyId={propertyId}
+          onSaved={reload}
+          onClose={() => setShowInvestors(false)}
         />
       )}
     </div>
