@@ -14,13 +14,16 @@ const fmtSigned = (v, pos = false) => {
 }
 
 // Build QuickBooks journal entry lines from fields + split
+// DEBITS  = purchase price (building + land) + all costs PAID by buyer
+// CREDITS = loan + cash to close + earnest money + all credits RECEIVED by buyer
 function buildJournal(f, buildingPct, landPct) {
-  const pp    = Number(f.purchase_price)  || 0
-  const loan  = Number(f.loan_amount)     || 0
-  const ctc   = Number(f.cash_to_close)  || 0
-  const em    = Number(f.earnest_money)   || 0
-  const rent  = Number(f.prorated_rent)  || 0
-  const tax   = Number(f.tax_credits)    || 0
+  const pp    = Number(f.purchase_price)    || 0
+  const loan  = Number(f.loan_amount)       || 0
+  const ctc   = Number(f.cash_to_close)     || 0
+  const em    = Number(f.earnest_money)     || 0
+  const rent  = Number(f.prorated_rent)     || 0
+  const taxCr = Number(f.tax_credits)       || 0  // credits FROM seller TO buyer
+  const taxPd = Number(f.buyer_taxes_paid)  || 0  // taxes PAID by buyer (debit)
 
   const bPct  = Math.max(0, Math.min(100, Number(buildingPct) || 75)) / 100
   const lPct  = Math.max(0, Math.min(100, Number(landPct)     || 25)) / 100
@@ -35,14 +38,15 @@ function buildJournal(f, buildingPct, landPct) {
     { account: 'Survey Fee',                         amount: Number(f.survey_fee) || 0 },
     { account: 'Environmental / Phase I Fees',       amount: Number(f.environmental_fees) || 0 },
     { account: 'Consulting / Acquisition Fee',       amount: Number(f.acquisition_fee) || 0 },
-    { account: 'Property Tax Proration',             amount: Number(f.tax_credits) || 0 },
+    { account: 'Property Taxes Paid at Closing',     amount: taxPd },
   ].filter(d => d.amount > 0)
 
   const credits = [
     { account: 'Mortgage Loan Payable',              amount: loan },
     { account: 'Cash / Checking Account',            amount: ctc },
-    { account: 'Prorated Rent Received',             amount: rent },
     { account: 'Earnest Money Deposit Applied',      amount: em },
+    { account: 'Prorated Rent Credit',               amount: rent },
+    { account: 'Tax / Proration Credits',            amount: taxCr },
   ].filter(c => c.amount > 0)
 
   const totalDebits  = debits.reduce((s, d) => s + d.amount, 0)
@@ -263,8 +267,9 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
                     <Field label="Survey Fee"              value={fields.survey_fee}            onChange={v => setField('survey_fee', v)} />
                     <Field label="Environmental / PCA"     value={fields.environmental_fees}    onChange={v => setField('environmental_fees', v)} />
                     <Field label="Knox Acquisition Fee"    value={fields.acquisition_fee}       onChange={v => setField('acquisition_fee', v)} />
-                    <Field label="Prorated Rent (Credit)"  value={fields.prorated_rent}         onChange={v => setField('prorated_rent', v)} />
-                    <Field label="Tax Credits / Prorations" value={fields.tax_credits}          onChange={v => setField('tax_credits', v)} />
+                    <Field label="Prorated Rent (Credit to Buyer)"     value={fields.prorated_rent}      onChange={v => setField('prorated_rent', v)} />
+                    <Field label="Tax Proration Credit (from Seller)"  value={fields.tax_credits}        onChange={v => setField('tax_credits', v)} />
+                    <Field label="Property Taxes Paid at Closing"      value={fields.buyer_taxes_paid}   onChange={v => setField('buyer_taxes_paid', v)} />
                   </div>
 
                   {/* Building / Land split */}
@@ -344,8 +349,13 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
                             <td className="px-3 py-2 text-right font-bold text-slate-900 tabular-nums">{$(journal.totalCredits)}</td>
                           </tr>
                           <tr>
-                            <td colSpan={3} className={`px-3 py-1.5 text-center text-xs font-medium ${Math.abs(journal.diff) < 1 ? 'text-emerald-600' : 'text-amber-600'}`}>
-                              {Math.abs(journal.diff) < 1 ? '✓ Balanced' : `⚠ Difference: ${$(Math.abs(journal.diff))} — adjust fields until balanced`}
+                            <td colSpan={3} className={`px-3 py-1.5 text-center text-xs font-medium ${Math.abs(journal.diff) < 1 ? 'text-emerald-600' : 'text-red-600'}`}>
+                              {Math.abs(journal.diff) < 1
+                                ? '✓ Balanced'
+                                : journal.diff > 0
+                                  ? `⚠ Debits exceed credits by ${$(journal.diff)} — increase a credit field`
+                                  : `⚠ Credits exceed debits by ${$(Math.abs(journal.diff))} — increase a debit field`
+                              }
                             </td>
                           </tr>
                         </tfoot>

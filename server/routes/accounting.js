@@ -267,6 +267,7 @@ Return ONLY a valid JSON object in exactly this format — every field is requir
   "acquisition_fee": number or null,
   "prorated_rent": number or null,
   "tax_credits": number or null,
+  "buyer_taxes_paid": number or null,
   "total_closing_costs": number or null
 }
 
@@ -284,7 +285,8 @@ Field extraction rules:
 - "environmental_fees": Phase I ESA, Phase II ESA, PCA (Property Condition Assessment), environmental report fees — sum all
 - "acquisition_fee": Any fee paid to Knox Capital, acquisition fee, or advisory/consulting fee at closing
 - "prorated_rent": Prorated rent credited to buyer (positive = credit to buyer)
-- "tax_credits": Property tax proration or credit to buyer
+- "tax_credits": Tax proration CREDITED to the buyer by the seller — i.e. seller's share of unpaid taxes given to buyer as a credit (HUD-1 lines 210-219, First American Buyer Credit column for taxes). Do NOT include taxes paid BY the buyer here.
+- "buyer_taxes_paid": Property taxes or back taxes PAID BY the buyer at closing — a cost to the buyer, not a credit (HUD-1 lines 1300-1399, e.g. line 1301 back taxes, delinquent taxes). If none, null.
 - "total_closing_costs": Total closing costs line if present, else null
 
 For HUD-1: line 101 = purchase price, lines 800s = loan charges, lines 1100s = title charges, lines 1200s = recording, line 201 = earnest money, line 120/303 = cash to close
@@ -409,6 +411,7 @@ async function parseSettlementStatement(buffer, apiKey) {
     acquisition_fee:      cn(raw.acquisition_fee),
     prorated_rent:        cn(raw.prorated_rent),
     tax_credits:          cn(raw.tax_credits),
+    buyer_taxes_paid:     cn(raw.buyer_taxes_paid),
     total_closing_costs:  cn(raw.total_closing_costs),
   }
 }
