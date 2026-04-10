@@ -64,19 +64,16 @@ router.post('/:propertyId/transactions', (req, res) => {
   `)
 
   const created = []
-  const txn = db.transaction(() => {
-    for (const t of payload) {
-      const { date, description, category, amount, source = 'Manual' } = t
-      if (!date || !description || !category || amount === undefined) {
-        throw new Error(`Missing required fields on transaction: ${JSON.stringify(t)}`)
-      }
-      if (!CATEGORIES.includes(category)) throw new Error(`Invalid category: ${category}`)
-      if (!SOURCES.includes(source))    throw new Error(`Invalid source: ${source}`)
-      const r = stmt.run(propertyId, date, description, category, parseFloat(amount), source)
-      created.push({ id: r.lastInsertRowid, property_id: Number(propertyId), date, description, category, amount: parseFloat(amount), source })
+  for (const t of payload) {
+    const { date, description, category, amount, source = 'Manual' } = t
+    if (!date || !description || !category || amount === undefined) {
+      return res.status(400).json({ error: `Missing required fields on transaction: ${JSON.stringify(t)}` })
     }
-  })
-  txn()
+    if (!CATEGORIES.includes(category)) return res.status(400).json({ error: `Invalid category: ${category}` })
+    if (!SOURCES.includes(source))      return res.status(400).json({ error: `Invalid source: ${source}` })
+    const r = stmt.run(propertyId, date, description, category, parseFloat(amount), source)
+    created.push({ id: r.lastInsertRowid, property_id: Number(propertyId), date, description, category, amount: parseFloat(amount), source })
+  }
 
   res.status(201).json(created)
 })
@@ -121,17 +118,16 @@ router.post('/:propertyId/investors', (req, res) => {
   `)
 
   const saved = []
-  const txn = db.transaction(() => {
-    for (const inv of investors) {
-      const { name, address, contribution, percentage, class: cls, preferred_return } = inv
-      if (!name || contribution === undefined) throw new Error(`Missing name or contribution for investor: ${JSON.stringify(inv)}`)
-      const amount = Math.abs(parseFloat(contribution))
-      const r = insertInvestor.run(propertyId, name.trim(), address || null, amount, percentage ?? null, cls || null, preferred_return ?? null)
-      insertTx.run(propertyId, today, name.trim(), amount)
-      saved.push({ id: r.lastInsertRowid, property_id: Number(propertyId), name: name.trim(), address, contribution: amount, percentage, class: cls, preferred_return })
+  for (const inv of investors) {
+    const { name, address, contribution, percentage, class: cls, preferred_return } = inv
+    if (!name || contribution === undefined) {
+      return res.status(400).json({ error: `Missing name or contribution for investor: ${JSON.stringify(inv)}` })
     }
-  })
-  txn()
+    const amount = Math.abs(parseFloat(contribution))
+    const r = insertInvestor.run(propertyId, name.trim(), address || null, amount, percentage ?? null, cls || null, preferred_return ?? null)
+    insertTx.run(propertyId, today, name.trim(), amount)
+    saved.push({ id: r.lastInsertRowid, property_id: Number(propertyId), name: name.trim(), address, contribution: amount, percentage, class: cls, preferred_return })
+  }
 
   res.status(201).json(saved)
 })
