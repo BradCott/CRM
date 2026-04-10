@@ -13,40 +13,39 @@ const fmtSigned = (v, pos = false) => {
   return (pos ? '+' : '-') + '$' + Math.abs(Math.round(n)).toLocaleString()
 }
 
-// Build QuickBooks journal entry lines from fields + split
-// DEBITS  = purchase price (building + land) + all costs PAID by buyer
-// CREDITS = loan + cash to close + earnest money + all credits RECEIVED by buyer
+// Build QuickBooks journal entry lines from fields + split.
+//
+// This formula always balances by definition on any settlement statement:
+//   DEBITS  = Purchase Price (Building + Land split) + Total Closing Costs (line 103)
+//   CREDITS = Loan + Earnest Money + Buyer Credits (prorations) + Cash to Close
+//
+// Individual line items (survey, title, etc.) are shown in the fields panel
+// for reference but are NOT used as separate journal entry debits — only the
+// total_closing_costs figure (line 103 / total buyer charges) is used.
 function buildJournal(f, buildingPct, landPct) {
-  const pp    = Number(f.purchase_price)    || 0
-  const loan  = Number(f.loan_amount)       || 0
-  const ctc   = Number(f.cash_to_close)     || 0
-  const em    = Number(f.earnest_money)     || 0
-  const rent  = Number(f.prorated_rent)     || 0
-  const taxCr = Number(f.tax_credits)       || 0  // credits FROM seller TO buyer
-  const taxPd = Number(f.buyer_taxes_paid)  || 0  // taxes PAID by buyer (debit)
+  const pp      = Number(f.purchase_price)      || 0
+  const loan    = Number(f.loan_amount)          || 0
+  const ctc     = Number(f.cash_to_close)        || 0
+  const em      = Number(f.earnest_money)        || 0
+  const rent    = Number(f.prorated_rent)        || 0
+  const taxCr   = Number(f.tax_credits)          || 0  // credits FROM seller TO buyer
+  const closing = Number(f.total_closing_costs)  || 0  // line 103 / total buyer charges
 
   const bPct  = Math.max(0, Math.min(100, Number(buildingPct) || 75)) / 100
   const lPct  = Math.max(0, Math.min(100, Number(landPct)     || 25)) / 100
 
   const debits = [
-    { account: 'Building',                           amount: pp * bPct },
-    { account: 'Land',                               amount: pp * lPct },
-    { account: 'Loan Origination Fee',               amount: Number(f.loan_origination_fee) || 0 },
-    { account: 'Appraisal Fee',                      amount: Number(f.appraisal_fee) || 0 },
-    { account: 'Title and Closing Fees',             amount: Number(f.title_and_closing_fees) || 0 },
-    { account: 'Recording Fees',                     amount: Number(f.recording_fees) || 0 },
-    { account: 'Survey Fee',                         amount: Number(f.survey_fee) || 0 },
-    { account: 'Environmental / Phase I Fees',       amount: Number(f.environmental_fees) || 0 },
-    { account: 'Consulting / Acquisition Fee',       amount: Number(f.acquisition_fee) || 0 },
-    { account: 'Property Taxes Paid at Closing',     amount: taxPd },
+    { account: 'Building',            amount: pp * bPct },
+    { account: 'Land',                amount: pp * lPct },
+    { account: 'Total Closing Costs', amount: closing   },
   ].filter(d => d.amount > 0)
 
   const credits = [
-    { account: 'Mortgage Loan Payable',              amount: loan },
-    { account: 'Cash / Checking Account',            amount: ctc },
-    { account: 'Earnest Money Deposit Applied',      amount: em },
-    { account: 'Prorated Rent Credit',               amount: rent },
-    { account: 'Tax / Proration Credits',            amount: taxCr },
+    { account: 'Mortgage Loan Payable',         amount: loan  },
+    { account: 'Earnest Money Deposit Applied', amount: em    },
+    { account: 'Tax / Proration Credits',       amount: taxCr },
+    { account: 'Prorated Rent Credit',          amount: rent  },
+    { account: 'Cash / Checking Account',       amount: ctc   },
   ].filter(c => c.amount > 0)
 
   const totalDebits  = debits.reduce((s, d) => s + d.amount, 0)
@@ -268,20 +267,23 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
                 <div>
                   <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Extracted Fields</h3>
                   <div className="bg-slate-50 rounded-xl px-4 py-2">
-                    <Field label="Purchase Price"          value={fields.purchase_price}        onChange={v => setField('purchase_price', v)} />
-                    <Field label="Loan Amount"             value={fields.loan_amount}           onChange={v => setField('loan_amount', v)} />
-                    <Field label="Earnest Money Deposit"   value={fields.earnest_money}         onChange={v => setField('earnest_money', v)} />
-                    <Field label="Cash to Close"           value={fields.cash_to_close}         onChange={v => setField('cash_to_close', v)} />
-                    <Field label="Loan Origination Fee"    value={fields.loan_origination_fee}  onChange={v => setField('loan_origination_fee', v)} />
-                    <Field label="Appraisal Fee"           value={fields.appraisal_fee}         onChange={v => setField('appraisal_fee', v)} />
-                    <Field label="Title & Closing Fees"    value={fields.title_and_closing_fees} onChange={v => setField('title_and_closing_fees', v)} />
-                    <Field label="Recording Fees"          value={fields.recording_fees}        onChange={v => setField('recording_fees', v)} />
-                    <Field label="Survey Fee"              value={fields.survey_fee}            onChange={v => setField('survey_fee', v)} />
-                    <Field label="Environmental / PCA"     value={fields.environmental_fees}    onChange={v => setField('environmental_fees', v)} />
-                    <Field label="Knox Acquisition Fee"    value={fields.acquisition_fee}       onChange={v => setField('acquisition_fee', v)} />
-                    <Field label="Prorated Rent (Credit to Buyer)"     value={fields.prorated_rent}      onChange={v => setField('prorated_rent', v)} />
-                    <Field label="Tax Proration Credit (from Seller)"  value={fields.tax_credits}        onChange={v => setField('tax_credits', v)} />
-                    <Field label="Property Taxes Paid at Closing"      value={fields.buyer_taxes_paid}   onChange={v => setField('buyer_taxes_paid', v)} />
+                    <Field label="Purchase Price"             value={fields.purchase_price}         onChange={v => setField('purchase_price', v)} />
+                    <Field label="Loan Amount"                value={fields.loan_amount}            onChange={v => setField('loan_amount', v)} />
+                    <Field label="Earnest Money Deposit"      value={fields.earnest_money}          onChange={v => setField('earnest_money', v)} />
+                    <Field label="Cash to Close"              value={fields.cash_to_close}          onChange={v => setField('cash_to_close', v)} />
+                    <Field label="Total Closing Costs (Line 103)" value={fields.total_closing_costs} onChange={v => setField('total_closing_costs', v)} />
+                    <p className="text-xs text-slate-400 pt-2 pb-1 border-t border-slate-100 mt-1">Individual line items (for reference)</p>
+                    <Field label="Loan Origination Fee"       value={fields.loan_origination_fee}   onChange={v => setField('loan_origination_fee', v)} />
+                    <Field label="Appraisal Fee"              value={fields.appraisal_fee}          onChange={v => setField('appraisal_fee', v)} />
+                    <Field label="Title & Closing Fees"       value={fields.title_and_closing_fees} onChange={v => setField('title_and_closing_fees', v)} />
+                    <Field label="Recording Fees"             value={fields.recording_fees}         onChange={v => setField('recording_fees', v)} />
+                    <Field label="Survey Fee"                 value={fields.survey_fee}             onChange={v => setField('survey_fee', v)} />
+                    <Field label="Environmental / PCA"        value={fields.environmental_fees}     onChange={v => setField('environmental_fees', v)} />
+                    <Field label="Knox Acquisition Fee"       value={fields.acquisition_fee}        onChange={v => setField('acquisition_fee', v)} />
+                    <Field label="Property Taxes Paid at Closing" value={fields.buyer_taxes_paid}   onChange={v => setField('buyer_taxes_paid', v)} />
+                    <p className="text-xs text-slate-400 pt-2 pb-1 border-t border-slate-100 mt-1">Credits received by buyer</p>
+                    <Field label="Tax Proration Credit (from Seller)"  value={fields.tax_credits}   onChange={v => setField('tax_credits', v)} />
+                    <Field label="Prorated Rent (Credit to Buyer)"     value={fields.prorated_rent}  onChange={v => setField('prorated_rent', v)} />
                   </div>
 
                   {/* Building / Land split */}

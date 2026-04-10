@@ -287,7 +287,7 @@ Field extraction rules:
 - "prorated_rent": Prorated rent credited to buyer (positive = credit to buyer)
 - "tax_credits": Tax proration CREDITED to the buyer by the seller — i.e. seller's share of unpaid taxes given to buyer as a credit (HUD-1 lines 210-219, First American Buyer Credit column for taxes). Do NOT include taxes paid BY the buyer here.
 - "buyer_taxes_paid": Property taxes or back taxes PAID BY the buyer at closing — a cost to the buyer, not a credit (HUD-1 lines 1300-1399, e.g. line 1301 back taxes, delinquent taxes). If none, null.
-- "total_closing_costs": Total closing costs line if present, else null
+- "total_closing_costs": The single total of ALL settlement charges paid by the buyer — use HUD-1 line 103 "Settlement charges to borrower" exactly; for First American Title use the total of all Buyer Charge column entries (excluding purchase price and loan payoff). This is the authoritative total used for the journal entry — do not sum individual items yourself, find the printed total line.
 
 For HUD-1: line 101 = purchase price, lines 800s = loan charges, lines 1100s = title charges, lines 1200s = recording, line 201 = earnest money, line 120/303 = cash to close
 For First American: look for Buyer Charge column (costs) and Buyer Credit column (credits/loans)
