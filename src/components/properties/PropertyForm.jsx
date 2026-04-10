@@ -34,7 +34,10 @@ const LEASE_TYPES     = ['NNN', 'NN', 'N', 'Gross', 'Modified Gross', 'Ground Le
 
 function validate(data) {
   const errors = {}
-  if (!data.address.trim()) errors.address = 'Address is required'
+  if (!data.address.trim())     errors.address       = 'Required'
+  if (!data.city.trim())        errors.city          = 'Required'
+  if (!data.state.trim())       errors.state         = 'Required'
+  if (!String(data.purchase_price || '').trim()) errors.purchase_price = 'Required'
   return errors
 }
 
@@ -91,9 +94,12 @@ export default function PropertyForm({ property, onSave, onClose }) {
       }
       // fee_amount: null if auto, parsed float if override
       payload.fee_amount = feeOverride && feeInput !== '' ? parseFloat(feeInput) : null
+      console.log('[PropertyForm] submitting payload:', payload)
       await onSave(payload)
+      console.log('[PropertyForm] save succeeded, closing form')
       onClose()
     } catch (err) {
+      console.error('[PropertyForm] save error:', err)
       setSaveError(err.message || 'Failed to save property. Please try again.')
     } finally {
       setSaving(false)
@@ -104,18 +110,32 @@ export default function PropertyForm({ property, onSave, onClose }) {
     <p className="text-xs font-semibold text-slate-500 uppercase tracking-widest pt-4 pb-1 border-t border-slate-100">{title}</p>
   )
 
+  const hasErrors = Object.keys(errors).length > 0
+
   return (
     <form onSubmit={handleSubmit} className="px-6 py-5 space-y-3">
+      {hasErrors && (
+        <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
+          <p className="font-medium mb-1">Please fill in all required fields:</p>
+          <ul className="list-disc list-inside space-y-0.5">
+            {errors.address       && <li>Street address</li>}
+            {errors.city          && <li>City</li>}
+            {errors.state         && <li>State</li>}
+            {errors.purchase_price && <li>Purchase price</li>}
+          </ul>
+        </div>
+      )}
       {saveError && (
         <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">
-          {saveError}
+          <p className="font-medium">Save failed</p>
+          <p>{saveError}</p>
         </div>
       )}
       <Section title="Location" />
       <Input label="Street address *" value={form.address} onChange={set('address')} error={errors.address} placeholder="123 Main St" autoFocus />
       <div className="grid grid-cols-3 gap-3">
-        <Input label="City" value={form.city} onChange={set('city')} placeholder="Chicago" />
-        <Input label="State" value={form.state} onChange={set('state')} placeholder="IL" maxLength={2} />
+        <Input label="City *" value={form.city} onChange={set('city')} error={errors.city} placeholder="Chicago" />
+        <Input label="State *" value={form.state} onChange={set('state')} error={errors.state} placeholder="IL" maxLength={2} />
         <Input label="ZIP" value={form.zip} onChange={set('zip')} placeholder="60601" />
       </div>
 
@@ -168,7 +188,7 @@ export default function PropertyForm({ property, onSave, onClose }) {
       <div className="grid grid-cols-3 gap-3">
         <Input label="Cap rate (%)" type="number" step="0.01" value={form.cap_rate} onChange={num('cap_rate')} placeholder="5.75" />
         <Input label="List price ($)" type="number" value={form.list_price} onChange={num('list_price')} placeholder="2000000" />
-        <Input label="Purchase price ($)" type="number" value={form.purchase_price} onChange={num('purchase_price')} placeholder="1800000" />
+        <Input label="Purchase price ($) *" type="number" value={form.purchase_price} onChange={num('purchase_price')} error={errors.purchase_price} placeholder="1800000" />
       </div>
       <div className="grid grid-cols-3 gap-3">
         <Input label="Taxes ($)" type="number" value={form.taxes} onChange={num('taxes')} placeholder="12000" />

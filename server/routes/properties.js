@@ -131,63 +131,84 @@ router.get('/:id', (req, res) => {
 
 router.post('/', (req, res) => {
   const f = req.body
+  console.log('[POST /api/properties] incoming body keys:', Object.keys(f))
   if (!f.address) return res.status(400).json({ error: 'address is required' })
-  const r = db.prepare(`
-    INSERT INTO properties
-      (address,city,state,zip,tenant_brand_id,owner_id,building_size,land_area,
-       year_built,property_type,construction_type,lease_type,lease_start,lease_end,
-       annual_rent,rent_bumps,renewal_options,noi,cap_rate,list_price,taxes,insurance,
-       roof_year,hvac_year,parking_lot,notes,sf_id,fee_pct,listing_status,fee_amount,
-       purchase_price,dd_end_date,close_date)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-  `).run(
-    f.address, f.city||null, f.state||null, f.zip||null,
-    f.tenant_brand_id||null, f.owner_id||null,
-    f.building_size||null, f.land_area||null, f.year_built||null,
-    f.property_type||null, f.construction_type||null,
-    f.lease_type||null, f.lease_start||null, f.lease_end||null,
-    f.annual_rent||null, f.rent_bumps||null, f.renewal_options||null,
-    f.noi||null, f.cap_rate||null, f.list_price||null,
-    f.taxes||null, f.insurance||null,
-    f.roof_year||null, f.hvac_year||null, f.parking_lot||null,
-    f.notes||null, f.sf_id||null,
-    f.fee_pct != null ? f.fee_pct : 2.0,
-    f.listing_status||null,
-    f.fee_amount != null ? f.fee_amount : null,
-    f.purchase_price||null, f.dd_end_date||null, f.close_date||null,
-  )
-  res.status(201).json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(r.lastInsertRowid))
+  try {
+    const r = db.prepare(`
+      INSERT INTO properties
+        (address,city,state,zip,tenant_brand_id,owner_id,building_size,land_area,
+         year_built,property_type,construction_type,lease_type,lease_start,lease_end,
+         annual_rent,rent_bumps,renewal_options,noi,cap_rate,list_price,taxes,insurance,
+         roof_year,hvac_year,parking_lot,notes,sf_id,fee_pct,listing_status,fee_amount,
+         purchase_price,dd_end_date,close_date)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+    `).run(
+      f.address, f.city||null, f.state||null, f.zip||null,
+      f.tenant_brand_id||null, f.owner_id||null,
+      f.building_size||null, f.land_area||null, f.year_built||null,
+      f.property_type||null, f.construction_type||null,
+      f.lease_type||null, f.lease_start||null, f.lease_end||null,
+      f.annual_rent||null, f.rent_bumps||null, f.renewal_options||null,
+      f.noi||null, f.cap_rate||null, f.list_price||null,
+      f.taxes||null, f.insurance||null,
+      f.roof_year||null, f.hvac_year||null, f.parking_lot||null,
+      f.notes||null, f.sf_id||null,
+      f.fee_pct != null ? f.fee_pct : 2.0,
+      f.listing_status||null,
+      f.fee_amount != null ? f.fee_amount : null,
+      f.purchase_price||null, f.dd_end_date||null, f.close_date||null
+    )
+    console.log('[POST /api/properties] inserted rowid:', r.lastInsertRowid)
+    const row = db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(r.lastInsertRowid)
+    if (!row) {
+      console.error('[POST /api/properties] row not found after insert, rowid:', r.lastInsertRowid)
+      return res.status(500).json({ error: 'Property was saved but could not be retrieved' })
+    }
+    console.log('[POST /api/properties] returning property id:', row.id)
+    res.status(201).json(row)
+  } catch (err) {
+    console.error('[POST /api/properties] SQL error:', err.message)
+    res.status(500).json({ error: err.message || 'Failed to save property' })
+  }
 })
 
 router.put('/:id', (req, res) => {
   const f = req.body
-  db.prepare(`
-    UPDATE properties SET
-      address=?,city=?,state=?,zip=?,tenant_brand_id=?,owner_id=?,
-      building_size=?,land_area=?,year_built=?,property_type=?,construction_type=?,
-      lease_type=?,lease_start=?,lease_end=?,annual_rent=?,rent_bumps=?,renewal_options=?,
-      noi=?,cap_rate=?,list_price=?,taxes=?,insurance=?,
-      roof_year=?,hvac_year=?,parking_lot=?,notes=?,sf_id=?,fee_pct=?,listing_status=?,fee_amount=?,
-      purchase_price=?,dd_end_date=?,close_date=?
-    WHERE id=?
-  `).run(
-    f.address, f.city||null, f.state||null, f.zip||null,
-    f.tenant_brand_id||null, f.owner_id||null,
-    f.building_size||null, f.land_area||null, f.year_built||null,
-    f.property_type||null, f.construction_type||null,
-    f.lease_type||null, f.lease_start||null, f.lease_end||null,
-    f.annual_rent||null, f.rent_bumps||null, f.renewal_options||null,
-    f.noi||null, f.cap_rate||null, f.list_price||null,
-    f.taxes||null, f.insurance||null,
-    f.roof_year||null, f.hvac_year||null, f.parking_lot||null,
-    f.notes||null, f.sf_id||null,
-    f.fee_pct != null ? f.fee_pct : 2.0,
-    f.listing_status||null,
-    f.fee_amount != null ? f.fee_amount : null,
-    f.purchase_price||null, f.dd_end_date||null, f.close_date||null,
-    req.params.id
-  )
-  res.json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id))
+  console.log('[PUT /api/properties/:id] id:', req.params.id)
+  try {
+    db.prepare(`
+      UPDATE properties SET
+        address=?,city=?,state=?,zip=?,tenant_brand_id=?,owner_id=?,
+        building_size=?,land_area=?,year_built=?,property_type=?,construction_type=?,
+        lease_type=?,lease_start=?,lease_end=?,annual_rent=?,rent_bumps=?,renewal_options=?,
+        noi=?,cap_rate=?,list_price=?,taxes=?,insurance=?,
+        roof_year=?,hvac_year=?,parking_lot=?,notes=?,sf_id=?,fee_pct=?,listing_status=?,fee_amount=?,
+        purchase_price=?,dd_end_date=?,close_date=?
+      WHERE id=?
+    `).run(
+      f.address, f.city||null, f.state||null, f.zip||null,
+      f.tenant_brand_id||null, f.owner_id||null,
+      f.building_size||null, f.land_area||null, f.year_built||null,
+      f.property_type||null, f.construction_type||null,
+      f.lease_type||null, f.lease_start||null, f.lease_end||null,
+      f.annual_rent||null, f.rent_bumps||null, f.renewal_options||null,
+      f.noi||null, f.cap_rate||null, f.list_price||null,
+      f.taxes||null, f.insurance||null,
+      f.roof_year||null, f.hvac_year||null, f.parking_lot||null,
+      f.notes||null, f.sf_id||null,
+      f.fee_pct != null ? f.fee_pct : 2.0,
+      f.listing_status||null,
+      f.fee_amount != null ? f.fee_amount : null,
+      f.purchase_price||null, f.dd_end_date||null, f.close_date||null,
+      req.params.id
+    )
+    console.log('[PUT /api/properties/:id] updated id:', req.params.id)
+    const row = db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id)
+    res.json(row)
+  } catch (err) {
+    console.error('[PUT /api/properties/:id] SQL error:', err.message)
+    res.status(500).json({ error: err.message || 'Failed to update property' })
+  }
 })
 
 // PATCH /api/properties/:id/portfolio — toggle portfolio flag
