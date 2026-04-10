@@ -58,6 +58,7 @@ export default function LedgerPage() {
   const [editingContrib, setEditingContrib] = useState(null) // { id, value }
   const [ledgerOpen, setLedgerOpen]         = useState(false)
   const [sortState, setSortState]           = useState({ col: 'date', dir: 'desc' })
+  const [invSort, setInvSort]               = useState({ col: 'contribution', dir: 'desc' })
 
   const reload = useCallback(() => {
     setLoading(true)
@@ -116,6 +117,24 @@ export default function LedgerPage() {
     acc.push({ ...tx, running_balance: prev + Number(tx.amount) })
     return acc
   }, [])
+  const handleInvSort = col => setInvSort(prev => ({
+    col,
+    dir: prev.col === col && prev.dir === 'asc' ? 'desc' : 'asc',
+  }))
+
+  const sortedInvestors = [...investors].sort((a, b) => {
+    const { col, dir } = invSort
+    let av, bv
+    if      (col === 'name')             { av = (a.name || '').toLowerCase();       bv = (b.name || '').toLowerCase() }
+    else if (col === 'class')            { av = (a.class || '').toLowerCase();      bv = (b.class || '').toLowerCase() }
+    else if (col === 'percentage')       { av = a.percentage ?? -1;                 bv = b.percentage ?? -1 }
+    else if (col === 'preferred_return') { av = a.preferred_return ?? -1;           bv = b.preferred_return ?? -1 }
+    else                                 { av = Number(a.contribution);             bv = Number(b.contribution) }
+    if (av < bv) return dir === 'asc' ? -1 : 1
+    if (av > bv) return dir === 'asc' ?  1 : -1
+    return 0
+  })
+
   const handleSort = col => setSortState(prev => ({
     col,
     dir: prev.col === col && prev.dir === 'asc' ? 'desc' : 'asc',
@@ -225,17 +244,17 @@ export default function LedgerPage() {
           </div>
           <table className="w-full text-sm border-collapse">
             <thead>
-              <tr className="border-y border-slate-200 bg-slate-100/60">
-                <th className="px-4 pl-6 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Name</th>
-                <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Class</th>
-                <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Ownership</th>
-                <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Pref. Return</th>
-                <th className="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase tracking-wide">Contribution</th>
+              <tr className="border-y border-slate-200">
+                <SortTh col="name"             sort={invSort} onSort={handleInvSort}>Name</SortTh>
+                <SortTh col="class"            sort={invSort} onSort={handleInvSort}>Class</SortTh>
+                <SortTh col="percentage"       sort={invSort} onSort={handleInvSort}>Ownership</SortTh>
+                <SortTh col="preferred_return" sort={invSort} onSort={handleInvSort}>Pref. Return</SortTh>
+                <SortTh col="contribution"     sort={invSort} onSort={handleInvSort} right>Contribution</SortTh>
                 <th className="px-4 pr-6 py-2 w-16" />
               </tr>
             </thead>
             <tbody>
-              {investors.map(inv => {
+              {sortedInvestors.map(inv => {
                 const isEditing = editingContrib?.id === inv.id
                 return (
                   <tr key={inv.id} className="border-b border-slate-100 bg-white hover:bg-slate-50/60">
