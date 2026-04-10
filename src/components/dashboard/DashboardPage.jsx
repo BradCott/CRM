@@ -4,6 +4,7 @@ import {
   CalendarClock, Loader2,
 } from 'lucide-react'
 import { getDashboard } from '../../api/client'
+import knoxLogo from '../../assets/Knox.png'
 
 // ── Quotes ────────────────────────────────────────────────────────────────────
 const QUOTES = [
@@ -212,26 +213,9 @@ export default function DashboardPage() {
 // ── Sub-components ────────────────────────────────────────────────────────────
 
 function LogoOrFallback() {
-  const [err, setErr] = useState(false)
-  if (!err) {
-    return (
-      <img
-        src="/logo.png"
-        alt="Knox"
-        className="max-h-14 max-w-[200px] object-contain"
-        onError={() => setErr(true)}
-      />
-    )
-  }
   return (
-    <div className="flex items-center gap-3">
-      <div className="w-10 h-10 rounded-xl bg-blue-600 flex items-center justify-center">
-        <Landmark className="w-5 h-5 text-white" />
-      </div>
-      <div>
-        <p className="text-xl font-bold text-slate-900 tracking-tight">Knox CRM</p>
-        <p className="text-xs text-slate-400">Commercial Real Estate</p>
-      </div>
+    <div className="bg-black rounded-xl px-4 py-2 shadow-sm">
+      <img src={knoxLogo} alt="Knox" style={{ width: 180 }} className="object-contain" />
     </div>
   )
 }

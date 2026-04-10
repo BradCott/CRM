@@ -1,10 +1,10 @@
-import { useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
-  Users, KanbanSquare, Building2, Upload, BarChart3, FileSearch,
+  Users, KanbanSquare, Building2, Upload, FileSearch,
   Landmark, TrendingUp, LayoutDashboard, Settings, BookOpen, ShieldCheck, LogOut,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
+import knoxKC from '../../assets/Knox-KC.jpg'
 
 // Nav items and which roles can see them
 const NAV = [
@@ -30,25 +30,13 @@ const ROLE_LABELS = {
   junior_agent: 'Junior Agent',
 }
 
-function LogoOrFallback() {
-  const [imgError, setImgError] = useState(false)
-  if (!imgError) {
-    return (
-      <img
-        src="/logo.png"
-        alt="Knox"
-        className="max-h-10 max-w-[160px] object-contain"
-        onError={() => setImgError(true)}
-      />
-    )
-  }
+function SidebarLogo() {
   return (
-    <div className="flex items-center gap-2.5">
-      <div className="w-8 h-8 rounded-lg bg-blue-600 flex items-center justify-center shrink-0">
-        <BarChart3 className="w-4 h-4 text-white" />
-      </div>
-      <span className="text-lg font-bold text-slate-900 tracking-tight">Knox CRM</span>
-    </div>
+    <img
+      src={knoxKC}
+      alt="Knox"
+      className="w-12 h-12 rounded-lg object-cover"
+    />
   )
 }
 
@@ -87,8 +75,8 @@ export default function Sidebar() {
 
   return (
     <aside className="w-56 shrink-0 flex flex-col bg-white border-r border-slate-200 h-full">
-      <div className="flex items-center px-4 h-16 border-b border-slate-200">
-        <LogoOrFallback />
+      <div className="flex items-center justify-center h-16 border-b border-slate-200">
+        <SidebarLogo />
       </div>
 
       <nav className="flex-1 px-3 py-4 space-y-0.5 overflow-y-auto">

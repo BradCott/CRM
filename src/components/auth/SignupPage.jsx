@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
-import { BarChart3, AlertCircle, CheckCircle, Loader2 } from 'lucide-react'
+import { AlertCircle, CheckCircle, Loader2 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
+import knoxLogo from '../../assets/Knox.png'
 
 const ROLE_LABELS = {
   admin:        'Admin',
@@ -114,13 +115,12 @@ export default function SignupPage() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 px-4">
       <div className="w-full max-w-sm">
-        {/* Logo / brand */}
+        {/* Logo */}
         <div className="text-center mb-8">
-          <div className="w-14 h-14 rounded-2xl bg-blue-600 flex items-center justify-center mx-auto mb-4 shadow-lg">
-            <BarChart3 className="w-7 h-7 text-white" />
+          <div className="inline-block bg-black rounded-xl px-5 py-3 shadow-lg">
+            <img src={knoxLogo} alt="Knox" style={{ width: 220 }} className="object-contain" />
           </div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Knox CRM</h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <p className="mt-4 text-sm text-slate-500">
             {token ? 'Accept your invitation' : 'Create your admin account'}
           </p>
         </div>
