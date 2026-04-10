@@ -111,9 +111,10 @@ export async function uploadBankStatement(propertyId, file) {
 }
 
 // Investor contributions
-export const getInvestors        = (propertyId)    => req('GET',    `/accounting/${propertyId}/investors`)
-export const saveInvestors       = (propertyId, d) => req('POST',   `/accounting/${propertyId}/investors`, d)
-export const deleteInvestor      = (id)            => req('DELETE', `/accounting/investors/${id}`)
+export const getInvestors              = (propertyId)    => req('GET',    `/accounting/${propertyId}/investors`)
+export const saveInvestors             = (propertyId, d) => req('POST',   `/accounting/${propertyId}/investors`, d)
+export const updateInvestorContribution = (id, amount)   => req('PATCH',  `/accounting/investors/${id}`, { contribution: amount })
+export const deleteInvestor            = (id)            => req('DELETE', `/accounting/investors/${id}`)
 export async function uploadInvestorContributions(propertyId, file) {
   const fd = new FormData()
   fd.append('file', file)

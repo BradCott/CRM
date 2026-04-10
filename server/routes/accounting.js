@@ -132,6 +132,17 @@ router.post('/:propertyId/investors', (req, res) => {
   res.status(201).json(saved)
 })
 
+router.patch('/investors/:id', (req, res) => {
+  const { contribution } = req.body
+  if (contribution === undefined) return res.status(400).json({ error: 'contribution is required' })
+  const amount = Math.abs(parseFloat(contribution))
+  if (!isFinite(amount)) return res.status(400).json({ error: 'Invalid contribution amount' })
+  db.prepare('UPDATE property_investors SET contribution = ? WHERE id = ?').run(amount, req.params.id)
+  const row = db.prepare('SELECT id, property_id, name, address, contribution, percentage, class, preferred_return FROM property_investors WHERE id = ?').get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'Investor not found' })
+  res.json(row)
+})
+
 router.delete('/investors/:id', (req, res) => {
   db.prepare('DELETE FROM property_investors WHERE id = ?').run(req.params.id)
   res.status(204).end()

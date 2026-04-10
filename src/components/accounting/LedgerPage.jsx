@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor } from '../../api/client'
+import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check } from 'lucide-react'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution } from '../../api/client'
 import Button from '../ui/Button'
 import AddTransactionModal from './AddTransactionModal'
 import SettlementUpload from './SettlementUpload'
@@ -55,6 +55,7 @@ export default function LedgerPage() {
 
   const [investors, setInvestors]           = useState([])
   const [deletingInv, setDeletingInv]       = useState(null)
+  const [editingContrib, setEditingContrib] = useState(null) // { id, value }
 
   const reload = useCallback(() => {
     setLoading(true)
@@ -90,6 +91,20 @@ export default function LedgerPage() {
       setInvestors(prev => prev.filter(i => i.id !== id))
     } finally {
       setDeletingInv(null)
+    }
+  }
+
+  async function handleSaveContrib(id) {
+    const raw = editingContrib?.value
+    const amount = parseFloat(raw)
+    if (!isFinite(amount) || amount < 0) { setEditingContrib(null); return }
+    try {
+      const updated = await updateInvestorContribution(id, amount)
+      setInvestors(prev => prev.map(i => i.id === id ? { ...i, contribution: updated.contribution } : i))
+    } catch (e) {
+      console.error('Failed to update contribution:', e)
+    } finally {
+      setEditingContrib(null)
     }
   }
 
@@ -183,47 +198,106 @@ export default function LedgerPage() {
 
       {/* Investors section */}
       {investors.length > 0 && (
-        <div className="shrink-0 px-6 py-4 bg-slate-50 border-b border-slate-200">
-          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">
-            Investors — {investors.length} · {fmt$(investors.reduce((s, i) => s + i.contribution, 0))} total equity
-          </h3>
-          <div className="flex flex-wrap gap-3">
-            {investors.map(inv => (
-              <div key={inv.id} className="flex items-start gap-3 bg-white rounded-xl border border-slate-200 px-4 py-3 shadow-sm min-w-[200px]">
-                <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center shrink-0 mt-0.5">
-                  <span className="text-xs font-bold text-blue-700">{inv.name.charAt(0).toUpperCase()}</span>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-semibold text-slate-900 truncate">{inv.name}</p>
-                  <p className="text-xs text-emerald-700 font-medium tabular-nums">{fmt$(inv.contribution)}</p>
-                  <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                    {inv.percentage != null && (
-                      <span className="text-xs text-slate-500">{inv.percentage}% ownership</span>
-                    )}
-                    {inv.class && (
-                      <span className={`text-xs px-1.5 py-0.5 rounded-full font-medium ${
-                        inv.class === 'Sponsor' ? 'bg-violet-100 text-violet-700' : 'bg-blue-100 text-blue-700'
-                      }`}>{inv.class}</span>
-                    )}
-                    {inv.preferred_return != null && (
-                      <span className="text-xs text-slate-500">{inv.preferred_return}% pref</span>
-                    )}
-                  </div>
-                </div>
-                <button
-                  onClick={() => handleDeleteInvestor(inv.id)}
-                  disabled={deletingInv === inv.id}
-                  className="p-1 rounded text-slate-200 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40 shrink-0"
-                  title="Remove investor"
-                >
-                  {deletingInv === inv.id
-                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    : <Trash2 className="w-3.5 h-3.5" />
-                  }
-                </button>
-              </div>
-            ))}
+        <div className="shrink-0 bg-slate-50 border-b border-slate-200">
+          <div className="px-6 pt-3 pb-1">
+            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
+              Investors — {investors.length}
+            </h3>
           </div>
+          <table className="w-full text-sm border-collapse">
+            <thead>
+              <tr className="border-y border-slate-200 bg-slate-100/60">
+                <th className="px-4 pl-6 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Name</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Class</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Ownership</th>
+                <th className="px-4 py-2 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Pref. Return</th>
+                <th className="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase tracking-wide">Contribution</th>
+                <th className="px-4 pr-6 py-2 w-16" />
+              </tr>
+            </thead>
+            <tbody>
+              {investors.map(inv => {
+                const isEditing = editingContrib?.id === inv.id
+                return (
+                  <tr key={inv.id} className="border-b border-slate-100 bg-white hover:bg-slate-50/60">
+                    <td className="px-4 pl-6 py-2.5 font-medium text-slate-900">{inv.name}</td>
+                    <td className="px-4 py-2.5">
+                      {inv.class ? (
+                        <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
+                          inv.class === 'Sponsor' ? 'bg-violet-100 text-violet-700' : 'bg-blue-100 text-blue-700'
+                        }`}>{inv.class}</span>
+                      ) : '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-600 text-xs tabular-nums">
+                      {inv.percentage != null ? `${inv.percentage}%` : '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-slate-600 text-xs tabular-nums">
+                      {inv.preferred_return != null ? `${inv.preferred_return}%` : '—'}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums">
+                      {isEditing ? (
+                        <input
+                          type="number"
+                          min="0"
+                          autoFocus
+                          value={editingContrib.value}
+                          onChange={e => setEditingContrib(prev => ({ ...prev, value: e.target.value }))}
+                          onBlur={() => handleSaveContrib(inv.id)}
+                          onKeyDown={e => { if (e.key === 'Enter') handleSaveContrib(inv.id); if (e.key === 'Escape') setEditingContrib(null) }}
+                          className="w-32 text-right border border-blue-400 rounded px-2 py-0.5 text-sm outline-none focus:ring-2 focus:ring-blue-400"
+                        />
+                      ) : (
+                        <span className="font-semibold text-emerald-700">{fmt$(inv.contribution)}</span>
+                      )}
+                    </td>
+                    <td className="px-4 pr-6 py-2.5">
+                      <div className="flex items-center justify-end gap-1">
+                        {isEditing ? (
+                          <button
+                            onClick={() => handleSaveContrib(inv.id)}
+                            className="p-1 rounded text-emerald-500 hover:bg-emerald-50 transition-colors"
+                            title="Save"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setEditingContrib({ id: inv.id, value: inv.contribution })}
+                            className="p-1 rounded text-slate-300 hover:text-blue-500 hover:bg-blue-50 transition-colors"
+                            title="Edit contribution"
+                          >
+                            <Pencil className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleDeleteInvestor(inv.id)}
+                          disabled={deletingInv === inv.id}
+                          className="p-1 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
+                          title="Remove investor"
+                        >
+                          {deletingInv === inv.id
+                            ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            : <Trash2 className="w-3.5 h-3.5" />
+                          }
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+            <tfoot>
+              <tr className="border-t-2 border-slate-200 bg-slate-50">
+                <td colSpan={4} className="px-4 pl-6 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  Total Equity Contributed
+                </td>
+                <td className="px-4 py-2.5 text-right font-bold text-emerald-700 tabular-nums">
+                  {fmt$(investors.reduce((s, i) => s + Number(i.contribution), 0))}
+                </td>
+                <td className="px-4 pr-6 py-2.5" />
+              </tr>
+            </tfoot>
+          </table>
         </div>
       )}
 
