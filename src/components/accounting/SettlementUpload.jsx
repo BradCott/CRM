@@ -130,8 +130,17 @@ const FIELD_MAP = {
   'Ignore':                   null,
 }
 
+/** Returns true if the item description looks like a broker/agent commission. */
+function isBrokerFee(description) {
+  if (!description) return false
+  const d = description.toLowerCase()
+  return d.includes('commission') || d.includes('broker') || d.includes('realty') || d.includes('agent fee')
+}
+
 /** Map AI suggestion text to one of the FIELD_MAP keys. */
-function guessCategory(suggestion) {
+function guessCategory(suggestion, description) {
+  // Broker/agent commissions are almost always a seller expense — suggest Ignore for buyers
+  if (isBrokerFee(description)) return 'Ignore'
   if (!suggestion) return 'Closing Costs'
   const s = suggestion.toLowerCase()
   if (s.includes('loan') || s.includes('mortgage') || s.includes('principal')) return 'Loan Amount'
@@ -146,7 +155,8 @@ function guessCategory(suggestion) {
 
 /** A single uncertain-item row — owns its own dropdown selection state. */
 function UncertainItem({ item, onAssign }) {
-  const [selection, setSelection] = useState(() => guessCategory(item.suggestion))
+  const [selection, setSelection] = useState(() => guessCategory(item.suggestion, item.description))
+  const brokerFee = isBrokerFee(item.description)
 
   return (
     <div className="bg-white border border-amber-100 rounded-lg px-3 py-2.5">
@@ -165,22 +175,31 @@ function UncertainItem({ item, onAssign }) {
             <p className="text-xs text-slate-400 mt-0.5 italic">{item.reason}</p>
           )}
         </div>
-        <div className="flex items-center gap-2 shrink-0 mt-0.5">
-          <select
-            value={selection}
-            onChange={e => setSelection(e.target.value)}
-            className="text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-amber-300 bg-white text-slate-700"
-          >
-            {Object.keys(FIELD_MAP).map(cat => (
-              <option key={cat} value={cat}>{cat}</option>
-            ))}
-          </select>
-          <button
-            onClick={() => onAssign(selection, item.amount)}
-            className="text-xs px-3 py-1 bg-amber-500 text-white rounded-lg hover:bg-amber-600 active:bg-amber-700 font-semibold transition-colors whitespace-nowrap"
-          >
-            Assign
-          </button>
+        <div className="flex flex-col items-end gap-1.5 shrink-0 mt-0.5">
+          <div className="flex items-center gap-2">
+            <select
+              value={selection}
+              onChange={e => setSelection(e.target.value)}
+              className="text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-amber-300 bg-white text-slate-700"
+            >
+              {Object.keys(FIELD_MAP).map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+            <button
+              onClick={() => onAssign(selection, item.amount)}
+              className="text-xs px-3 py-1 bg-amber-500 text-white rounded-lg hover:bg-amber-600 active:bg-amber-700 font-semibold transition-colors whitespace-nowrap"
+            >
+              Assign
+            </button>
+          </div>
+          {brokerFee && (
+            <p className="text-xs text-slate-500 max-w-xs text-right">
+              <span className="font-medium text-slate-600">Note:</span>{' '}
+              If you are the buyer this is typically a seller expense and can be ignored.
+              If you are the seller include this as a closing cost.
+            </p>
+          )}
         </div>
       </div>
     </div>
