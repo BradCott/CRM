@@ -166,7 +166,32 @@ router.get('/dashboard', (req, res) => {
   })
 })
 
-// ── Tasks ─────────────────────────────────────────────────────────────────────
+// ── All tasks across all portfolio properties ─────────────────────────────────
+// GET /tasks?status=pending|completed|all
+// NOTE: must be defined before /:propertyId/tasks to avoid param capture
+router.get('/tasks', (req, res) => {
+  const { status = 'pending' } = req.query
+  const statusClause =
+    status === 'pending'   ? 'AND pt.completed_at IS NULL' :
+    status === 'completed' ? 'AND pt.completed_at IS NOT NULL' : ''
+
+  const rows = db.prepare(`
+    SELECT pt.*,
+           p.address, p.city, p.state,
+           t.name AS tenant_brand_name
+    FROM property_tasks pt
+    JOIN  properties p ON p.id = pt.property_id
+    LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE p.is_portfolio = 1
+      ${statusClause}
+    ORDER BY
+      CASE WHEN pt.due_date IS NULL THEN 1 ELSE 0 END,
+      pt.due_date ASC
+  `).all()
+  res.json(rows)
+})
+
+// ── Per-property tasks ────────────────────────────────────────────────────────
 
 router.get('/:propertyId/tasks', (req, res) => {
   const rows = db.prepare(`

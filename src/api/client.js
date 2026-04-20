@@ -137,7 +137,9 @@ export const getCRMInvestors = (params = {}) => {
 }
 
 // Property Management
-export const getManagementDashboard = () => req('GET', '/management/dashboard')
+export const getManagementDashboard  = ()               => req('GET', '/management/dashboard')
+export const getAllManagementTasks   = (status = 'pending') =>
+  req('GET', `/management/tasks?status=${status}`)
 
 // Tasks
 export const getPropertyTasks   = (propId)       => req('GET',    `/management/${propId}/tasks`)
