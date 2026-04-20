@@ -269,7 +269,8 @@ Return ONLY a valid JSON object in exactly this format — every field is requir
   "prorated_rent": number or null,
   "tax_credits": number or null,
   "buyer_taxes_paid": number or null,
-  "total_closing_costs": number or null
+  "total_closing_costs": number or null,
+  "uncertain_items": []
 }
 
 Field extraction rules:
@@ -293,6 +294,26 @@ Field extraction rules:
 
 For HUD-1: line 101 = purchase price, lines 800s = loan charges, lines 1100s = title charges, lines 1200s = recording, line 201 = earnest money, line 120/303 = cash to close
 For First American: look for Buyer Charge column (costs) and Buyer Credit column (credits/loans)
+
+UNCERTAIN ITEMS — populate "uncertain_items" with any line items that appear on the statement but are ambiguous, unusual, or do not clearly belong to one of the fields above. Do NOT include items you placed confidently into a main field. Only flag line items where you genuinely do not know how to categorize them.
+
+Watch for and flag:
+- Fees marked "POC" (Paid Outside of Closing) — may or may not affect buyer's cost basis
+- 1031 exchange proceeds, qualified intermediary deposits, or exchange funds
+- Holdback amounts or post-closing escrow holdbacks
+- A second mortgage, subordinate loan, or seller-carried note (beyond the primary loan_amount)
+- Seller concessions credited directly to the buyer
+- Credits or adjustments where buyer vs. seller attribution is unclear
+- Unusual advisory, consulting, or management fees with no clear category
+- Any line item with a significant dollar amount you could not categorize with confidence
+
+Each uncertain item must have:
+- "description": exact label text from the settlement statement
+- "amount": dollar amount as a positive number
+- "suggestion": plain-English best guess, e.g. "Closing Costs", "Cash to Close", "Loan Amount", "Tax Proration", "Prorated Rent", or "Ignore"
+- "reason": one sentence explaining the ambiguity
+
+If no uncertain items exist, return: "uncertain_items": []
 
 Return ONLY the JSON object, no markdown, no explanation.`
 
@@ -416,6 +437,18 @@ async function parseSettlementStatement(buffer, apiKey) {
     tax_credits:          cn(raw.tax_credits),
     buyer_taxes_paid:     cn(raw.buyer_taxes_paid),
     total_closing_costs:  cn(raw.total_closing_costs),
+    uncertain_items: (() => {
+      if (!Array.isArray(raw.uncertain_items)) return []
+      return raw.uncertain_items
+        .filter(item => item && typeof item.description === 'string' && item.description.trim())
+        .map(item => ({
+          description: String(item.description).trim(),
+          amount:      cleanNum(item.amount),
+          suggestion:  typeof item.suggestion === 'string' ? item.suggestion.trim() : null,
+          reason:      typeof item.reason    === 'string' ? item.reason.trim()    : null,
+        }))
+        .filter(item => item.amount !== null && item.amount > 0)
+    })(),
   }
 }
 

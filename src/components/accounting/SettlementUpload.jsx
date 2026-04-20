@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { X, Upload, Loader2, CheckCircle, AlertCircle, Copy, Check, Users } from 'lucide-react'
+import { X, Upload, Loader2, CheckCircle, AlertCircle, AlertTriangle, Copy, Check, Users } from 'lucide-react'
 import Button from '../ui/Button'
 import { uploadSettlement, createTransactions, saveJournalEntry, getInvestors } from '../../api/client'
 
@@ -117,6 +117,101 @@ function buildClipboardText(journal, fields, date) {
   ].filter(l => l !== null).join('\n')
 }
 
+// ── Uncertain items — category map + helpers ──────────────────────────────────
+
+const FIELD_MAP = {
+  'Building/Land Cost Basis': 'total_closing_costs',
+  'Closing Costs':            'total_closing_costs',
+  'Loan Amount':              'loan_amount',
+  'Cash to Close':            'cash_to_close',
+  'Earnest Money':            'earnest_money',
+  'Prorated Rent':            'prorated_rent',
+  'Tax Proration':            'tax_credits',
+  'Ignore':                   null,
+}
+
+/** Map AI suggestion text to one of the FIELD_MAP keys. */
+function guessCategory(suggestion) {
+  if (!suggestion) return 'Closing Costs'
+  const s = suggestion.toLowerCase()
+  if (s.includes('loan') || s.includes('mortgage') || s.includes('principal')) return 'Loan Amount'
+  if (s.includes('cash') && (s.includes('close') || s.includes('closing')))    return 'Cash to Close'
+  if (s.includes('earnest'))                                                     return 'Earnest Money'
+  if (s.includes('rent'))                                                        return 'Prorated Rent'
+  if (s.includes('tax') || s.includes('proration'))                             return 'Tax Proration'
+  if (s.includes('ignore') || s.includes('n/a') || s.includes('exclude'))      return 'Ignore'
+  if (s.includes('building') || s.includes('land') || s.includes('basis'))     return 'Building/Land Cost Basis'
+  return 'Closing Costs'
+}
+
+/** A single uncertain-item row — owns its own dropdown selection state. */
+function UncertainItem({ item, onAssign }) {
+  const [selection, setSelection] = useState(() => guessCategory(item.suggestion))
+
+  return (
+    <div className="bg-white border border-amber-100 rounded-lg px-3 py-2.5">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className="text-sm font-medium text-slate-800">{item.description}</span>
+            <span className="text-sm font-bold text-slate-900 tabular-nums">{$fmt(item.amount)}</span>
+          </div>
+          {item.suggestion && (
+            <p className="text-xs text-amber-700 mt-0.5">
+              AI guess: <span className="font-medium">{item.suggestion}</span>
+            </p>
+          )}
+          {item.reason && (
+            <p className="text-xs text-slate-400 mt-0.5 italic">{item.reason}</p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 shrink-0 mt-0.5">
+          <select
+            value={selection}
+            onChange={e => setSelection(e.target.value)}
+            className="text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-amber-300 bg-white text-slate-700"
+          >
+            {Object.keys(FIELD_MAP).map(cat => (
+              <option key={cat} value={cat}>{cat}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => onAssign(selection, item.amount)}
+            className="text-xs px-3 py-1 bg-amber-500 text-white rounded-lg hover:bg-amber-600 active:bg-amber-700 font-semibold transition-colors whitespace-nowrap"
+          >
+            Assign
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/** Yellow review panel shown when the AI flagged uncertain line items. */
+function UncertainItemsPanel({ items, onAssign }) {
+  if (!items || items.length === 0) return null
+  return (
+    <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2">
+      <div className="flex items-center gap-2 mb-1">
+        <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
+        <span className="text-sm font-semibold text-amber-800">
+          {items.length} item{items.length !== 1 ? 's' : ''} flagged for review
+        </span>
+        <span className="text-xs text-amber-600 ml-auto">
+          Assign each to the correct field or choose Ignore
+        </span>
+      </div>
+      {items.map((item, idx) => (
+        <UncertainItem
+          key={`${item.description}-${item.amount}-${idx}`}
+          item={item}
+          onAssign={(category, amount) => onAssign(idx, category, amount)}
+        />
+      ))}
+    </div>
+  )
+}
+
 // ── Field components ──────────────────────────────────────────────────────────
 
 function Field({ label, value, onChange }) {
@@ -163,9 +258,19 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
   const [landPct, setLandPct]         = useState(25)
   const [copied, setCopied]           = useState(false)
   const [dragOver, setDragOver]       = useState(false)
-  const [investors, setInvestors]     = useState([])
+  const [investors, setInvestors]       = useState([])
+  const [uncertainItems, setUncertainItems] = useState([])
 
   const setField = useCallback((key, val) => setFields(prev => ({ ...prev, [key]: val })), [])
+
+  /** Add the item's amount to the chosen field, then remove it from the panel. */
+  function assignUncertainItem(idx, category, amount) {
+    const fieldKey = FIELD_MAP[category]
+    if (fieldKey) {
+      setFields(prev => ({ ...prev, [fieldKey]: (Number(prev[fieldKey]) || 0) + amount }))
+    }
+    setUncertainItems(prev => prev.filter((_, i) => i !== idx))
+  }
 
   // Load investors so equity lines appear automatically when they've been uploaded
   useEffect(() => {
@@ -182,6 +287,7 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
       const data = await uploadSettlement(propertyId, file)
       // Seed depreciation_expense = 0 (almost always zero at closing; user can edit)
       setFields({ ...data, depreciation_expense: 0 })
+      setUncertainItems(Array.isArray(data.uncertain_items) ? data.uncertain_items : [])
       setStep('review')
     } catch (err) {
       setError(err.message)
@@ -339,6 +445,12 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
                   )}
                 </div>
               )}
+
+              {/* Uncertain items review panel */}
+              <UncertainItemsPanel
+                items={uncertainItems}
+                onAssign={assignUncertainItem}
+              />
 
               <div className="grid grid-cols-2 gap-6">
 
