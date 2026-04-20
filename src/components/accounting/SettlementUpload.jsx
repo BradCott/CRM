@@ -1,88 +1,125 @@
-import { useState, useRef, useCallback } from 'react'
-import { X, Upload, Loader2, CheckCircle, AlertCircle, Copy, Check } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { X, Upload, Loader2, CheckCircle, AlertCircle, Copy, Check, Users } from 'lucide-react'
 import Button from '../ui/Button'
-import { uploadSettlement, createTransactions, saveJournalEntry } from '../../api/client'
+import { uploadSettlement, createTransactions, saveJournalEntry, getInvestors } from '../../api/client'
 
-const CATEGORIES = ['Equity Contribution', 'Purchase', 'Rent', 'Mortgage', 'Repair', 'Sale', 'Other']
+// ── Formatters ────────────────────────────────────────────────────────────────
 
-const $ = v => v != null ? '$' + Math.abs(Math.round(Number(v))).toLocaleString() : '—'
-const fmtSigned = (v, pos = false) => {
-  if (v == null || v === '') return '—'
-  const n = Number(v)
-  if (!isFinite(n) || n === 0) return '—'
-  return (pos ? '+' : '-') + '$' + Math.abs(Math.round(n)).toLocaleString()
-}
+const $fmt = v =>
+  v != null && v !== '' && isFinite(Number(v)) && Number(v) !== 0
+    ? '$' + Math.abs(Math.round(Number(v))).toLocaleString()
+    : '—'
 
-// Build QuickBooks journal entry lines from fields + split.
+// ── Journal entry builder ─────────────────────────────────────────────────────
 //
-// This formula always balances by definition on any settlement statement:
-//   DEBITS  = Purchase Price (Building + Land split) + Total Closing Costs (line 103)
-//   CREDITS = Loan + Earnest Money + Buyer Credits (prorations) + Cash to Close
+// Structure (accountant's QuickBooks format):
 //
-// Individual line items (survey, title, etc.) are shown in the fields panel
-// for reference but are NOT used as separate journal entry debits — only the
-// total_closing_costs figure (line 103 / total buyer charges) is used.
-function buildJournal(f, buildingPct, landPct) {
+// DEBITS
+//   1. [Property Address]         — building asset  (totalCostBasis × buildingPct%)
+//   2. Land                       —                  (totalCostBasis × landPct%)
+//   3. Depreciation Expense       — only if non-zero
+//   4. [Property Address]         — checking acct, equity received (sum of investor contributions)
+//
+// CREDITS
+//   1. Rent Income                — prorated rent from settlement (if any)
+//   2. MTG [Lender] [Address]     — loan amount
+//   3. Accum Depreciation         — only if depreciation expense is non-zero
+//   4. Equity - [Investor Name]   — one line per investor (if investors exist)
+//   5. [Property Address]         — checking acct, cash to close paid by buyer
+//
+// Balance: debits = credits because:
+//   totalCostBasis + depreciation + equity = rent + loan + depreciation + equity + ctc
+//   → totalCostBasis = rent + loan + ctc  (depreciation & equity cancel)
+//   This is the fundamental settlement statement identity.
+
+function buildJournal(f, buildingPct, landPct, investors = []) {
   const pp      = Number(f.purchase_price)      || 0
+  const closing = Number(f.total_closing_costs) || 0
   const loan    = Number(f.loan_amount)          || 0
   const ctc     = Number(f.cash_to_close)        || 0
-  const em      = Number(f.earnest_money)        || 0
   const rent    = Number(f.prorated_rent)        || 0
-  const taxCr   = Number(f.tax_credits)          || 0  // credits FROM seller TO buyer
-  const closing = Number(f.total_closing_costs)  || 0  // line 103 / total buyer charges
+  const depr    = Number(f.depreciation_expense) || 0
+  const addr    = (f.property_address  || '').trim() || 'Property'
+  const lender  = (f.lender_name      || '').trim()
 
-  const bPct  = Math.max(0, Math.min(100, Number(buildingPct) || 75)) / 100
-  const lPct  = Math.max(0, Math.min(100, Number(landPct)     || 25)) / 100
+  const totalCostBasis = pp + closing
+  const bPct = Math.max(0, Math.min(100, Number(buildingPct) || 75)) / 100
+  const lPct = Math.max(0, Math.min(100, Number(landPct)     || 25)) / 100
 
+  const buildingValue = totalCostBasis * bPct
+  const landValue     = totalCostBasis * lPct
+
+  const activeInvestors = (investors || []).filter(inv => Number(inv.contribution) > 0)
+  const totalEquity = activeInvestors.reduce((s, inv) => s + Number(inv.contribution), 0)
+
+  const mortgageAccount = lender ? `MTG ${lender} ${addr}` : `MTG ${addr}`
+
+  // DEBITS — in spec order
   const debits = [
-    { account: 'Building',            amount: pp * bPct },
-    { account: 'Land',                amount: pp * lPct },
-    { account: 'Total Closing Costs', amount: closing   },
-  ].filter(d => d.amount > 0)
+    buildingValue > 0 && { account: addr,                    amount: buildingValue, note: 'Building Asset' },
+    landValue > 0     && { account: 'Land',                  amount: landValue },
+    depr > 0          && { account: 'Depreciation Expense',  amount: depr },
+    totalEquity > 0   && { account: addr,                    amount: totalEquity,   note: 'Checking — Equity Received' },
+  ].filter(Boolean)
 
+  // CREDITS — in spec order
   const credits = [
-    { account: 'Mortgage Loan Payable',         amount: loan  },
-    { account: 'Earnest Money Deposit Applied', amount: em    },
-    { account: 'Tax / Proration Credits',       amount: taxCr },
-    { account: 'Prorated Rent Credit',          amount: rent  },
-    { account: 'Cash / Checking Account',       amount: ctc   },
-  ].filter(c => c.amount > 0)
+    rent > 0 && { account: 'Rent Income',       amount: rent },
+    loan > 0 && { account: mortgageAccount,      amount: loan },
+    depr > 0 && { account: 'Accum Depreciation', amount: depr },
+    ...activeInvestors.map(inv => ({ account: `Equity - ${inv.name}`, amount: Number(inv.contribution) })),
+    ctc > 0  && { account: addr,                 amount: ctc,  note: 'Checking — Cash to Close' },
+  ].filter(Boolean)
 
   const totalDebits  = debits.reduce((s, d) => s + d.amount, 0)
   const totalCredits = credits.reduce((s, c) => s + c.amount, 0)
   const diff = totalDebits - totalCredits
 
-  return { debits, credits, totalDebits, totalCredits, diff }
+  return { debits, credits, totalDebits, totalCredits, diff, totalCostBasis, buildingValue, landValue }
 }
+
+// ── Clipboard copy (QuickBooks-pasteable table) ───────────────────────────────
 
 function buildClipboardText(journal, fields, date) {
-  const lines = [
-    `ACQUISITION JOURNAL ENTRY`,
-    date ? `Date: ${date}` : '',
-    fields.property_address ? `Property: ${fields.property_address}` : '',
+  const addr = (fields.property_address || '').trim()
+  const COL  = 50
+  const NUM  = 16
+  const fmt  = n => (n != null ? '$' + Math.round(n).toLocaleString() : '')
+
+  const rows = [
+    ...journal.debits.map(d  => ({ account: d.account, debit: d.amount, credit: null })),
+    ...journal.credits.map(c => ({ account: c.account, debit: null,     credit: c.amount })),
+  ]
+
+  return [
+    'ACQUISITION JOURNAL ENTRY',
+    date  ? `Date: ${date}`        : null,
+    addr  ? `Property: ${addr}`    : null,
     '',
-    'DEBITS',
-    ...journal.debits.map(d  => `  ${d.account.padEnd(40)} $${Math.round(d.amount).toLocaleString()}`),
+    `${'Account Name'.padEnd(COL)} ${'Debit'.padStart(NUM)} ${'Credit'.padStart(NUM)}`,
+    '-'.repeat(COL + NUM * 2 + 2),
+    ...rows.map(r =>
+      `${r.account.padEnd(COL)} ${(r.debit  != null ? fmt(r.debit)  : '').padStart(NUM)} ${(r.credit != null ? fmt(r.credit) : '').padStart(NUM)}`
+    ),
+    '-'.repeat(COL + NUM * 2 + 2),
+    `${'TOTALS'.padEnd(COL)} ${fmt(journal.totalDebits).padStart(NUM)} ${fmt(journal.totalCredits).padStart(NUM)}`,
     '',
-    'CREDITS',
-    ...journal.credits.map(c => `  ${c.account.padEnd(40)} $${Math.round(c.amount).toLocaleString()}`),
-    '',
-    `Total Debits:  $${Math.round(journal.totalDebits).toLocaleString()}`,
-    `Total Credits: $${Math.round(journal.totalCredits).toLocaleString()}`,
-    journal.diff !== 0 ? `Difference:    $${Math.round(Math.abs(journal.diff)).toLocaleString()} (${journal.diff > 0 ? 'debits exceed credits' : 'credits exceed debits'})` : 'Balanced: Yes',
-  ].filter(l => l !== undefined)
-  return lines.join('\n')
+    Math.abs(journal.diff) < 1
+      ? 'Balanced: Yes'
+      : `Difference: ${fmt(Math.abs(journal.diff))} (${journal.diff > 0 ? 'debits exceed credits' : 'credits exceed debits'})`,
+  ].filter(l => l !== null).join('\n')
 }
 
-function Field({ label, value, onChange, prefix = '$' }) {
+// ── Field components ──────────────────────────────────────────────────────────
+
+function Field({ label, value, onChange }) {
   return (
     <div className="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
       <span className="text-xs text-slate-500 shrink-0 mr-3">{label}</span>
       <div className="flex items-center gap-1">
-        {prefix && <span className="text-xs text-slate-400">{prefix}</span>}
+        <span className="text-xs text-slate-400">$</span>
         <input
-          type="number"
-          min="0"
+          type="number" min="0"
           value={value ?? ''}
           onChange={e => onChange(e.target.value === '' ? null : Number(e.target.value))}
           className="w-32 text-right text-sm font-medium text-slate-900 border border-slate-200 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-blue-300 tabular-nums"
@@ -93,17 +130,42 @@ function Field({ label, value, onChange, prefix = '$' }) {
   )
 }
 
+function TextField({ label, value, onChange }) {
+  return (
+    <div className="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
+      <span className="text-xs text-slate-500 shrink-0 mr-3">{label}</span>
+      <input
+        type="text"
+        value={value ?? ''}
+        onChange={e => onChange(e.target.value || null)}
+        className="w-40 text-right text-sm font-medium text-slate-900 border border-slate-200 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-blue-300"
+        placeholder="—"
+      />
+    </div>
+  )
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
 export default function SettlementUpload({ propertyId, onSaved, onClose }) {
   const inputRef = useRef()
-  const [step, setStep]           = useState('upload')
-  const [error, setError]         = useState(null)
-  const [fields, setFields]       = useState(null)
+  const [step, setStep]               = useState('upload')
+  const [error, setError]             = useState(null)
+  const [fields, setFields]           = useState(null)
   const [buildingPct, setBuildingPct] = useState(75)
   const [landPct, setLandPct]         = useState(25)
-  const [copied, setCopied]       = useState(false)
-  const [dragOver, setDragOver]   = useState(false)
+  const [copied, setCopied]           = useState(false)
+  const [dragOver, setDragOver]       = useState(false)
+  const [investors, setInvestors]     = useState([])
 
   const setField = useCallback((key, val) => setFields(prev => ({ ...prev, [key]: val })), [])
+
+  // Load investors so equity lines appear automatically when they've been uploaded
+  useEffect(() => {
+    getInvestors(propertyId)
+      .then(data => setInvestors(Array.isArray(data) ? data : []))
+      .catch(() => setInvestors([]))
+  }, [propertyId])
 
   async function handleFile(file) {
     if (!file) return
@@ -111,7 +173,8 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
     setError(null)
     try {
       const data = await uploadSettlement(propertyId, file)
-      setFields(data)
+      // Seed depreciation_expense = 0 (almost always zero at closing; user can edit)
+      setFields({ ...data, depreciation_expense: 0 })
       setStep('review')
     } catch (err) {
       setError(err.message)
@@ -119,24 +182,29 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
     }
   }
 
-  const journal = fields ? buildJournal(fields, buildingPct, landPct) : null
+  // Compute totalCostBasis for the left panel display
+  const totalCostBasis = fields
+    ? (Number(fields.purchase_price) || 0) + (Number(fields.total_closing_costs) || 0)
+    : 0
+
+  const journal = fields ? buildJournal(fields, buildingPct, landPct, investors) : null
 
   async function handleSave() {
     if (!fields) return
     setStep('saving')
     setError(null)
     try {
-      const date = fields.settlement_date || new Date().toISOString().slice(0, 10)
-      const pp   = Number(fields.purchase_price) || 0
-      const bPct = (Number(buildingPct) || 75) / 100
-      const lPct = (Number(landPct) || 25) / 100
+      const date    = fields.settlement_date || new Date().toISOString().slice(0, 10)
+      const pp      = Number(fields.purchase_price)      || 0
+      const closing = Number(fields.total_closing_costs) || 0
+      const cb      = pp + closing   // total cost basis
+      const bPct    = (Number(buildingPct) || 75) / 100
+      const lPct    = (Number(landPct)     || 25) / 100
 
-      // Build transactions for ledger.
-      // Sign convention: negative = cash/asset out, positive = cash in.
-      // Building/Land are asset entries (not cash), excluded from cash balance in LedgerPage.
+      // Ledger transactions — building/land now split from total cost basis
       const txs = [
-        pp > 0                        && { description: 'Building Value',               category: 'Purchase', amount: -(pp * bPct) },
-        pp > 0                        && { description: 'Land Value',                   category: 'Purchase', amount: -(pp * lPct) },
+        cb > 0                        && { description: 'Building Value',               category: 'Purchase', amount: -(cb * bPct) },
+        cb > 0                        && { description: 'Land Value',                   category: 'Purchase', amount: -(cb * lPct) },
         fields.loan_amount            && { description: 'Loan Proceeds',                category: 'Loan',     amount:  Number(fields.loan_amount) },
         fields.earnest_money          && { description: 'Earnest Money Deposit',        category: 'Purchase', amount: -Number(fields.earnest_money) },
         fields.cash_to_close          && { description: 'Cash to Close',                category: 'Purchase', amount: -Number(fields.cash_to_close) },
@@ -152,19 +220,14 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
         fields.tax_credits            && { description: 'Property Tax Proration',       category: 'Other',    amount:  Number(fields.tax_credits) },
       ].filter(Boolean).map(t => ({ ...t, date, source: 'Settlement Statement' }))
 
-      const filteredTxs = txs
+      if (txs.length > 0) await createTransactions(propertyId, txs)
 
-      if (filteredTxs.length > 0) {
-        await createTransactions(propertyId, filteredTxs)
-      }
-
-      // Save journal entry
-      const content = buildClipboardText(journal, fields, date)
+      // Save journal entry (formatted for QuickBooks paste)
       await saveJournalEntry(propertyId, {
         entry_type: 'acquisition',
         entry_date: date,
         label:      fields.property_address || 'Acquisition',
-        content,
+        content:    buildClipboardText(journal, fields, date),
       })
 
       onSaved()
@@ -177,12 +240,13 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
 
   function handleCopy() {
     if (!journal || !fields) return
-    const text = buildClipboardText(journal, fields, fields.settlement_date)
-    navigator.clipboard.writeText(text).then(() => {
+    navigator.clipboard.writeText(buildClipboardText(journal, fields, fields.settlement_date)).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })
   }
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
@@ -213,7 +277,7 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
             </div>
           )}
 
-          {/* Upload */}
+          {/* ── Upload / Parsing ── */}
           {(step === 'upload' || step === 'parsing') && (
             <div
               className={`border-2 border-dashed rounded-xl p-12 text-center transition-all ${
@@ -227,8 +291,7 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
               onDragOver={e => { e.preventDefault(); if (step === 'upload') setDragOver(true) }}
               onDragLeave={e => { e.preventDefault(); setDragOver(false) }}
               onDrop={e => {
-                e.preventDefault()
-                setDragOver(false)
+                e.preventDefault(); setDragOver(false)
                 if (step !== 'upload') return
                 const file = e.dataTransfer.files[0]
                 if (file) handleFile(file)
@@ -252,75 +315,142 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
             </div>
           )}
 
-          {/* Review */}
+          {/* ── Review ── */}
           {(step === 'review' || step === 'saving') && fields && (
-            <div className="space-y-6">
-              {/* Property info */}
+            <div className="space-y-5">
+
+              {/* Property / date banner */}
               {(fields.property_address || fields.settlement_date) && (
                 <div className="px-4 py-3 bg-slate-50 rounded-lg text-sm text-slate-600">
-                  {fields.property_address && <span className="font-medium text-slate-800">{fields.property_address}</span>}
-                  {fields.settlement_date  && <span className="ml-3 text-slate-400">· Closed {new Date(fields.settlement_date + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}</span>}
+                  {fields.property_address && (
+                    <span className="font-medium text-slate-800">{fields.property_address}</span>
+                  )}
+                  {fields.settlement_date && (
+                    <span className="ml-3 text-slate-400">
+                      · Closed {new Date(fields.settlement_date + 'T00:00:00').toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' })}
+                    </span>
+                  )}
                 </div>
               )}
 
               <div className="grid grid-cols-2 gap-6">
-                {/* Left — Extracted Fields */}
-                <div>
-                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Extracted Fields</h3>
-                  <div className="bg-slate-50 rounded-xl px-4 py-2">
-                    <Field label="Purchase Price"             value={fields.purchase_price}         onChange={v => setField('purchase_price', v)} />
-                    <Field label="Loan Amount"                value={fields.loan_amount}            onChange={v => setField('loan_amount', v)} />
-                    <Field label="Earnest Money Deposit"      value={fields.earnest_money}          onChange={v => setField('earnest_money', v)} />
-                    <Field label="Cash to Close"              value={fields.cash_to_close}          onChange={v => setField('cash_to_close', v)} />
-                    <Field label="Total Closing Costs (Line 103)" value={fields.total_closing_costs} onChange={v => setField('total_closing_costs', v)} />
-                    <p className="text-xs text-slate-400 pt-2 pb-1 border-t border-slate-100 mt-1">Individual line items (for reference)</p>
-                    <Field label="Loan Origination Fee"       value={fields.loan_origination_fee}   onChange={v => setField('loan_origination_fee', v)} />
-                    <Field label="Appraisal Fee"              value={fields.appraisal_fee}          onChange={v => setField('appraisal_fee', v)} />
-                    <Field label="Title & Closing Fees"       value={fields.title_and_closing_fees} onChange={v => setField('title_and_closing_fees', v)} />
-                    <Field label="Recording Fees"             value={fields.recording_fees}         onChange={v => setField('recording_fees', v)} />
-                    <Field label="Survey Fee"                 value={fields.survey_fee}             onChange={v => setField('survey_fee', v)} />
-                    <Field label="Environmental / PCA"        value={fields.environmental_fees}     onChange={v => setField('environmental_fees', v)} />
-                    <Field label="Knox Acquisition Fee"       value={fields.acquisition_fee}        onChange={v => setField('acquisition_fee', v)} />
-                    <Field label="Property Taxes Paid at Closing" value={fields.buyer_taxes_paid}   onChange={v => setField('buyer_taxes_paid', v)} />
-                    <p className="text-xs text-slate-400 pt-2 pb-1 border-t border-slate-100 mt-1">Credits received by buyer</p>
-                    <Field label="Tax Proration Credit (from Seller)"  value={fields.tax_credits}   onChange={v => setField('tax_credits', v)} />
-                    <Field label="Prorated Rent (Credit to Buyer)"     value={fields.prorated_rent}  onChange={v => setField('prorated_rent', v)} />
+
+                {/* ── LEFT: Extracted Fields ── */}
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Extracted Fields</h3>
+                    <div className="bg-slate-50 rounded-xl px-4 py-2">
+                      <Field
+                        label="Purchase Price"
+                        value={fields.purchase_price}
+                        onChange={v => setField('purchase_price', v)}
+                      />
+                      <Field
+                        label="Total Closing Costs"
+                        value={fields.total_closing_costs}
+                        onChange={v => setField('total_closing_costs', v)}
+                      />
+                      {/* Total Cost Basis — computed, read-only */}
+                      <div className="flex items-center justify-between py-2 mt-1 border-t-2 border-slate-200">
+                        <span className="text-xs font-semibold text-slate-700">Total Cost Basis</span>
+                        <span className="text-sm font-bold text-slate-900 tabular-nums">{$fmt(totalCostBasis)}</span>
+                      </div>
+
+                      {/* Separator */}
+                      <div className="border-t border-slate-100 mt-0.5 pt-1">
+                        <Field
+                          label="Loan Amount"
+                          value={fields.loan_amount}
+                          onChange={v => setField('loan_amount', v)}
+                        />
+                        <Field
+                          label="Cash to Close"
+                          value={fields.cash_to_close}
+                          onChange={v => setField('cash_to_close', v)}
+                        />
+                        <Field
+                          label="Prorated Rent Credit"
+                          value={fields.prorated_rent}
+                          onChange={v => setField('prorated_rent', v)}
+                        />
+                        <TextField
+                          label="Lender Name"
+                          value={fields.lender_name}
+                          onChange={v => setField('lender_name', v)}
+                        />
+                        <Field
+                          label="Depreciation Expense"
+                          value={fields.depreciation_expense}
+                          onChange={v => setField('depreciation_expense', v)}
+                        />
+                      </div>
+                    </div>
                   </div>
 
-                  {/* Building / Land split */}
-                  <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mt-4 mb-2">Building / Land Split</h3>
-                  <div className="bg-slate-50 rounded-xl px-4 py-2">
-                    <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
-                      <span className="text-xs text-slate-500">Building %</span>
-                      <div className="flex items-center gap-2">
-                        <input type="number" min="0" max="100" value={buildingPct}
-                          onChange={e => { setBuildingPct(Number(e.target.value)); setLandPct(100 - Number(e.target.value)) }}
-                          className="w-20 text-right text-sm font-medium border border-slate-200 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-blue-300"
-                        />
-                        <span className="text-xs text-slate-400">%</span>
+                  {/* Building / Land Split */}
+                  <div>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Building / Land Split</h3>
+                    <div className="bg-slate-50 rounded-xl px-4 py-2">
+                      {/* Building row */}
+                      <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
+                        <span className="text-xs text-slate-500">Building %</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number" min="0" max="100"
+                            value={buildingPct}
+                            onChange={e => { const v = Math.max(0, Math.min(100, Number(e.target.value))); setBuildingPct(v); setLandPct(100 - v) }}
+                            className="w-16 text-right text-sm font-medium border border-slate-200 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-blue-300"
+                          />
+                          <span className="text-xs text-slate-400">%</span>
+                          <span className="text-xs font-medium text-slate-600 tabular-nums w-24 text-right">
+                            {$fmt(totalCostBasis * buildingPct / 100)}
+                          </span>
+                        </div>
                       </div>
+                      {/* Land row */}
+                      <div className="flex items-center justify-between py-1.5">
+                        <span className="text-xs text-slate-500">Land %</span>
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="number" min="0" max="100"
+                            value={landPct}
+                            onChange={e => { const v = Math.max(0, Math.min(100, Number(e.target.value))); setLandPct(v); setBuildingPct(100 - v) }}
+                            className="w-16 text-right text-sm font-medium border border-slate-200 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-blue-300"
+                          />
+                          <span className="text-xs text-slate-400">%</span>
+                          <span className="text-xs font-medium text-slate-600 tabular-nums w-24 text-right">
+                            {$fmt(totalCostBasis * landPct / 100)}
+                          </span>
+                        </div>
+                      </div>
+                      {(buildingPct + landPct) !== 100 && (
+                        <p className="text-xs text-amber-600 pt-1.5 border-t border-slate-100 mt-0.5">
+                          ⚠ Percentages must add to 100%
+                        </p>
+                      )}
                     </div>
-                    <div className="flex items-center justify-between py-1.5">
-                      <span className="text-xs text-slate-500">Land %</span>
-                      <div className="flex items-center gap-2">
-                        <input type="number" min="0" max="100" value={landPct}
-                          onChange={e => { setLandPct(Number(e.target.value)); setBuildingPct(100 - Number(e.target.value)) }}
-                          className="w-20 text-right text-sm font-medium border border-slate-200 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-blue-300"
-                        />
-                        <span className="text-xs text-slate-400">%</span>
-                      </div>
-                    </div>
-                    {fields.purchase_price && (
-                      <div className="pt-2 pb-1 text-xs text-slate-400 text-right border-t border-slate-100 mt-1">
-                        Building: {$(fields.purchase_price * buildingPct / 100)} · Land: {$(fields.purchase_price * landPct / 100)}
-                      </div>
-                    )}
                   </div>
+
+                  {/* Investors indicator */}
+                  {investors.length > 0 ? (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-700">
+                      <Users className="w-3.5 h-3.5 shrink-0" />
+                      <span>
+                        <span className="font-semibold">{investors.length} investor{investors.length !== 1 ? 's' : ''} loaded</span>
+                        {' — equity lines included in journal entry'}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2 px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-400">
+                      <Users className="w-3.5 h-3.5 shrink-0" />
+                      <span>No investors uploaded — equity lines will be omitted</span>
+                    </div>
+                  )}
                 </div>
 
-                {/* Right — Journal Entry */}
+                {/* ── RIGHT: Journal Entry ── */}
                 <div>
-                  <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center justify-between mb-2">
                     <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">QuickBooks Journal Entry</h3>
                     <button
                       onClick={handleCopy}
@@ -336,40 +466,52 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
                       <table className="w-full border-collapse">
                         <thead>
                           <tr className="bg-slate-50 border-b border-slate-200">
-                            <th className="text-left px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide">Account</th>
-                            <th className="text-right px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide">Debit</th>
-                            <th className="text-right px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide">Credit</th>
+                            <th className="text-left px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide">Account Name</th>
+                            <th className="text-right px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide w-24">Debit</th>
+                            <th className="text-right px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide w-24">Credit</th>
                           </tr>
                         </thead>
                         <tbody>
+                          {/* Debits */}
                           {journal.debits.map((d, i) => (
-                            <tr key={i} className="border-b border-slate-100">
-                              <td className="px-3 py-1.5 text-slate-800">{d.account}</td>
-                              <td className="px-3 py-1.5 text-right text-slate-900 font-medium tabular-nums">{$(d.amount)}</td>
-                              <td className="px-3 py-1.5 text-right text-slate-400">—</td>
+                            <tr key={`d${i}`} className="border-b border-slate-100">
+                              <td className="px-3 py-1.5">
+                                <span className="text-slate-800 font-medium">{d.account}</span>
+                                {d.note && (
+                                  <span className="ml-1.5 text-slate-400 text-[10px] font-normal">({d.note})</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-1.5 text-right text-slate-900 font-medium tabular-nums">{$fmt(d.amount)}</td>
+                              <td className="px-3 py-1.5 text-right text-slate-300">—</td>
                             </tr>
                           ))}
+                          {/* Credits */}
                           {journal.credits.map((c, i) => (
-                            <tr key={i} className="border-b border-slate-100 bg-slate-50/40">
-                              <td className="px-3 py-1.5 text-slate-800 pl-6">{c.account}</td>
-                              <td className="px-3 py-1.5 text-right text-slate-400">—</td>
-                              <td className="px-3 py-1.5 text-right text-slate-900 font-medium tabular-nums">{$(c.amount)}</td>
+                            <tr key={`c${i}`} className="border-b border-slate-100 bg-slate-50/50">
+                              <td className="px-3 py-1.5 pl-5">
+                                <span className="text-slate-700">{c.account}</span>
+                                {c.note && (
+                                  <span className="ml-1.5 text-slate-400 text-[10px]">({c.note})</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-1.5 text-right text-slate-300">—</td>
+                              <td className="px-3 py-1.5 text-right text-slate-900 font-medium tabular-nums">{$fmt(c.amount)}</td>
                             </tr>
                           ))}
                         </tbody>
                         <tfoot>
                           <tr className="border-t-2 border-slate-300 bg-slate-50">
-                            <td className="px-3 py-2 font-semibold text-slate-700">Totals</td>
-                            <td className="px-3 py-2 text-right font-bold text-slate-900 tabular-nums">{$(journal.totalDebits)}</td>
-                            <td className="px-3 py-2 text-right font-bold text-slate-900 tabular-nums">{$(journal.totalCredits)}</td>
+                            <td className="px-3 py-2 font-semibold text-slate-700 text-xs">Totals</td>
+                            <td className="px-3 py-2 text-right font-bold text-slate-900 tabular-nums">{$fmt(journal.totalDebits)}</td>
+                            <td className="px-3 py-2 text-right font-bold text-slate-900 tabular-nums">{$fmt(journal.totalCredits)}</td>
                           </tr>
                           <tr>
-                            <td colSpan={3} className={`px-3 py-1.5 text-center text-xs font-medium ${Math.abs(journal.diff) < 1 ? 'text-emerald-600' : 'text-red-600'}`}>
+                            <td colSpan={3} className={`px-3 py-2 text-center text-xs font-semibold ${Math.abs(journal.diff) < 1 ? 'text-emerald-600 bg-emerald-50' : 'text-red-600 bg-red-50'}`}>
                               {Math.abs(journal.diff) < 1
                                 ? '✓ Balanced'
                                 : journal.diff > 0
-                                  ? `⚠ Debits exceed credits by ${$(journal.diff)} — increase a credit field`
-                                  : `⚠ Credits exceed debits by ${$(Math.abs(journal.diff))} — increase a debit field`
+                                  ? `⚠ Debits exceed credits by ${$fmt(journal.diff)} — check a credit field`
+                                  : `⚠ Credits exceed debits by ${$fmt(Math.abs(journal.diff))} — check a debit field`
                               }
                             </td>
                           </tr>

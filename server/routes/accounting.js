@@ -254,6 +254,7 @@ Return ONLY a valid JSON object in exactly this format — every field is requir
 {
   "settlement_date": "YYYY-MM-DD or null",
   "property_address": "street address or null",
+  "lender_name": "string or null",
   "purchase_price": number or null,
   "loan_amount": number or null,
   "earnest_money": number or null,
@@ -273,6 +274,7 @@ Return ONLY a valid JSON object in exactly this format — every field is requir
 
 Field extraction rules:
 - All amounts as POSITIVE numbers (the sign/direction is handled by the journal entry logic)
+- "lender_name": Full name of the lending institution / bank providing the mortgage. Look for "Lender:", "Bank:", or the institution name near the loan amount section. E.g. "Wells Fargo Bank", "Kendall Bank", "PNC Bank". Return just the name, no address.
 - "purchase_price": Contract sales price / purchase price line item
 - "loan_amount": Principal amount of new mortgage/loan
 - "earnest_money": Earnest money deposit already paid
@@ -398,6 +400,7 @@ async function parseSettlementStatement(buffer, apiKey) {
   return {
     settlement_date:      cleanDate(raw.settlement_date),
     property_address:     typeof raw.property_address === 'string' ? raw.property_address.trim() : null,
+    lender_name:          typeof raw.lender_name === 'string' && raw.lender_name.trim() ? raw.lender_name.trim() : null,
     purchase_price:       cn(raw.purchase_price),
     loan_amount:          cn(raw.loan_amount),
     earnest_money:        cn(raw.earnest_money),
