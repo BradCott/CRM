@@ -2,6 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import * as XLSX from 'xlsx'
 import db from '../db.js'
+import { autoLinkInvestors } from '../services/investorMatch.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
@@ -129,7 +130,23 @@ router.post('/:propertyId/investors', (req, res) => {
     saved.push({ id: r.lastInsertRowid, property_id: Number(propertyId), name: name.trim(), address, contribution: amount, percentage, class: cls, preferred_return })
   }
 
-  res.status(201).json(saved)
+  // Auto-match each name against the master investors table and create links
+  let match_results = null
+  try {
+    match_results = autoLinkInvestors(
+      Number(propertyId),
+      investors.map(inv => ({
+        name:             String(inv.name || '').trim(),
+        contribution:     Math.abs(parseFloat(inv.contribution) || 0),
+        preferred_return: inv.preferred_return != null ? parseFloat(inv.preferred_return) : null,
+      }))
+    )
+    console.log(`[accounting] Investor auto-match: ${match_results.linked.length} linked, ${match_results.needs_review.length} need review, ${match_results.new_profiles.length} new profiles`)
+  } catch (e) {
+    console.error('[accounting] Auto-match failed (non-fatal):', e.message)
+  }
+
+  res.status(201).json({ saved, match_results })
 })
 
 router.patch('/investors/:id', (req, res) => {

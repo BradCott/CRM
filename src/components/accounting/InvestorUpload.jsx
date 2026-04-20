@@ -1,6 +1,6 @@
 import { useState, useRef } from 'react'
-import { Upload, X, Loader2, Check, Pencil } from 'lucide-react'
-import { uploadInvestorContributions, saveInvestors } from '../../api/client'
+import { Upload, X, Loader2, Check, Pencil, Link, AlertCircle, UserPlus } from 'lucide-react'
+import { uploadInvestorContributions, saveInvestors, confirmInvestorMatch, createInvestor } from '../../api/client'
 
 const CLASSES = ['Investor', 'Sponsor']
 
@@ -12,11 +12,13 @@ function fmt$(v) {
 export default function InvestorUpload({ propertyId, onSaved, onClose }) {
   const fileRef = useRef(null)
 
-  // step: 'upload' | 'parsing' | 'review' | 'saving' | 'done'
-  const [step, setStep]         = useState('upload')
-  const [error, setError]       = useState(null)
-  const [investors, setInvestors] = useState([])  // review rows
-  const [editIdx, setEditIdx]   = useState(null)  // which row is being edited inline
+  // step: 'upload' | 'parsing' | 'review' | 'saving' | 'done' | 'match_review'
+  const [step, setStep]           = useState('upload')
+  const [error, setError]         = useState(null)
+  const [investors, setInvestors]   = useState([])  // review rows
+  const [editIdx, setEditIdx]     = useState(null)  // which row is being edited inline
+  const [matchResults, setMatchResults] = useState(null)  // { linked, needs_review, new_profiles }
+  const [propertyId_, setPropertyId_] = useState(null)  // stored for confirm-match calls
 
   // ── Upload & parse ──────────────────────────────────────────────────────────
   async function handleFile(file) {
@@ -58,18 +60,63 @@ export default function InvestorUpload({ propertyId, onSaved, onClose }) {
     setError(null)
     setStep('saving')
     try {
-      await saveInvestors(propertyId, investors.map(({ _id, ...inv }) => ({
+      const result = await saveInvestors(propertyId, investors.map(({ _id, ...inv }) => ({
         ...inv,
         contribution:     parseFloat(inv.contribution) || 0,
         percentage:       inv.percentage !== '' && inv.percentage !== null ? parseFloat(inv.percentage) : null,
         preferred_return: inv.preferred_return !== '' && inv.preferred_return !== null ? parseFloat(inv.preferred_return) : null,
       })))
-      setStep('done')
-      setTimeout(() => { onSaved(); onClose() }, 800)
+
+      // Show match review if anything needs attention, otherwise done
+      const mr = result?.match_results
+      if (mr && mr.needs_review?.length > 0) {
+        setMatchResults(mr)
+        setPropertyId_(propertyId)
+        setStep('match_review')
+      } else {
+        setMatchResults(mr)
+        setStep('done')
+        setTimeout(() => { onSaved(); onClose() }, 1200)
+      }
     } catch (err) {
       setError(err.message)
       setStep('review')
     }
+  }
+
+  async function handleConfirmMatch(item) {
+    try {
+      await confirmInvestorMatch({
+        investor_id:          item.investor_id,
+        property_id:          propertyId_,
+        contribution:         item.contribution,
+        preferred_return_rate: item.preferred_return,
+      })
+      setMatchResults(prev => ({
+        ...prev,
+        linked:       [...(prev.linked || []), { ...item, status: 'confirmed' }],
+        needs_review: prev.needs_review.filter(r => r.investor_id !== item.investor_id || r.name !== item.name),
+      }))
+    } catch (e) {
+      console.error('Confirm match failed:', e.message)
+    }
+  }
+
+  async function handleRejectMatch(item) {
+    // Create a new stub profile instead
+    try {
+      await createInvestor({ name: item.name, is_incomplete: 1 })
+    } catch (e) { /* ignore */ }
+    setMatchResults(prev => ({
+      ...prev,
+      new_profiles: [...(prev.new_profiles || []), { name: item.name }],
+      needs_review: prev.needs_review.filter(r => r.investor_id !== item.investor_id || r.name !== item.name),
+    }))
+  }
+
+  function handleMatchDone() {
+    onSaved()
+    onClose()
   }
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -82,11 +129,12 @@ export default function InvestorUpload({ propertyId, onSaved, onClose }) {
           <div>
             <h2 className="text-base font-semibold text-slate-900">Investor Contributions Upload</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              {step === 'upload'  && 'Upload an Excel file with investor details'}
-              {step === 'parsing' && 'Extracting investor data…'}
-              {step === 'review'  && `Review ${investors.length} investor${investors.length !== 1 ? 's' : ''} before saving`}
-              {step === 'saving'  && 'Saving…'}
-              {step === 'done'    && 'Saved!'}
+              {step === 'upload'       && 'Upload an Excel file with investor details'}
+              {step === 'parsing'      && 'Extracting investor data…'}
+              {step === 'review'       && `Review ${investors.length} investor${investors.length !== 1 ? 's' : ''} before saving`}
+              {step === 'saving'       && 'Saving…'}
+              {step === 'match_review' && 'Review investor profile matches'}
+              {step === 'done'         && 'Saved!'}
             </p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600 transition-colors">
@@ -179,13 +227,110 @@ export default function InvestorUpload({ propertyId, onSaved, onClose }) {
             </div>
           )}
 
+          {/* Match Review */}
+          {step === 'match_review' && matchResults && (
+            <div className="space-y-4">
+              {/* Auto-linked */}
+              {matchResults.linked?.length > 0 && (
+                <div className="px-4 py-3 bg-emerald-50 border border-emerald-200 rounded-xl">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Link className="w-4 h-4 text-emerald-600" />
+                    <span className="text-sm font-semibold text-emerald-800">
+                      {matchResults.linked.length} investor{matchResults.linked.length !== 1 ? 's' : ''} linked automatically
+                    </span>
+                  </div>
+                  <ul className="space-y-1">
+                    {matchResults.linked.map((item, i) => (
+                      <li key={i} className="text-xs text-emerald-700">
+                        <span className="font-medium">{item.name}</span>
+                        {item.matched_name && item.matched_name !== item.name && (
+                          <span className="text-emerald-500 ml-1">→ {item.matched_name}</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {/* Needs review */}
+              {matchResults.needs_review?.length > 0 && (
+                <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl">
+                  <div className="flex items-center gap-2 mb-3">
+                    <AlertCircle className="w-4 h-4 text-amber-500" />
+                    <span className="text-sm font-semibold text-amber-800">
+                      {matchResults.needs_review.length} uncertain match{matchResults.needs_review.length !== 1 ? 'es' : ''} — confirm or create new profile
+                    </span>
+                  </div>
+                  <div className="space-y-2">
+                    {matchResults.needs_review.map((item, i) => (
+                      <div key={i} className="bg-white rounded-lg border border-amber-100 px-3 py-2.5 flex items-center justify-between gap-4">
+                        <div>
+                          <p className="text-sm font-medium text-slate-800">{item.name}</p>
+                          <p className="text-xs text-slate-500">
+                            Possible match: <span className="font-medium text-slate-700">{item.matched_name}</span>
+                            <span className="ml-1 text-slate-400">({Math.round(item.score * 100)}% similar)</span>
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <button
+                            onClick={() => handleConfirmMatch(item)}
+                            className="text-xs px-3 py-1 bg-emerald-500 text-white rounded-lg hover:bg-emerald-600 font-semibold"
+                          >
+                            Use existing
+                          </button>
+                          <button
+                            onClick={() => handleRejectMatch(item)}
+                            className="text-xs px-3 py-1 bg-slate-100 text-slate-700 rounded-lg hover:bg-slate-200 font-medium"
+                          >
+                            New profile
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* New profiles */}
+              {matchResults.new_profiles?.length > 0 && (
+                <div className="px-4 py-3 bg-blue-50 border border-blue-200 rounded-xl">
+                  <div className="flex items-center gap-2 mb-2">
+                    <UserPlus className="w-4 h-4 text-blue-600" />
+                    <span className="text-sm font-semibold text-blue-800">
+                      {matchResults.new_profiles.length} new investor profile{matchResults.new_profiles.length !== 1 ? 's' : ''} created
+                    </span>
+                  </div>
+                  <ul className="space-y-1">
+                    {matchResults.new_profiles.map((item, i) => (
+                      <li key={i} className="text-xs text-blue-700 font-medium">{item.name}</li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-blue-600 mt-2">These profiles are incomplete. Visit the Investors page to add contact details.</p>
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Done */}
           {step === 'done' && (
-            <div className="flex flex-col items-center justify-center py-12 gap-3">
-              <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center">
-                <Check className="w-6 h-6 text-emerald-600" />
+            <div className="space-y-4">
+              <div className="flex flex-col items-center justify-center py-8 gap-3">
+                <div className="w-12 h-12 rounded-full bg-emerald-100 flex items-center justify-center">
+                  <Check className="w-6 h-6 text-emerald-600" />
+                </div>
+                <p className="text-sm font-medium text-slate-700">Investors saved successfully</p>
               </div>
-              <p className="text-sm font-medium text-slate-700">Investors saved successfully</p>
+              {/* Quick match summary on done screen (no needs_review) */}
+              {matchResults && (matchResults.linked?.length > 0 || matchResults.new_profiles?.length > 0) && (
+                <div className="px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-600 space-y-1">
+                  {matchResults.linked?.length > 0 && (
+                    <p><span className="font-semibold text-emerald-700">{matchResults.linked.length}</span> matched to existing investor profiles</p>
+                  )}
+                  {matchResults.new_profiles?.length > 0 && (
+                    <p><span className="font-semibold text-blue-700">{matchResults.new_profiles.length}</span> new stub profiles created — complete them in the Investors page</p>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -193,18 +338,30 @@ export default function InvestorUpload({ propertyId, onSaved, onClose }) {
         {/* Footer */}
         {step === 'review' && (
           <div className="px-6 py-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
-            <button
-              onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors"
-            >
+            <button onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition-colors">
               Cancel
             </button>
+            <button onClick={handleSave} disabled={investors.length === 0}
+              className="px-5 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors disabled:opacity-40">
+              Save {investors.length} Investor{investors.length !== 1 ? 's' : ''}
+            </button>
+          </div>
+        )}
+
+        {step === 'match_review' && matchResults && (
+          <div className="px-6 py-4 border-t border-slate-200 flex items-center justify-between shrink-0">
+            <p className="text-xs text-slate-400">
+              {matchResults.needs_review?.length > 0
+                ? 'Resolve the uncertain matches above, then click Done.'
+                : 'All matches resolved.'}
+            </p>
             <button
-              onClick={handleSave}
-              disabled={investors.length === 0}
+              onClick={handleMatchDone}
+              disabled={matchResults.needs_review?.length > 0}
               className="px-5 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors disabled:opacity-40"
             >
-              Save {investors.length} Investor{investors.length !== 1 ? 's' : ''}
+              Done
             </button>
           </div>
         )}

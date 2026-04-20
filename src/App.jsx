@@ -8,7 +8,8 @@ import PropertiesPage   from './components/properties/PropertiesPage'
 import ImportPage       from './components/import/ImportPage'
 import ReportsPage      from './components/reports/ReportsPage'
 import PortfolioPage    from './components/portfolio/PortfolioPage'
-import InvestorsPage    from './components/investors/InvestorsPage'
+import InvestorsPage          from './components/investors/InvestorsPage'
+import InvestorProfilePage   from './components/investors/InvestorProfilePage'
 import DashboardPage    from './components/dashboard/DashboardPage'
 import SettingsPage     from './components/settings/SettingsPage'
 import AccountingPage   from './components/accounting/AccountingPage'
@@ -92,7 +93,8 @@ export default function App() {
               <Route path="/portfolio"   element={<RequireRole><PortfolioPage /></RequireRole>} />
               <Route path="/management"  element={<RequireRole><ManagementDashboard /></RequireRole>} />
               <Route path="/management/:propertyId" element={<RequireRole><PropertyManagementDetail /></RequireRole>} />
-              <Route path="/investors"  element={<RequireRole><InvestorsPage /></RequireRole>} />
+              <Route path="/investors"     element={<RequireRole><InvestorsPage /></RequireRole>} />
+              <Route path="/investors/:id" element={<RequireRole><InvestorProfilePage /></RequireRole>} />
               <Route path="/accounting" element={<RequireRole><AccountingPage /></RequireRole>} />
               <Route path="/accounting/:propertyId" element={<RequireRole><LedgerPage /></RequireRole>} />
 

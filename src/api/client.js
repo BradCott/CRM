@@ -125,16 +125,31 @@ export async function uploadInvestorContributions(propertyId, file) {
   return req('POST', `/accounting/${propertyId}/investors/upload`, fd)
 }
 
-// Investors (CRM)
-export const getInvestor     = (id)     => req('GET',    `/investors/${id}`)
-export const createInvestor  = (data)   => req('POST',   '/investors', data)
-export const updateInvestor  = (id, d)  => req('PUT',    `/investors/${id}`, d)
-export const deleteInvestorRecord = (id) => req('DELETE', `/investors/${id}`)
-
+// Investors (CRM master profiles)
 export const getCRMInvestors = (params = {}) => {
   const qs = new URLSearchParams(params).toString()
   return req('GET', `/investors${qs ? '?' + qs : ''}`)
 }
+export const getInvestorProfile  = (id)     => req('GET',    `/investors/${id}`)
+export const createInvestor      = (data)   => req('POST',   '/investors', data)
+export const updateInvestor      = (id, d)  => req('PATCH',  `/investors/${id}`, d)
+export const deleteInvestorRecord = (id)    => req('DELETE', `/investors/${id}`)
+export const matchInvestorNames  = (names)  => req('POST',   '/investors/match', { names })
+export const confirmInvestorMatch = (data)  => req('POST',   '/investors/match/confirm', data)
+
+// Investor property links
+export const getInvestorLinks   = (investorId)       => req('GET',    `/investors/${investorId}/links`)
+export const createInvestorLink = (investorId, data)  => req('POST',   `/investors/${investorId}/links`, data)
+export const updateInvestorLink = (linkId, data)      => req('PATCH',  `/investors/links/${linkId}`, data)
+export const deleteInvestorLink = (linkId)            => req('DELETE', `/investors/links/${linkId}`)
+
+// Investor distributions
+export const getInvestorDistributions  = (investorId)       => req('GET',    `/investors/${investorId}/distributions`)
+export const createDistribution        = (investorId, data)  => req('POST',   `/investors/${investorId}/distributions`, data)
+export const deleteDistribution        = (distId)            => req('DELETE', `/investors/distributions/${distId}`)
+
+// Legacy alias kept for any existing code
+export const getInvestor = (id) => req('GET', `/investors/${id}`)
 
 // Property Management
 export const getManagementDashboard  = ()               => req('GET', '/management/dashboard')

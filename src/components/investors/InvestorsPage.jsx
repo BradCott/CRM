@@ -1,17 +1,19 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   TrendingUp, Plus, MoreHorizontal, Pencil, Trash2, Loader2,
-  ChevronLeft, ChevronRight, Building2, User, X, DollarSign,
+  ChevronLeft, ChevronRight, AlertCircle,
 } from 'lucide-react'
 import { getCRMInvestors, createInvestor, updateInvestor, deleteInvestorRecord } from '../../api/client'
-import { useApp } from '../../context/AppContext'
 import TopBar from '../layout/TopBar'
 import Button from '../ui/Button'
 import Modal from '../ui/Modal'
 import ConfirmDialog from '../ui/ConfirmDialog'
-import MultiSelect from '../ui/MultiSelect'
 
-const PAGE_SIZE = 75
+const PAGE_SIZE = 100
+
+const ENTITY_TYPES  = ['Individual', 'LLC', 'Trust', 'Partnership']
+const ACCRED_STATUS = ['Accredited', 'Non-Accredited']
 
 const US_STATES = [
   'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA',
@@ -22,37 +24,35 @@ const US_STATES = [
 ]
 
 function fmt$(v) {
-  if (!v && v !== 0) return null
+  if (v == null || v === 0) return '—'
   if (v >= 1_000_000) return `$${(v / 1_000_000).toFixed(1)}M`
-  if (v >= 1_000)     return `$${Number(v).toLocaleString()}`
-  return `$${v}`
+  return '$' + Number(v).toLocaleString()
 }
 
-function TypeBadge({ type }) {
-  if (type === 'company') {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs font-semibold text-violet-700 bg-violet-50 px-2 py-0.5 rounded-full">
-        <Building2 className="w-3 h-3" /> Company
-      </span>
-    )
+function EntityBadge({ type }) {
+  const styles = {
+    'Individual':  'bg-blue-50 text-blue-700',
+    'LLC':         'bg-violet-50 text-violet-700',
+    'Trust':       'bg-amber-50 text-amber-700',
+    'Partnership': 'bg-emerald-50 text-emerald-700',
   }
   return (
-    <span className="inline-flex items-center gap-1 text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
-      <User className="w-3 h-3" /> Individual
+    <span className={`inline-block text-xs font-semibold px-2 py-0.5 rounded-full ${styles[type] || 'bg-slate-100 text-slate-600'}`}>
+      {type || '—'}
     </span>
   )
 }
 
-// ── Main Page ─────────────────────────────────────────────────────────────────
+// ── Main page ─────────────────────────────────────────────────────────────────
+
 export default function InvestorsPage() {
-  const { tenantBrands } = useApp()
-  const brandNames = tenantBrands.map(b => b.name)
+  const navigate = useNavigate()
 
   const [rows, setRows]                 = useState([])
   const [total, setTotal]               = useState(0)
   const [page, setPage]                 = useState(0)
   const [search, setSearch]             = useState('')
-  const [typeFilter, setTypeFilter]     = useState('')
+  const [entityFilter, setEntityFilter] = useState('')
   const [fetching, setFetching]         = useState(false)
   const [showForm, setShowForm]         = useState(false)
   const [editTarget, setEditTarget]     = useState(null)
@@ -60,35 +60,35 @@ export default function InvestorsPage() {
   const [openMenu, setOpenMenu]         = useState(null)
   const searchTimer = useRef(null)
 
-  const load = useCallback(async (s, type, pg) => {
+  const load = useCallback(async (s, entity, pg) => {
     setFetching(true)
     try {
       const params = { limit: PAGE_SIZE, offset: pg * PAGE_SIZE }
-      if (s)    params.search = s
-      if (type) params.type   = type
+      if (s)      params.search      = s
+      if (entity) params.entity_type = entity
       const res = await getCRMInvestors(params)
       setRows(res.rows)
       setTotal(res.total)
     } finally { setFetching(false) }
   }, [])
 
-  useEffect(() => { load(search, typeFilter, page) }, [page, typeFilter]) // eslint-disable-line
+  useEffect(() => { load(search, entityFilter, page) }, [page, entityFilter]) // eslint-disable-line
 
   const handleSearch = (val) => {
     setSearch(val)
     clearTimeout(searchTimer.current)
-    searchTimer.current = setTimeout(() => { setPage(0); load(val, typeFilter, 0) }, 300)
+    searchTimer.current = setTimeout(() => { setPage(0); load(val, entityFilter, 0) }, 300)
   }
 
   const handleSave = async (data) => {
     if (editTarget) await updateInvestor(editTarget.id, data)
     else await createInvestor(data)
-    load(search, typeFilter, page)
+    load(search, entityFilter, page)
   }
 
   const handleDelete = async () => {
     await deleteInvestorRecord(deleteTarget.id)
-    load(search, typeFilter, page)
+    load(search, entityFilter, page)
   }
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
@@ -98,20 +98,19 @@ export default function InvestorsPage() {
       <TopBar
         title={total > 0 ? `Investors (${total.toLocaleString()})` : 'Investors'}
         onSearch={handleSearch}
-        searchPlaceholder="Search name, email, city…"
+        searchPlaceholder="Search name, email, phone…"
         actions={
           <div className="flex items-center gap-2">
             <select
-              value={typeFilter}
-              onChange={e => { setTypeFilter(e.target.value); setPage(0); load(search, e.target.value, 0) }}
+              value={entityFilter}
+              onChange={e => { setEntityFilter(e.target.value); setPage(0); load(search, e.target.value, 0) }}
               className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
               <option value="">All types</option>
-              <option value="individual">Individual</option>
-              <option value="company">Company</option>
+              {ENTITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
             <Button onClick={() => { setEditTarget(null); setShowForm(true) }}>
-              <Plus className="w-4 h-4" /> Add investor
+              <Plus className="w-4 h-4" /> Add Investor
             </Button>
           </div>
         }
@@ -130,60 +129,50 @@ export default function InvestorsPage() {
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    {['Name', 'Type', 'Contact', 'Location', 'Deal Range', 'Pref. Tenants', 'Pref. States', 'Total Invested'].map(h => (
+                    {['Name', 'Entity Type', 'Email', 'Phone', 'Total Invested', '# Properties', 'Pref Return %', ''].map(h => (
                       <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
-                    <th className="w-12" />
                   </tr>
                 </thead>
                 <tbody>
                   {rows.map((inv, i) => (
                     <tr
                       key={inv.id}
-                      className={`border-b border-slate-100 last:border-0 hover:bg-blue-50/40 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`}
+                      className={`border-b border-slate-100 last:border-0 hover:bg-blue-50/50 transition-colors cursor-pointer ${i % 2 === 0 ? '' : 'bg-slate-50/30'}`}
+                      onClick={() => navigate(`/investors/${inv.id}`)}
                     >
                       <td className="px-4 py-3">
-                        <p className="font-medium text-slate-900">{inv.name}</p>
-                        {inv.notes && <p className="text-xs text-slate-400 truncate max-w-[180px]">{inv.notes}</p>}
-                      </td>
-                      <td className="px-4 py-3"><TypeBadge type={inv.type} /></td>
-                      <td className="px-4 py-3">
-                        {inv.email && <p className="text-slate-700 truncate max-w-[160px]">{inv.email}</p>}
-                        {inv.phone && <p className="text-xs text-slate-500">{inv.phone}</p>}
-                        {!inv.email && !inv.phone && <span className="text-slate-300">—</span>}
-                      </td>
-                      <td className="px-4 py-3">
-                        {(inv.city || inv.state) ? (
-                          <p className="text-slate-700">{[inv.city, inv.state].filter(Boolean).join(', ')}</p>
-                        ) : <span className="text-slate-300">—</span>}
-                        {inv.address && <p className="text-xs text-slate-400 truncate max-w-[140px]">{inv.address}</p>}
-                      </td>
-                      <td className="px-4 py-3 whitespace-nowrap">
-                        {(inv.min_deal_size || inv.max_deal_size) ? (
-                          <p className="text-slate-700 text-xs">
-                            {fmt$(inv.min_deal_size) || '—'} – {fmt$(inv.max_deal_size) || '—'}
-                          </p>
-                        ) : <span className="text-slate-300">—</span>}
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-slate-900">{inv.name}</p>
+                          {inv.is_incomplete ? (
+                            <span title="Profile incomplete" className="text-amber-400">
+                              <AlertCircle className="w-3.5 h-3.5" />
+                            </span>
+                          ) : null}
+                        </div>
+                        {inv.city && inv.state && (
+                          <p className="text-xs text-slate-400">{inv.city}, {inv.state}</p>
+                        )}
                       </td>
                       <td className="px-4 py-3">
-                        {inv.preferred_tenant_brands?.length > 0 ? (
-                          <div className="flex flex-wrap gap-1 max-w-[160px]">
-                            {inv.preferred_tenant_brands.slice(0, 2).map(b => (
-                              <span key={b} className="text-xs bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">{b}</span>
-                            ))}
-                            {inv.preferred_tenant_brands.length > 2 && (
-                              <span className="text-xs text-slate-400">+{inv.preferred_tenant_brands.length - 2}</span>
-                            )}
-                          </div>
-                        ) : <span className="text-slate-300">—</span>}
+                        <EntityBadge type={inv.entity_type} />
                       </td>
-                      <td className="px-4 py-3">
-                        {inv.preferred_states?.length > 0 ? (
-                          <p className="text-xs text-slate-700">{inv.preferred_states.slice(0, 4).join(', ')}{inv.preferred_states.length > 4 ? ` +${inv.preferred_states.length - 4}` : ''}</p>
-                        ) : <span className="text-slate-300">—</span>}
+                      <td className="px-4 py-3 text-slate-700 max-w-[180px] truncate">
+                        {inv.email || <span className="text-slate-300">—</span>}
                       </td>
-                      <td className="px-4 py-3 font-medium text-slate-900">
-                        {fmt$(inv.total_investments) || <span className="text-slate-300 font-normal">—</span>}
+                      <td className="px-4 py-3 text-slate-700">
+                        {inv.phone || <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="px-4 py-3 font-semibold text-slate-900 tabular-nums">
+                        {inv.total_invested > 0 ? fmt$(inv.total_invested) : <span className="text-slate-300 font-normal">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-slate-700 tabular-nums text-center">
+                        {inv.num_properties > 0 ? inv.num_properties : <span className="text-slate-300">—</span>}
+                      </td>
+                      <td className="px-4 py-3 text-slate-700 tabular-nums">
+                        {inv.avg_preferred_return_rate != null
+                          ? `${Number(inv.avg_preferred_return_rate).toFixed(1)}%`
+                          : <span className="text-slate-300">—</span>}
                       </td>
                       <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                         <div className="relative">
@@ -195,6 +184,12 @@ export default function InvestorsPage() {
                           </button>
                           {openMenu === inv.id && (
                             <div className="absolute right-0 top-9 w-44 bg-white border border-slate-200 rounded-xl shadow-lg z-10 py-1 text-sm">
+                              <button
+                                className="flex items-center gap-2 w-full px-3 py-2 text-slate-700 hover:bg-slate-50"
+                                onClick={() => { navigate(`/investors/${inv.id}`) }}
+                              >
+                                <TrendingUp className="w-3.5 h-3.5" /> View profile
+                              </button>
                               <button
                                 className="flex items-center gap-2 w-full px-3 py-2 text-slate-700 hover:bg-slate-50"
                                 onClick={() => { setEditTarget(inv); setShowForm(true); setOpenMenu(null) }}
@@ -245,7 +240,6 @@ export default function InvestorsPage() {
       >
         <InvestorForm
           investor={editTarget}
-          brandNames={brandNames}
           onSave={handleSave}
           onClose={() => { setShowForm(false); setEditTarget(null) }}
         />
@@ -256,7 +250,7 @@ export default function InvestorsPage() {
         onClose={() => setDeleteTarget(null)}
         onConfirm={handleDelete}
         title="Delete investor?"
-        message={`"${deleteTarget?.name}" will be permanently deleted.`}
+        message={`"${deleteTarget?.name}" and all their links and distribution records will be permanently deleted.`}
       />
 
       {openMenu && <div className="fixed inset-0 z-0" onClick={() => setOpenMenu(null)} />}
@@ -265,23 +259,21 @@ export default function InvestorsPage() {
 }
 
 // ── Investor Form ─────────────────────────────────────────────────────────────
-function InvestorForm({ investor, brandNames, onSave, onClose }) {
+
+export function InvestorForm({ investor, onSave, onClose }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
-    name:                    investor?.name                    ?? '',
-    type:                    investor?.type                    ?? 'individual',
-    email:                   investor?.email                   ?? '',
-    phone:                   investor?.phone                   ?? '',
-    address:                 investor?.address                 ?? '',
-    city:                    investor?.city                    ?? '',
-    state:                   investor?.state                   ?? '',
-    zip:                     investor?.zip                     ?? '',
-    total_investments:       investor?.total_investments       ?? '',
-    preferred_tenant_brands: investor?.preferred_tenant_brands ?? [],
-    preferred_states:        investor?.preferred_states        ?? [],
-    min_deal_size:           investor?.min_deal_size           ?? '',
-    max_deal_size:           investor?.max_deal_size           ?? '',
-    notes:                   investor?.notes                   ?? '',
+    name:                 investor?.name                 ?? '',
+    entity_type:          investor?.entity_type          ?? 'Individual',
+    email:                investor?.email                ?? '',
+    phone:                investor?.phone                ?? '',
+    address:              investor?.address              ?? '',
+    city:                 investor?.city                 ?? '',
+    state:                investor?.state                ?? '',
+    zip:                  investor?.zip                  ?? '',
+    tax_id:               investor?.tax_id               ?? '',
+    accreditation_status: investor?.accreditation_status ?? 'Accredited',
+    notes:                investor?.notes                ?? '',
   })
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }))
@@ -291,51 +283,43 @@ function InvestorForm({ investor, brandNames, onSave, onClose }) {
     if (!form.name.trim()) return
     setSaving(true)
     try {
-      await onSave({
-        ...form,
-        total_investments: form.total_investments !== '' ? Number(form.total_investments) : null,
-        min_deal_size:     form.min_deal_size     !== '' ? Number(form.min_deal_size)     : null,
-        max_deal_size:     form.max_deal_size     !== '' ? Number(form.max_deal_size)     : null,
-      })
+      await onSave({ ...form })
       onClose()
     } finally {
       setSaving(false)
     }
   }
 
+  const inp = 'w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500'
+
   return (
-    <form onSubmit={handleSubmit} className="space-y-6 p-6">
+    <form onSubmit={handleSubmit} className="space-y-5 p-6">
+
       {/* Identity */}
       <section>
         <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Identity</h3>
         <div className="grid grid-cols-2 gap-4">
           <div className="col-span-2">
-            <label className="block text-sm font-medium text-slate-700 mb-1">Name <span className="text-red-500">*</span></label>
-            <input
-              required
-              value={form.name}
-              onChange={e => set('name', e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="Full name or company name"
-            />
+            <label className="block text-sm font-medium text-slate-700 mb-1">Full Name <span className="text-red-500">*</span></label>
+            <input required value={form.name} onChange={e => set('name', e.target.value)}
+              className={inp} placeholder="Full name or entity name" />
           </div>
-          <div className="col-span-2">
-            <label className="block text-sm font-medium text-slate-700 mb-2">Type</label>
-            <div className="flex gap-4">
-              {[['individual', 'Individual'], ['company', 'Company']].map(([val, label]) => (
-                <label key={val} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="type"
-                    value={val}
-                    checked={form.type === val}
-                    onChange={() => set('type', val)}
-                    className="text-blue-600 focus:ring-blue-500"
-                  />
-                  <span className="text-sm text-slate-700">{label}</span>
-                </label>
-              ))}
-            </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Entity Type</label>
+            <select value={form.entity_type} onChange={e => set('entity_type', e.target.value)} className={inp + ' bg-white'}>
+              {ENTITY_TYPES.map(t => <option key={t}>{t}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Accreditation Status</label>
+            <select value={form.accreditation_status} onChange={e => set('accreditation_status', e.target.value)} className={inp + ' bg-white'}>
+              {ACCRED_STATUS.map(s => <option key={s}>{s}</option>)}
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Tax ID</label>
+            <input value={form.tax_id} onChange={e => set('tax_id', e.target.value)}
+              className={inp} placeholder="XX-XXXXXXX" />
           </div>
         </div>
       </section>
@@ -347,14 +331,12 @@ function InvestorForm({ investor, brandNames, onSave, onClose }) {
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
             <input type="email" value={form.email} onChange={e => set('email', e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="email@example.com" />
+              className={inp} placeholder="email@example.com" />
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Phone</label>
             <input type="tel" value={form.phone} onChange={e => set('phone', e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="(555) 000-0000" />
+              className={inp} placeholder="(555) 000-0000" />
           </div>
         </div>
       </section>
@@ -366,82 +348,23 @@ function InvestorForm({ investor, brandNames, onSave, onClose }) {
           <div className="col-span-6">
             <label className="block text-sm font-medium text-slate-700 mb-1">Street</label>
             <input value={form.address} onChange={e => set('address', e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="123 Main St" />
+              className={inp} placeholder="123 Main St" />
           </div>
           <div className="col-span-3">
             <label className="block text-sm font-medium text-slate-700 mb-1">City</label>
-            <input value={form.city} onChange={e => set('city', e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
+            <input value={form.city} onChange={e => set('city', e.target.value)} className={inp} />
           </div>
           <div className="col-span-2">
             <label className="block text-sm font-medium text-slate-700 mb-1">State</label>
-            <select value={form.state} onChange={e => set('state', e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+            <select value={form.state} onChange={e => set('state', e.target.value)} className={inp + ' bg-white'}>
               <option value="">—</option>
-              {US_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+              {US_STATES.map(s => <option key={s}>{s}</option>)}
             </select>
           </div>
           <div className="col-span-1">
             <label className="block text-sm font-medium text-slate-700 mb-1">ZIP</label>
             <input value={form.zip} onChange={e => set('zip', e.target.value)}
-              className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="00000" />
-          </div>
-        </div>
-      </section>
-
-      {/* Investment Profile */}
-      <section>
-        <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Investment Profile</h3>
-        <div className="grid grid-cols-3 gap-4 mb-4">
-          <div className="col-span-3 sm:col-span-1">
-            <label className="block text-sm font-medium text-slate-700 mb-1">Total Invested ($)</label>
-            <div className="relative">
-              <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input type="number" min="0" value={form.total_investments} onChange={e => set('total_investments', e.target.value)}
-                className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="0" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Min Deal Size ($)</label>
-            <div className="relative">
-              <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input type="number" min="0" value={form.min_deal_size} onChange={e => set('min_deal_size', e.target.value)}
-                className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="0" />
-            </div>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">Max Deal Size ($)</label>
-            <div className="relative">
-              <DollarSign className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <input type="number" min="0" value={form.max_deal_size} onChange={e => set('max_deal_size', e.target.value)}
-                className="w-full pl-8 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="0" />
-            </div>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Preferred Tenant Brands</label>
-            <MultiSelect
-              options={brandNames}
-              selected={form.preferred_tenant_brands}
-              onChange={v => set('preferred_tenant_brands', v)}
-              placeholder="Any tenant"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-700 mb-2">Preferred States</label>
-            <MultiSelect
-              options={US_STATES}
-              selected={form.preferred_states}
-              onChange={v => set('preferred_states', v)}
-              placeholder="Any state"
-            />
+              className={inp} placeholder="00000" />
           </div>
         </div>
       </section>
@@ -449,13 +372,9 @@ function InvestorForm({ investor, brandNames, onSave, onClose }) {
       {/* Notes */}
       <section>
         <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Notes</h3>
-        <textarea
-          value={form.notes}
-          onChange={e => set('notes', e.target.value)}
-          rows={3}
-          className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
-          placeholder="Any additional notes about this investor…"
-        />
+        <textarea value={form.notes} onChange={e => set('notes', e.target.value)} rows={3}
+          className={inp + ' resize-none'}
+          placeholder="Any additional notes about this investor…" />
       </section>
 
       <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
@@ -480,9 +399,9 @@ function EmptyInvestors({ onAdd }) {
       </div>
       <h3 className="text-base font-semibold text-slate-700 mb-1">No investors yet</h3>
       <p className="text-sm text-slate-400 mb-5 max-w-xs">
-        Add individuals or companies who buy NNN properties so you can match them to deals.
+        Add investor profiles to track contributions, preferred returns, and distributions across all properties.
       </p>
-      <Button onClick={onAdd}><Plus className="w-4 h-4" /> Add investor</Button>
+      <Button onClick={onAdd}><Plus className="w-4 h-4" /> Add Investor</Button>
     </div>
   )
 }

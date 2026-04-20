@@ -230,6 +230,11 @@ const migrations = [
   `ALTER TABLE deals ADD COLUMN dd_deadline        TEXT`,
   `ALTER TABLE deals ADD COLUMN earnest_money      REAL`,
   `ALTER TABLE deals ADD COLUMN status             TEXT DEFAULT 'active'`,
+  // Investor profile enhancements
+  `ALTER TABLE investors ADD COLUMN entity_type          TEXT DEFAULT 'Individual'`,
+  `ALTER TABLE investors ADD COLUMN tax_id               TEXT`,
+  `ALTER TABLE investors ADD COLUMN accreditation_status TEXT DEFAULT 'Accredited'`,
+  `ALTER TABLE investors ADD COLUMN is_incomplete        INTEGER DEFAULT 0`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────
@@ -301,6 +306,34 @@ db.exec(`
     created_at  TEXT DEFAULT (datetime('now'))
   );
   CREATE INDEX IF NOT EXISTS idx_journal_property ON property_journal_entries(property_id);
+
+  CREATE TABLE IF NOT EXISTS investor_property_links (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    investor_id           INTEGER NOT NULL REFERENCES investors(id) ON DELETE CASCADE,
+    property_id           INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    contribution          REAL NOT NULL DEFAULT 0,
+    ownership_percentage  REAL,
+    preferred_return_rate REAL,
+    created_at            TEXT DEFAULT (datetime('now')),
+    UNIQUE(investor_id, property_id)
+  );
+  CREATE INDEX IF NOT EXISTS idx_ipl_investor ON investor_property_links(investor_id);
+  CREATE INDEX IF NOT EXISTS idx_ipl_property ON investor_property_links(property_id);
+
+  CREATE TABLE IF NOT EXISTS investor_distributions (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    investor_id       INTEGER NOT NULL REFERENCES investors(id) ON DELETE CASCADE,
+    property_id       INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+    amount            REAL NOT NULL,
+    distribution_date TEXT NOT NULL,
+    distribution_type TEXT NOT NULL DEFAULT 'Preferred Return'
+                      CHECK(distribution_type IN ('Preferred Return','Principal','Profit')),
+    notes             TEXT,
+    created_at        TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_dist_investor ON investor_distributions(investor_id);
+  CREATE INDEX IF NOT EXISTS idx_dist_property ON investor_distributions(property_id);
+  CREATE INDEX IF NOT EXISTS idx_dist_date     ON investor_distributions(distribution_date);
 `)
 for (const sql of migrations) {
   try { db.exec(sql) } catch (_) { /* column already exists — ignore */ }
