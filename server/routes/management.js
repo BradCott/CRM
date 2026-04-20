@@ -138,6 +138,43 @@ router.get('/dashboard', (req, res) => {
     WHERE date >= date('now', '-365 days')
   `).get()
 
+  // ── New stat counts ───────────────────────────────────────────────────────
+  const in180 = addDays(todayStr, 180)
+
+  // Tax Due (6 months): distinct portfolio properties with an unpaid tax bill due within 6 months
+  const taxDue6mo = db.prepare(`
+    SELECT COUNT(DISTINCT pt.property_id) AS n
+    FROM property_taxes pt
+    JOIN properties p ON p.id = pt.property_id
+    WHERE p.is_portfolio = 1
+      AND pt.paid_date IS NULL
+      AND pt.due_date IS NOT NULL
+      AND pt.due_date <= ?
+  `).get(in180).n
+
+  // Awaiting Tax Reimbursement: distinct portfolio properties with a pending/overdue
+  // task of type 'tax' whose title contains "reimburs" (case-insensitive)
+  const taxReimbursePending = db.prepare(`
+    SELECT COUNT(DISTINCT pt.property_id) AS n
+    FROM property_tasks pt
+    JOIN properties p ON p.id = pt.property_id
+    WHERE p.is_portfolio = 1
+      AND pt.completed_at IS NULL
+      AND pt.task_type = 'tax'
+      AND LOWER(pt.title) LIKE '%reimburs%'
+  `).get().n
+
+  // Awaiting Insurance Reimbursement: same but for insurance tasks
+  const insReimbursePending = db.prepare(`
+    SELECT COUNT(DISTINCT pt.property_id) AS n
+    FROM property_tasks pt
+    JOIN properties p ON p.id = pt.property_id
+    WHERE p.is_portfolio = 1
+      AND pt.completed_at IS NULL
+      AND pt.task_type = 'insurance'
+      AND LOWER(pt.title) LIKE '%reimburs%'
+  `).get().n
+
   // Per-property task counts for the list view
   const taskCountRows = db.prepare(`
     SELECT
@@ -156,13 +193,16 @@ router.get('/dashboard', (req, res) => {
   }
 
   res.json({
-    properties:            portfolioProps,
-    tasks_due:             tasksDue,
-    overdue_tasks:         overdueTasks,
-    insurance_expiring:    insuranceExpiring,
-    taxes_due:             taxesDue,
-    maintenance_spend_ytd: maintenanceSpend?.total || 0,
-    task_counts:           taskCounts,
+    properties:                  portfolioProps,
+    tasks_due:                   tasksDue,
+    overdue_tasks:               overdueTasks,
+    insurance_expiring:          insuranceExpiring,
+    taxes_due:                   taxesDue,
+    maintenance_spend_ytd:       maintenanceSpend?.total || 0,
+    task_counts:                 taskCounts,
+    tax_due_6mo:                 taxDue6mo        || 0,
+    tax_reimburse_pending:       taxReimbursePending || 0,
+    ins_reimburse_pending:       insReimbursePending || 0,
   })
 })
 

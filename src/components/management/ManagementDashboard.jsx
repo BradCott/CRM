@@ -4,6 +4,7 @@ import {
   Building2, ClipboardList, AlertTriangle, Shield, Receipt,
   ChevronRight, CheckCircle2, Loader2, RefreshCw,
   LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown,
+  CalendarClock, RefreshCcw,
 } from 'lucide-react'
 import { getManagementDashboard, completeTask, getAllManagementTasks } from '../../api/client'
 
@@ -124,18 +125,27 @@ function PropertiesView({ data, onRefresh }) {
     overdue_tasks = [],
     insurance_expiring = [],
     maintenance_spend_ytd = 0,
+    tax_due_6mo = 0,
+    tax_reimburse_pending = 0,
+    ins_reimburse_pending = 0,
   } = data
 
   const totalRent = properties.reduce((s, p) => s + (p.annual_rent || 0), 0)
 
   return (
     <div className="space-y-5">
-      {/* Stats bar */}
+      {/* Stats bar — row 1 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard icon={Building2}     label="Portfolio Properties" value={properties.length}         color="blue"  note={fmt(totalRent) + '/yr rent'} />
         <StatCard icon={AlertTriangle} label="Overdue Tasks"        value={overdue_tasks.length}      color={overdue_tasks.length > 0 ? 'red' : 'green'} />
         <StatCard icon={Shield}        label="Insurance Expiring"   value={insurance_expiring.length} color={insurance_expiring.length > 0 ? 'amber' : 'green'} note="next 90 days" />
         <StatCard icon={Receipt}       label="Maintenance YTD"      value={fmt(maintenance_spend_ytd)} color="slate" />
+      </div>
+      {/* Stats bar — row 2 */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+        <StatCard icon={CalendarClock} label="Tax Due (6 months)"              value={tax_due_6mo}           color={tax_due_6mo > 0 ? 'amber' : 'green'}  note="unpaid tax bills" />
+        <StatCard icon={RefreshCcw}    label="Awaiting Tax Reimbursement"      value={tax_reimburse_pending} color={tax_reimburse_pending > 0 ? 'amber' : 'green'} note="open reimbursement tasks" />
+        <StatCard icon={RefreshCcw}    label="Awaiting Insurance Reimbursement" value={ins_reimburse_pending} color={ins_reimburse_pending > 0 ? 'amber' : 'green'} note="open reimbursement tasks" />
       </div>
 
       {/* Alert banners (compact) */}
@@ -208,15 +218,21 @@ function PropertiesView({ data, onRefresh }) {
                   <th className="px-4 py-3 text-center">Due Soon</th>
                   <th className="px-4 py-3 text-center">Completed</th>
                   <th className="px-4 py-3 text-right">Annual Rent</th>
-                  <th className="px-4 py-3"></th>
                 </tr>
               </thead>
               <tbody>
                 {properties.map(p => {
                   const c = task_counts[p.id] || {}
                   return (
-                    <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50 transition-colors">
-                      <td className="px-4 py-3 font-medium text-slate-900">{p.address}</td>
+                    <tr key={p.id} className="border-t border-slate-100 hover:bg-blue-50/40 transition-colors">
+                      <td className="px-4 py-3">
+                        <Link
+                          to={`/management/${p.id}`}
+                          className="font-medium text-blue-700 hover:underline"
+                        >
+                          {p.address}
+                        </Link>
+                      </td>
                       <td className="px-4 py-3 text-slate-500">{[p.city, p.state].filter(Boolean).join(', ') || '—'}</td>
                       <td className="px-4 py-3 text-slate-500">{p.tenant_brand_name || '—'}</td>
                       <td className="px-4 py-3 text-center">
@@ -235,14 +251,6 @@ function PropertiesView({ data, onRefresh }) {
                           : <span className="text-slate-300 text-xs">—</span>}
                       </td>
                       <td className="px-4 py-3 text-right font-medium text-slate-700">{p.annual_rent ? fmt(p.annual_rent) : '—'}</td>
-                      <td className="px-4 py-3">
-                        <Link
-                          to={`/management/${p.id}`}
-                          className="flex items-center gap-1 text-xs text-blue-600 hover:underline font-medium justify-end whitespace-nowrap"
-                        >
-                          Open <ChevronRight className="w-3 h-3" />
-                        </Link>
-                      </td>
                     </tr>
                   )
                 })}
