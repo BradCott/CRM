@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import db from '../db.js'
 import { requireRole } from '../middleware/auth.js'
+import { seedDefaultTasks } from './management.js'
 
 const router = Router()
 
@@ -174,6 +175,10 @@ router.post('/', (req, res) => {
       f.is_portfolio ? 1 : 0
     )
     console.log('[POST /api/properties] inserted rowid:', r.lastInsertRowid)
+    // Seed default management tasks for portfolio properties
+    if (f.is_portfolio) {
+      try { seedDefaultTasks(r.lastInsertRowid) } catch (e) { console.warn('[POST /api/properties] seedDefaultTasks error:', e.message) }
+    }
     const row = db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(r.lastInsertRowid)
     if (!row) {
       console.error('[POST /api/properties] row not found after insert, rowid:', r.lastInsertRowid)

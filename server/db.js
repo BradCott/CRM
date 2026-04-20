@@ -306,6 +306,91 @@ for (const sql of migrations) {
   try { db.exec(sql) } catch (_) { /* column already exists — ignore */ }
 }
 
+// ── Property Management ───────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS property_tasks (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    title       TEXT NOT NULL,
+    task_type   TEXT NOT NULL DEFAULT 'other'
+                CHECK(task_type IN ('inspection','insurance','tax','lease','maintenance','other')),
+    due_date    TEXT,
+    completed_at TEXT,
+    recurs      TEXT DEFAULT 'none'
+                CHECK(recurs IN ('none','monthly','quarterly','annually')),
+    notes       TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_tasks_property ON property_tasks(property_id);
+  CREATE INDEX IF NOT EXISTS idx_tasks_due      ON property_tasks(due_date);
+
+  CREATE TABLE IF NOT EXISTS property_insurance (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id      INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    carrier          TEXT,
+    policy_number    TEXT,
+    premium          REAL,
+    coverage_amount  REAL,
+    deductible       REAL,
+    effective_date   TEXT,
+    expiry_date      TEXT,
+    auto_renewal     INTEGER DEFAULT 0,
+    agent_name       TEXT,
+    agent_phone      TEXT,
+    agent_email      TEXT,
+    notes            TEXT,
+    created_at       TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_insurance_property ON property_insurance(property_id);
+  CREATE INDEX IF NOT EXISTS idx_insurance_expiry   ON property_insurance(expiry_date);
+
+  CREATE TABLE IF NOT EXISTS property_taxes (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id       INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    tax_year          INTEGER,
+    due_date          TEXT,
+    amount            REAL,
+    paid_date         TEXT,
+    paid_amount       REAL,
+    parcel_number     TEXT,
+    taxing_authority  TEXT,
+    notes             TEXT,
+    created_at        TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_taxes_property ON property_taxes(property_id);
+  CREATE INDEX IF NOT EXISTS idx_taxes_due      ON property_taxes(due_date);
+
+  CREATE TABLE IF NOT EXISTS property_maintenance (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id    INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    date           TEXT NOT NULL,
+    vendor         TEXT,
+    description    TEXT NOT NULL,
+    category       TEXT DEFAULT 'Other'
+                   CHECK(category IN ('HVAC','Roof','Plumbing','Electrical','Landscaping','Parking Lot','General','Other')),
+    cost           REAL,
+    invoice_number TEXT,
+    notes          TEXT,
+    created_at     TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_maint_property ON property_maintenance(property_id);
+  CREATE INDEX IF NOT EXISTS idx_maint_date     ON property_maintenance(date);
+
+  CREATE TABLE IF NOT EXISTS property_contacts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    role        TEXT DEFAULT 'Other'
+                CHECK(role IN ('Property Manager','Contractor','Electrician','Plumber','HVAC','Landscaper','Insurance Agent','Attorney','Accountant','Other')),
+    company     TEXT,
+    phone       TEXT,
+    email       TEXT,
+    notes       TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_contacts_property ON property_contacts(property_id);
+`)
+
 // Auto-tag existing owners whose name suggests LLC/entity type
 db.exec(`
   UPDATE people SET owner_type = 'LLC'

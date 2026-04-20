@@ -20,6 +20,7 @@ import emailsRouter         from './routes/emails.js'
 import loiImportRouter      from './routes/loiImport.js'
 import accountingRouter     from './routes/accounting.js'
 import usersRouter          from './routes/users.js'
+import managementRouter     from './routes/management.js'
 
 import { requireAuth, requireWrite, requireRole } from './middleware/auth.js'
 
@@ -64,6 +65,9 @@ app.use('/api/saved-searches',   requireAuth, requireWrite, savedSearchesRouter)
 app.use('/api/dashboard',        requireAuth, dashboardRouter)
 app.use('/api/emails',           requireAuth, requireWrite, emailsRouter)
 
+// Property management — admin + full_agent
+app.use('/api/management',       requireAuth, requireRole('admin', 'full_agent'), managementRouter)
+
 // Admin-only write routes
 app.use('/api/import',           requireAuth, requireRole('admin'), importRouter)
 app.use('/api/portfolio-import', requireAuth, requireRole('admin'), portfolioImportRouter)
@@ -81,4 +85,7 @@ app.listen(PORT, '0.0.0.0', () => {
     watchDrive().catch(() => {})
     setInterval(() => watchDrive().catch(() => {}), 5 * 60 * 1000)
   })
+  import('./services/weeklyReport.js').then(({ startWeeklyReport }) => {
+    startWeeklyReport()
+  }).catch(err => console.warn('[weeklyReport] could not start:', err.message))
 })

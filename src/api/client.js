@@ -135,3 +135,42 @@ export const getCRMInvestors = (params = {}) => {
   const qs = new URLSearchParams(params).toString()
   return req('GET', `/investors${qs ? '?' + qs : ''}`)
 }
+
+// Property Management
+export const getManagementDashboard = () => req('GET', '/management/dashboard')
+
+// Tasks
+export const getPropertyTasks   = (propId)       => req('GET',    `/management/${propId}/tasks`)
+export const createTask         = (propId, data)  => req('POST',   `/management/${propId}/tasks`, data)
+export const updateTask         = (id, data)      => req('PUT',    `/management/tasks/${id}`, data)
+export const completeTask       = (id)            => req('POST',   `/management/tasks/${id}/complete`)
+export const deleteTask         = (id)            => req('DELETE', `/management/tasks/${id}`)
+
+// Insurance
+export const getPropertyInsurance  = (propId)      => req('GET',    `/management/${propId}/insurance`)
+export const createInsurance       = (propId, data) => req('POST',   `/management/${propId}/insurance`, data)
+export const updateInsurance       = (id, data)     => req('PUT',    `/management/insurance/${id}`, data)
+export const deleteInsurance       = (id)           => req('DELETE', `/management/insurance/${id}`)
+export async function uploadInsurancePdf(propId, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return req('POST', `/management/${propId}/insurance/upload`, fd)
+}
+
+// Taxes
+export const getPropertyTaxes  = (propId)      => req('GET',    `/management/${propId}/taxes`)
+export const createTax         = (propId, data) => req('POST',   `/management/${propId}/taxes`, data)
+export const updateTax         = (id, data)     => req('PUT',    `/management/taxes/${id}`, data)
+export const deleteTax         = (id)           => req('DELETE', `/management/taxes/${id}`)
+
+// Maintenance
+export const getPropertyMaintenance  = (propId)      => req('GET',    `/management/${propId}/maintenance`)
+export const createMaintenance       = (propId, data) => req('POST',   `/management/${propId}/maintenance`, data)
+export const updateMaintenance       = (id, data)     => req('PUT',    `/management/maintenance/${id}`, data)
+export const deleteMaintenance       = (id)           => req('DELETE', `/management/maintenance/${id}`)
+
+// Contacts
+export const getPropertyContacts  = (propId)      => req('GET',    `/management/${propId}/contacts`)
+export const createContact        = (propId, data) => req('POST',   `/management/${propId}/contacts`, data)
+export const updateContact        = (id, data)     => req('PUT',    `/management/contacts/${id}`, data)
+export const deleteContact        = (id)           => req('DELETE', `/management/contacts/${id}`)
