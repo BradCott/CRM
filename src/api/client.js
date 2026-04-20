@@ -148,6 +148,12 @@ export const getInvestorDistributions  = (investorId)       => req('GET',    `/i
 export const createDistribution        = (investorId, data)  => req('POST',   `/investors/${investorId}/distributions`, data)
 export const deleteDistribution        = (distId)            => req('DELETE', `/investors/distributions/${distId}`)
 
+export const bulkImportInvestors = (file) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return req('POST', '/investors/bulk-import', fd)
+}
+
 // Legacy alias kept for any existing code
 export const getInvestor = (id) => req('GET', `/investors/${id}`)
 

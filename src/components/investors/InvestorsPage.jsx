@@ -2,9 +2,10 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   TrendingUp, Plus, MoreHorizontal, Pencil, Trash2, Loader2,
-  ChevronLeft, ChevronRight, AlertCircle,
+  ChevronLeft, ChevronRight, AlertCircle, Upload, CheckCircle2,
+  XCircle, Info,
 } from 'lucide-react'
-import { getCRMInvestors, createInvestor, updateInvestor, deleteInvestorRecord } from '../../api/client'
+import { getCRMInvestors, createInvestor, updateInvestor, deleteInvestorRecord, bulkImportInvestors } from '../../api/client'
 import TopBar from '../layout/TopBar'
 import Button from '../ui/Button'
 import Modal from '../ui/Modal'
@@ -58,6 +59,7 @@ export default function InvestorsPage() {
   const [editTarget, setEditTarget]     = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [openMenu, setOpenMenu]         = useState(null)
+  const [showBulkImport, setShowBulkImport] = useState(false)
   const searchTimer = useRef(null)
 
   const load = useCallback(async (s, entity, pg) => {
@@ -109,6 +111,9 @@ export default function InvestorsPage() {
               <option value="">All types</option>
               {ENTITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
+            <Button variant="secondary" onClick={() => setShowBulkImport(true)}>
+              <Upload className="w-4 h-4" /> Bulk Import
+            </Button>
             <Button onClick={() => { setEditTarget(null); setShowForm(true) }}>
               <Plus className="w-4 h-4" /> Add Investor
             </Button>
@@ -254,6 +259,217 @@ export default function InvestorsPage() {
       />
 
       {openMenu && <div className="fixed inset-0 z-0" onClick={() => setOpenMenu(null)} />}
+
+      {showBulkImport && (
+        <BulkImportModal
+          onClose={() => { setShowBulkImport(false); load(search, entityFilter, page) }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ── Bulk Import Modal ─────────────────────────────────────────────────────────
+
+function BulkImportModal({ onClose }) {
+  const [step, setStep]     = useState('upload')   // upload | importing | done
+  const [file, setFile]     = useState(null)
+  const [error, setError]   = useState(null)
+  const [summary, setSummary] = useState(null)
+  const fileRef = useRef(null)
+
+  const handleImport = async () => {
+    if (!file) return
+    setStep('importing')
+    setError(null)
+    try {
+      const result = await bulkImportInvestors(file)
+      setSummary(result)
+      setStep('done')
+    } catch (err) {
+      setError(err.message || 'Import failed')
+      setStep('upload')
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+          <div className="flex items-center gap-2">
+            <Upload className="w-5 h-5 text-blue-600" />
+            <h2 className="text-base font-semibold text-slate-900">Bulk Import Investors</h2>
+          </div>
+          <button onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:bg-slate-100">
+            <XCircle className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-auto p-6">
+          {step === 'upload' && (
+            <div className="space-y-5">
+              <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800 flex gap-3">
+                <Info className="w-4 h-4 mt-0.5 shrink-0" />
+                <div>
+                  <p className="font-semibold mb-1">Expected file format</p>
+                  <p>Upload your investor allocation Excel workbook. Each property tab should contain investor names, contribution amounts, and ownership percentages. Known contacts will be matched automatically using fuzzy name matching.</p>
+                </div>
+              </div>
+
+              <div
+                className="border-2 border-dashed border-slate-300 rounded-xl p-10 flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-colors"
+                onClick={() => fileRef.current?.click()}
+                onDragOver={e => e.preventDefault()}
+                onDrop={e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) setFile(f) }}
+              >
+                <Upload className="w-8 h-8 text-slate-300 mb-3" />
+                {file ? (
+                  <p className="text-sm font-semibold text-slate-700">{file.name}</p>
+                ) : (
+                  <>
+                    <p className="text-sm font-semibold text-slate-700">Drop Excel file here</p>
+                    <p className="text-xs text-slate-400 mt-1">or click to browse (.xlsx, .xls)</p>
+                  </>
+                )}
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".xlsx,.xls"
+                  className="hidden"
+                  onChange={e => setFile(e.target.files[0] || null)}
+                />
+              </div>
+
+              {error && (
+                <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 flex items-center gap-2">
+                  <XCircle className="w-4 h-4 shrink-0" /> {error}
+                </div>
+              )}
+            </div>
+          )}
+
+          {step === 'importing' && (
+            <div className="flex flex-col items-center justify-center py-16 gap-4">
+              <Loader2 className="w-10 h-10 text-blue-500 animate-spin" />
+              <p className="text-sm font-semibold text-slate-700">Processing spreadsheet…</p>
+              <p className="text-xs text-slate-400">This may take a moment for large files.</p>
+            </div>
+          )}
+
+          {step === 'done' && summary && (
+            <div className="space-y-5">
+              {/* Success banner */}
+              <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4 flex items-start gap-3">
+                <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-semibold text-emerald-800">Import complete</p>
+                  <p className="text-xs text-emerald-700 mt-0.5">
+                    {summary.investors_created.length} created · {summary.investors_updated.length} updated · {summary.links_created.length} links added
+                  </p>
+                </div>
+              </div>
+
+              {/* Sheets found */}
+              {summary.sheets_found.length > 0 && (
+                <ImportSection title="Sheets processed" color="slate" items={summary.sheets_found} />
+              )}
+
+              {/* Created */}
+              {summary.investors_created.length > 0 && (
+                <ImportSection title="Investors created" color="blue" items={summary.investors_created} />
+              )}
+
+              {/* Updated */}
+              {summary.investors_updated.length > 0 && (
+                <ImportSection title="Investors updated" color="violet" items={summary.investors_updated} />
+              )}
+
+              {/* Links */}
+              {summary.links_created.length > 0 && (
+                <ImportSection title="Property links added" color="emerald" items={summary.links_created} />
+              )}
+
+              {/* Existing links updated */}
+              {summary.links_skipped.length > 0 && (
+                <ImportSection title="Existing links updated" color="amber" items={summary.links_skipped} />
+              )}
+
+              {/* Unmatched properties */}
+              {summary.unmatched_properties.length > 0 && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
+                  <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2">
+                    ⚠ Properties not matched — manual attention needed
+                  </p>
+                  <ul className="space-y-1">
+                    {summary.unmatched_properties.map((u, i) => (
+                      <li key={i} className="text-sm text-amber-800">
+                        Sheet: <span className="font-semibold">{u.sheet}</span>
+                        {u.city_hint && <span className="text-amber-600"> (searched for "{u.city_hint}")</span>}
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="text-xs text-amber-600 mt-2">
+                    Make sure these cities exist as portfolio properties in CRM before re-running the import.
+                  </p>
+                </div>
+              )}
+
+              {/* Errors */}
+              {summary.errors.length > 0 && (
+                <div className="rounded-xl border border-red-200 bg-red-50 p-4">
+                  <p className="text-xs font-semibold text-red-700 uppercase tracking-wide mb-2">Errors</p>
+                  <ul className="space-y-1">
+                    {summary.errors.map((e, i) => (
+                      <li key={i} className="text-sm text-red-700">• {e}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex justify-end gap-2 px-6 py-4 border-t border-slate-200">
+          {step === 'done' ? (
+            <Button onClick={onClose}>Done</Button>
+          ) : (
+            <>
+              <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 rounded-lg">
+                Cancel
+              </button>
+              <Button onClick={handleImport} disabled={!file || step === 'importing'}>
+                {step === 'importing'
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Importing…</>
+                  : <><Upload className="w-4 h-4" /> Import</>}
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ImportSection({ title, color, items }) {
+  const colors = {
+    slate:   'border-slate-200 bg-slate-50 text-slate-700',
+    blue:    'border-blue-200 bg-blue-50 text-blue-800',
+    violet:  'border-violet-200 bg-violet-50 text-violet-800',
+    emerald: 'border-emerald-200 bg-emerald-50 text-emerald-800',
+    amber:   'border-amber-200 bg-amber-50 text-amber-800',
+  }
+  const cls = colors[color] || colors.slate
+  return (
+    <div className={`rounded-xl border p-4 ${cls}`}>
+      <p className="text-xs font-semibold uppercase tracking-wide mb-2 opacity-70">{title} ({items.length})</p>
+      <ul className="space-y-0.5 max-h-40 overflow-auto">
+        {items.map((item, i) => (
+          <li key={i} className="text-sm">• {item}</li>
+        ))}
+      </ul>
     </div>
   )
 }
