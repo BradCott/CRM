@@ -391,6 +391,46 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_contacts_property ON property_contacts(property_id);
 `)
 
+// ── One-time: seed default management tasks for existing portfolio properties ─
+// Runs every startup but only inserts for properties that still have 0 tasks,
+// so it is safe to re-run after all tasks have been created.
+try {
+  const uninitialised = db.prepare(`
+    SELECT p.id FROM properties p
+    LEFT JOIN property_tasks pt ON pt.property_id = p.id
+    WHERE p.is_portfolio = 1
+    GROUP BY p.id
+    HAVING COUNT(pt.id) = 0
+  `).all()
+
+  if (uninitialised.length > 0) {
+    const _today = new Date()
+    const _addDays = (n) => {
+      const d = new Date(_today)
+      d.setDate(d.getDate() + n)
+      return d.toISOString().slice(0, 10)
+    }
+    const _year  = _today.getFullYear()
+    const _dec31 = `${_year}-12-31`
+
+    const _stmt = db.prepare(
+      `INSERT INTO property_tasks (property_id, title, task_type, due_date, recurs, notes) VALUES (?,?,?,?,?,?)`
+    )
+    for (const { id } of uninitialised) {
+      _stmt.run(id, 'Set up entity as new owner in tenant system', 'other',      _addDays(7),   'none',      null)
+      _stmt.run(id, 'Upload insurance policy',                     'insurance',  _addDays(7),   'none',      null)
+      _stmt.run(id, 'Set up tax account',                          'tax',        _addDays(7),   'none',      null)
+      _stmt.run(id, 'Quarterly manager check-in',                  'other',      _addDays(90),  'quarterly', null)
+      _stmt.run(id, 'COI from tenant',                             'other',      _addDays(365), 'annually',  null)
+      _stmt.run(id, 'Rent escalation review',                      'lease',      _addDays(365), 'annually',  null)
+      _stmt.run(id, 'Year-end CAM reconciliation',                 'other',      _dec31,        'annually',  null)
+    }
+    console.log(`[db] Seeded default tasks for ${uninitialised.length} existing portfolio properties`)
+  }
+} catch (e) {
+  console.warn('[db] default task migration skipped:', e.message)
+}
+
 // Auto-tag existing owners whose name suggests LLC/entity type
 db.exec(`
   UPDATE people SET owner_type = 'LLC'

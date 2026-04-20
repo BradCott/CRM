@@ -54,45 +54,27 @@ function thisYearDate(mmdd) {
   return `${new Date().getFullYear()}-${mmdd}`
 }
 
-// Generate default recurring tasks for a newly added portfolio property
+// Generate default tasks for a newly added portfolio property.
+// Kept in sync with the db.js one-time migration for existing properties.
 export function seedDefaultTasks(propertyId) {
-  const t = today()
+  const base  = new Date()
+  const off   = (n) => { const d = new Date(base); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10) }
+  const dec31 = `${base.getFullYear()}-12-31`
+
   const defaults = [
-    {
-      title:     'Annual insurance renewal review',
-      task_type: 'insurance',
-      due_date:  addDays(t, 30),
-      recurs:    'annually',
-      notes:     'Confirm policy is up to date and premium is competitive.',
-    },
-    {
-      title:     'Annual property tax review',
-      task_type: 'tax',
-      due_date:  addDays(t, 60),
-      recurs:    'annually',
-      notes:     'Verify tax bill received and paid on time.',
-    },
-    {
-      title:     'Annual lease review',
-      task_type: 'lease',
-      due_date:  addDays(t, 90),
-      recurs:    'annually',
-      notes:     'Review lease terms, rent bumps, and upcoming expirations.',
-    },
-    {
-      title:     'Quarterly property inspection',
-      task_type: 'inspection',
-      due_date:  addDays(t, 90),
-      recurs:    'quarterly',
-      notes:     'Walk property, check exterior/roof/parking lot condition.',
-    },
+    { title: 'Set up entity as new owner in tenant system', task_type: 'other',     due_date: off(7),   recurs: 'none'      },
+    { title: 'Upload insurance policy',                     task_type: 'insurance', due_date: off(7),   recurs: 'none'      },
+    { title: 'Set up tax account',                          task_type: 'tax',       due_date: off(7),   recurs: 'none'      },
+    { title: 'Quarterly manager check-in',                  task_type: 'other',     due_date: off(90),  recurs: 'quarterly' },
+    { title: 'COI from tenant',                             task_type: 'other',     due_date: off(365), recurs: 'annually'  },
+    { title: 'Rent escalation review',                      task_type: 'lease',     due_date: off(365), recurs: 'annually'  },
+    { title: 'Year-end CAM reconciliation',                 task_type: 'other',     due_date: dec31,    recurs: 'annually'  },
   ]
-  const stmt = db.prepare(`
-    INSERT INTO property_tasks (property_id, title, task_type, due_date, recurs, notes)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `)
-  for (const task of defaults) {
-    stmt.run(propertyId, task.title, task.task_type, task.due_date, task.recurs, task.notes)
+  const stmt = db.prepare(
+    `INSERT INTO property_tasks (property_id, title, task_type, due_date, recurs, notes) VALUES (?,?,?,?,?,?)`
+  )
+  for (const t of defaults) {
+    stmt.run(propertyId, t.title, t.task_type, t.due_date, t.recurs, null)
   }
 }
 
@@ -156,13 +138,31 @@ router.get('/dashboard', (req, res) => {
     WHERE date >= date('now', '-365 days')
   `).get()
 
+  // Per-property task counts for the list view
+  const taskCountRows = db.prepare(`
+    SELECT
+      property_id,
+      COUNT(CASE WHEN completed_at IS NULL AND due_date IS NOT NULL AND due_date < date('now') THEN 1 END) AS overdue,
+      COUNT(CASE WHEN completed_at IS NULL AND due_date IS NOT NULL AND due_date >= date('now') AND due_date <= date('now','+30 days') THEN 1 END) AS due_soon,
+      COUNT(CASE WHEN completed_at IS NOT NULL THEN 1 END) AS completed,
+      COUNT(CASE WHEN completed_at IS NULL THEN 1 END) AS pending
+    FROM property_tasks
+    WHERE property_id IN (SELECT id FROM properties WHERE is_portfolio = 1)
+    GROUP BY property_id
+  `).all()
+  const taskCounts = {}
+  for (const row of taskCountRows) {
+    taskCounts[row.property_id] = { overdue: row.overdue, due_soon: row.due_soon, completed: row.completed, pending: row.pending }
+  }
+
   res.json({
-    properties:        portfolioProps,
-    tasks_due:         tasksDue,
-    overdue_tasks:     overdueTasks,
-    insurance_expiring: insuranceExpiring,
-    taxes_due:         taxesDue,
+    properties:            portfolioProps,
+    tasks_due:             tasksDue,
+    overdue_tasks:         overdueTasks,
+    insurance_expiring:    insuranceExpiring,
+    taxes_due:             taxesDue,
     maintenance_spend_ytd: maintenanceSpend?.total || 0,
+    task_counts:           taskCounts,
   })
 })
 

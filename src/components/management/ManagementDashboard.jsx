@@ -3,8 +3,11 @@ import { Link } from 'react-router-dom'
 import {
   Building2, ClipboardList, AlertTriangle, Shield,
   Receipt, ChevronRight, CheckCircle2, Loader2, RefreshCw,
+  LayoutGrid, List,
 } from 'lucide-react'
 import { getManagementDashboard, completeTask } from '../../api/client'
+
+// ── Utilities ─────────────────────────────────────────────────────────────────
 
 function fmt(n) {
   if (n == null) return '—'
@@ -33,13 +36,15 @@ const TASK_TYPE_COLORS = {
   other:       'bg-slate-100 text-slate-600',
 }
 
+// ── Stat card ─────────────────────────────────────────────────────────────────
+
 function StatCard({ icon: Icon, label, value, color = 'blue', note }) {
   const colors = {
-    blue:   'bg-blue-50   text-blue-600',
-    red:    'bg-red-50    text-red-600',
-    amber:  'bg-amber-50  text-amber-600',
-    green:  'bg-green-50  text-green-600',
-    slate:  'bg-slate-100 text-slate-600',
+    blue:  'bg-blue-50   text-blue-600',
+    red:   'bg-red-50    text-red-600',
+    amber: 'bg-amber-50  text-amber-600',
+    green: 'bg-green-50  text-green-600',
+    slate: 'bg-slate-100 text-slate-600',
   }
   return (
     <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center gap-4">
@@ -55,27 +60,23 @@ function StatCard({ icon: Icon, label, value, color = 'blue', note }) {
   )
 }
 
+// ── Task row in alert tables ──────────────────────────────────────────────────
+
 function TaskRow({ task, onComplete }) {
   const [completing, setCompleting] = useState(false)
-  const days = daysUntil(task.due_date)
+  const days      = daysUntil(task.due_date)
   const isOverdue = days !== null && days < 0
 
   async function handleComplete() {
     setCompleting(true)
-    try {
-      await onComplete(task.id)
-    } finally {
-      setCompleting(false)
-    }
+    try { await onComplete(task.id) } finally { setCompleting(false) }
   }
 
   return (
-    <tr className="hover:bg-slate-50 transition-colors">
+    <tr className="hover:bg-slate-50 transition-colors border-b border-slate-100 last:border-0">
       <td className="px-4 py-3 text-sm font-medium text-slate-800">
         <Link to={`/management/${task.property_id}`} className="hover:text-blue-600 hover:underline">
-          {task.address}
-          {task.city ? `, ${task.city}` : ''}
-          {task.state ? ` ${task.state}` : ''}
+          {task.address}{task.city ? `, ${task.city}` : ''}{task.state ? ` ${task.state}` : ''}
         </Link>
       </td>
       <td className="px-4 py-3 text-sm text-slate-700">{task.title}</td>
@@ -93,20 +94,153 @@ function TaskRow({ task, onComplete }) {
         <button
           onClick={handleComplete}
           disabled={completing}
-          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-green-50 text-green-700 hover:bg-green-100 transition-colors disabled:opacity-50"
+          className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold bg-green-50 text-green-700 border border-green-200 hover:bg-green-100 hover:border-green-300 transition-colors disabled:opacity-50 whitespace-nowrap"
         >
           {completing ? <Loader2 className="w-3 h-3 animate-spin" /> : <CheckCircle2 className="w-3 h-3" />}
-          Complete
+          Mark Complete
         </button>
       </td>
     </tr>
   )
 }
 
+// ── Property cards view ───────────────────────────────────────────────────────
+
+function PropertyCards({ properties, taskCounts }) {
+  if (properties.length === 0) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-sm text-slate-400">
+        No portfolio properties yet. Add properties from Knox Portfolio.
+      </div>
+    )
+  }
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      {properties.map(p => {
+        const counts = taskCounts?.[p.id] || {}
+        return (
+          <Link
+            key={p.id}
+            to={`/management/${p.id}`}
+            className="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 hover:border-blue-300 hover:shadow-sm transition-all group"
+          >
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-slate-900 group-hover:text-blue-700 transition-colors truncate">
+                {p.address}
+              </p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {[p.city, p.state].filter(Boolean).join(', ')}
+                {p.tenant_brand_name ? ` · ${p.tenant_brand_name}` : ''}
+              </p>
+              <div className="flex gap-3 mt-2">
+                {counts.overdue  > 0 && (
+                  <span className="text-xs font-medium text-red-600 bg-red-50 px-1.5 py-0.5 rounded-full">
+                    {counts.overdue} overdue
+                  </span>
+                )}
+                {counts.due_soon > 0 && (
+                  <span className="text-xs font-medium text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full">
+                    {counts.due_soon} due soon
+                  </span>
+                )}
+                {!counts.overdue && !counts.due_soon && counts.pending > 0 && (
+                  <span className="text-xs font-medium text-slate-500">{counts.pending} tasks</span>
+                )}
+                {p.annual_rent && (
+                  <span className="text-xs font-medium text-green-600">{fmt(p.annual_rent)}/yr</span>
+                )}
+              </div>
+            </div>
+            <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-blue-500 transition-colors shrink-0 ml-2" />
+          </Link>
+        )
+      })}
+    </div>
+  )
+}
+
+// ── Property list view ────────────────────────────────────────────────────────
+
+function PropertyListView({ properties, taskCounts }) {
+  if (properties.length === 0) {
+    return (
+      <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-sm text-slate-400">
+        No portfolio properties yet.
+      </div>
+    )
+  }
+  return (
+    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wide">
+            <th className="px-4 py-3 text-left">Property</th>
+            <th className="px-4 py-3 text-left">City, State</th>
+            <th className="px-4 py-3 text-center">Overdue</th>
+            <th className="px-4 py-3 text-center">Due Soon</th>
+            <th className="px-4 py-3 text-center">Completed</th>
+            <th className="px-4 py-3 text-left">Tenant</th>
+            <th className="px-4 py-3 text-right">Annual Rent</th>
+            <th className="px-4 py-3"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {properties.map(p => {
+            const counts = taskCounts?.[p.id] || { overdue: 0, due_soon: 0, completed: 0, pending: 0 }
+            return (
+              <tr key={p.id} className="border-t border-slate-100 hover:bg-slate-50 transition-colors">
+                <td className="px-4 py-3">
+                  <p className="font-medium text-slate-900">{p.address}</p>
+                </td>
+                <td className="px-4 py-3 text-slate-500">
+                  {[p.city, p.state].filter(Boolean).join(', ') || '—'}
+                </td>
+                <td className="px-4 py-3 text-center">
+                  {counts.overdue > 0
+                    ? <span className="inline-block min-w-[24px] text-center text-xs font-bold text-red-700 bg-red-100 px-1.5 py-0.5 rounded-full">{counts.overdue}</span>
+                    : <span className="text-slate-300">—</span>
+                  }
+                </td>
+                <td className="px-4 py-3 text-center">
+                  {counts.due_soon > 0
+                    ? <span className="inline-block min-w-[24px] text-center text-xs font-bold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full">{counts.due_soon}</span>
+                    : <span className="text-slate-300">—</span>
+                  }
+                </td>
+                <td className="px-4 py-3 text-center">
+                  {counts.completed > 0
+                    ? <span className="inline-block min-w-[24px] text-center text-xs font-bold text-green-700 bg-green-100 px-1.5 py-0.5 rounded-full">{counts.completed}</span>
+                    : <span className="text-slate-300">—</span>
+                  }
+                </td>
+                <td className="px-4 py-3 text-slate-500">{p.tenant_brand_name || '—'}</td>
+                <td className="px-4 py-3 text-right font-medium text-slate-700">
+                  {p.annual_rent ? fmt(p.annual_rent) : '—'}
+                </td>
+                <td className="px-4 py-3 text-right">
+                  <Link
+                    to={`/management/${p.id}`}
+                    className="flex items-center gap-1 text-xs text-blue-600 hover:underline font-medium justify-end"
+                  >
+                    Open <ChevronRight className="w-3 h-3" />
+                  </Link>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ── Main dashboard ────────────────────────────────────────────────────────────
+
 export default function ManagementDashboard() {
   const [data, setData]       = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
+  const [propView, setPropView] = useState('cards') // 'cards' | 'list'
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -145,9 +279,14 @@ export default function ManagementDashboard() {
     )
   }
 
-  const { properties = [], tasks_due = [], overdue_tasks = [], insurance_expiring = [], taxes_due = [], maintenance_spend_ytd = 0 } = data
+  const {
+    properties = [], tasks_due = [], overdue_tasks = [],
+    insurance_expiring = [], taxes_due = [],
+    maintenance_spend_ytd = 0, task_counts = {},
+  } = data
 
-  const totalRent = properties.reduce((s, p) => s + (p.annual_rent || 0), 0)
+  const totalRent       = properties.reduce((s, p) => s + (p.annual_rent || 0), 0)
+  const upcomingVisible = tasks_due.filter(t => daysUntil(t.due_date) >= 0)
 
   return (
     <div className="flex flex-col h-full">
@@ -157,7 +296,10 @@ export default function ManagementDashboard() {
           <h1 className="text-lg font-bold text-slate-900">Property Management</h1>
           <p className="text-sm text-slate-500">Tasks, insurance, taxes, maintenance — all in one place</p>
         </div>
-        <button onClick={load} className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
+        <button
+          onClick={load}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+        >
           <RefreshCw className="w-3.5 h-3.5" /> Refresh
         </button>
       </div>
@@ -166,10 +308,10 @@ export default function ManagementDashboard() {
 
         {/* Stats */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <StatCard icon={Building2}      label="Portfolio Properties"  value={properties.length}         color="blue"  note={`${fmt(totalRent)}/yr rent`} />
-          <StatCard icon={AlertTriangle}  label="Overdue Tasks"         value={overdue_tasks.length}      color={overdue_tasks.length > 0 ? 'red' : 'green'} />
-          <StatCard icon={Shield}         label="Insurance Expiring"    value={insurance_expiring.length} color={insurance_expiring.length > 0 ? 'amber' : 'green'} note="next 90 days" />
-          <StatCard icon={Receipt}        label="Maintenance YTD"       value={fmt(maintenance_spend_ytd)}  color="slate" />
+          <StatCard icon={Building2}     label="Portfolio Properties" value={properties.length}         color="blue"  note={`${fmt(totalRent)}/yr rent`} />
+          <StatCard icon={AlertTriangle} label="Overdue Tasks"        value={overdue_tasks.length}      color={overdue_tasks.length > 0 ? 'red' : 'green'} />
+          <StatCard icon={Shield}        label="Insurance Expiring"   value={insurance_expiring.length} color={insurance_expiring.length > 0 ? 'amber' : 'green'} note="next 90 days" />
+          <StatCard icon={Receipt}       label="Maintenance YTD"      value={fmt(maintenance_spend_ytd)} color="slate" />
         </div>
 
         {/* Overdue tasks */}
@@ -199,11 +341,11 @@ export default function ManagementDashboard() {
           </section>
         )}
 
-        {/* Upcoming tasks (next 30 days, excluding overdue) */}
-        {tasks_due.filter(t => daysUntil(t.due_date) >= 0).length > 0 && (
+        {/* Upcoming tasks */}
+        {upcomingVisible.length > 0 && (
           <section>
             <h2 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
-              <ClipboardList className="w-4 h-4" /> Upcoming Tasks — Next 30 Days
+              <ClipboardList className="w-4 h-4" /> Upcoming Tasks — Next 30 Days ({upcomingVisible.length})
             </h2>
             <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
               <table className="w-full">
@@ -217,7 +359,7 @@ export default function ManagementDashboard() {
                   </tr>
                 </thead>
                 <tbody>
-                  {tasks_due.filter(t => daysUntil(t.due_date) >= 0).map(t => (
+                  {upcomingVisible.map(t => (
                     <TaskRow key={t.id} task={t} onComplete={handleComplete} />
                   ))}
                 </tbody>
@@ -304,36 +446,42 @@ export default function ManagementDashboard() {
           </section>
         )}
 
-        {/* Portfolio property list */}
+        {/* All portfolio properties — with cards/list toggle */}
         <section>
-          <h2 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
-            <Building2 className="w-4 h-4" /> All Portfolio Properties
-          </h2>
-          {properties.length === 0 ? (
-            <div className="bg-white border border-slate-200 rounded-xl p-8 text-center text-sm text-slate-400">
-              No portfolio properties yet. Add properties from Knox Portfolio and mark them as portfolio.
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+              <Building2 className="w-4 h-4" /> All Portfolio Properties ({properties.length})
+            </h2>
+
+            {/* View toggle */}
+            <div className="flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5">
+              <button
+                onClick={() => setPropView('cards')}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  propView === 'cards'
+                    ? 'bg-white shadow-sm text-slate-900'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" /> Cards
+              </button>
+              <button
+                onClick={() => setPropView('list')}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  propView === 'list'
+                    ? 'bg-white shadow-sm text-slate-900'
+                    : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <List className="w-3.5 h-3.5" /> List
+              </button>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {properties.map(p => (
-                <Link
-                  key={p.id}
-                  to={`/management/${p.id}`}
-                  className="flex items-center justify-between bg-white border border-slate-200 rounded-xl p-4 hover:border-blue-300 hover:shadow-sm transition-all group"
-                >
-                  <div>
-                    <p className="text-sm font-semibold text-slate-900 group-hover:text-blue-700 transition-colors">{p.address}</p>
-                    <p className="text-xs text-slate-500 mt-0.5">
-                      {[p.city, p.state].filter(Boolean).join(', ')}
-                      {p.tenant_brand_name ? ` · ${p.tenant_brand_name}` : ''}
-                    </p>
-                    {p.annual_rent && <p className="text-xs text-green-600 font-medium mt-1">{fmt(p.annual_rent)}/yr</p>}
-                  </div>
-                  <ChevronRight className="w-4 h-4 text-slate-400 group-hover:text-blue-500 transition-colors shrink-0" />
-                </Link>
-              ))}
-            </div>
-          )}
+          </div>
+
+          {propView === 'cards'
+            ? <PropertyCards     properties={properties} taskCounts={task_counts} />
+            : <PropertyListView  properties={properties} taskCounts={task_counts} />
+          }
         </section>
 
       </div>
