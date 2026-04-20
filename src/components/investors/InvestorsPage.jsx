@@ -366,24 +366,15 @@ function BulkImportModal({ onClose }) {
                 <div>
                   <p className="text-sm font-semibold text-emerald-800">Import complete</p>
                   <p className="text-xs text-emerald-700 mt-0.5">
-                    {summary.investors_created.length} created · {summary.investors_updated.length} updated · {summary.links_created.length} links added
+                    {summary.investors_created.length} investors · {summary.links_created.length} property links
+                    {summary.sheet_used && <span> · from "{summary.sheet_used}"</span>}
                   </p>
                 </div>
               </div>
 
-              {/* Sheets found */}
-              {summary.sheets_found.length > 0 && (
-                <ImportSection title="Sheets processed" color="slate" items={summary.sheets_found} />
-              )}
-
-              {/* Created */}
+              {/* Investors created */}
               {summary.investors_created.length > 0 && (
                 <ImportSection title="Investors created" color="blue" items={summary.investors_created} />
-              )}
-
-              {/* Updated */}
-              {summary.investors_updated.length > 0 && (
-                <ImportSection title="Investors updated" color="violet" items={summary.investors_updated} />
               )}
 
               {/* Links */}
@@ -391,27 +382,22 @@ function BulkImportModal({ onClose }) {
                 <ImportSection title="Property links added" color="emerald" items={summary.links_created} />
               )}
 
-              {/* Existing links updated */}
-              {summary.links_skipped.length > 0 && (
-                <ImportSection title="Existing links updated" color="amber" items={summary.links_skipped} />
-              )}
-
               {/* Unmatched properties */}
               {summary.unmatched_properties.length > 0 && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50 p-4">
                   <p className="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2">
-                    ⚠ Properties not matched — manual attention needed
+                    ⚠ Columns not matched to a portfolio property
                   </p>
                   <ul className="space-y-1">
                     {summary.unmatched_properties.map((u, i) => (
                       <li key={i} className="text-sm text-amber-800">
-                        Sheet: <span className="font-semibold">{u.sheet}</span>
-                        {u.city_hint && <span className="text-amber-600"> (searched for "{u.city_hint}")</span>}
+                        <span className="font-semibold">{u.label}</span>
+                        {u.reason && <span className="text-amber-600"> — {u.reason}</span>}
                       </li>
                     ))}
                   </ul>
                   <p className="text-xs text-amber-600 mt-2">
-                    Make sure these cities exist as portfolio properties in CRM before re-running the import.
+                    Add the missing portfolio properties to CRM, then re-run the import.
                   </p>
                 </div>
               )}
