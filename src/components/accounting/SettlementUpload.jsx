@@ -25,19 +25,22 @@ const $fmt = v =>
 //   2. MTG [Lender] [Address]     — loan amount
 //   3. Accum Depreciation         — only if depreciation expense is non-zero
 //   4. Equity - [Investor Name]   — one line per investor (if investors exist)
-//   5. [Property Address]         — checking acct, cash to close paid by buyer
+//   5. Tax / Proration Credits    — seller tax proration credit to buyer (if any)
+//   6. [Property Address]         — checking acct, cash to close + earnest money combined
 //
-// Balance: debits = credits because:
-//   totalCostBasis + depreciation + equity = rent + loan + depreciation + equity + ctc
-//   → totalCostBasis = rent + loan + ctc  (depreciation & equity cancel)
-//   This is the fundamental settlement statement identity.
+// Balance identity (settlement statement):
+//   totalCostBasis = loan + rent + taxCr + (ctc + em)
+//   → pp + closing = loan + rent + taxCr + ctc + em
+//   Depreciation and equity are symmetric (debit = credit) so they cancel.
 
 function buildJournal(f, buildingPct, landPct, investors = []) {
   const pp      = Number(f.purchase_price)      || 0
   const closing = Number(f.total_closing_costs) || 0
   const loan    = Number(f.loan_amount)          || 0
   const ctc     = Number(f.cash_to_close)        || 0
+  const em      = Number(f.earnest_money)        || 0
   const rent    = Number(f.prorated_rent)        || 0
+  const taxCr   = Number(f.tax_credits)          || 0
   const depr    = Number(f.depreciation_expense) || 0
   const addr    = (f.property_address  || '').trim() || 'Property'
   const lender  = (f.lender_name      || '').trim()
@@ -54,6 +57,9 @@ function buildJournal(f, buildingPct, landPct, investors = []) {
 
   const mortgageAccount = lender ? `MTG ${lender} ${addr}` : `MTG ${addr}`
 
+  // Cash to close + earnest money = total cash out by buyer (em was paid pre-closing)
+  const cashAndEM = ctc + em
+
   // DEBITS — in spec order
   const debits = [
     buildingValue > 0 && { account: addr,                    amount: buildingValue, note: 'Building Asset' },
@@ -64,11 +70,12 @@ function buildJournal(f, buildingPct, landPct, investors = []) {
 
   // CREDITS — in spec order
   const credits = [
-    rent > 0 && { account: 'Rent Income',       amount: rent },
-    loan > 0 && { account: mortgageAccount,      amount: loan },
-    depr > 0 && { account: 'Accum Depreciation', amount: depr },
+    rent > 0      && { account: 'Rent Income',            amount: rent },
+    loan > 0      && { account: mortgageAccount,           amount: loan },
+    depr > 0      && { account: 'Accum Depreciation',     amount: depr },
     ...activeInvestors.map(inv => ({ account: `Equity - ${inv.name}`, amount: Number(inv.contribution) })),
-    ctc > 0  && { account: addr,                 amount: ctc,  note: 'Checking — Cash to Close' },
+    taxCr > 0     && { account: 'Tax / Proration Credits', amount: taxCr },
+    cashAndEM > 0 && { account: addr,                      amount: cashAndEM, note: 'Checking — Cash to Close' },
   ].filter(Boolean)
 
   const totalDebits  = debits.reduce((s, d) => s + d.amount, 0)
@@ -367,6 +374,16 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
                           label="Cash to Close"
                           value={fields.cash_to_close}
                           onChange={v => setField('cash_to_close', v)}
+                        />
+                        <Field
+                          label="Earnest Money Deposit"
+                          value={fields.earnest_money}
+                          onChange={v => setField('earnest_money', v)}
+                        />
+                        <Field
+                          label="Tax Proration Credit"
+                          value={fields.tax_credits}
+                          onChange={v => setField('tax_credits', v)}
                         />
                         <Field
                           label="Prorated Rent Credit"
