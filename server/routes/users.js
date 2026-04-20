@@ -85,10 +85,16 @@ router.post('/invite', async (req, res) => {
   }
 
   const token = randomUUID()
-  db.prepare(`
-    INSERT INTO invitations (email, role, token, invited_by)
-    VALUES (?, ?, ?, ?)
-  `).run(normalizedEmail, role, token, req.user.sub)
+  try {
+    db.prepare(`
+      INSERT INTO invitations (email, role, token, invited_by)
+      VALUES (?, ?, ?, ?)
+    `).run(normalizedEmail, role, token, req.user.sub)
+    console.log(`[auth] Invitation created for ${normalizedEmail} (${role}), token: ${token}`)
+  } catch (err) {
+    console.error('[auth] Failed to save invitation:', err.message)
+    return res.status(500).json({ error: 'Failed to create invitation. Please try again.' })
+  }
 
   const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN
     ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
@@ -116,7 +122,7 @@ router.post('/invite', async (req, res) => {
           <p>${inviter?.name || 'An admin'} has invited you to join Knox CRM with the role of <strong>${role.replace('_', ' ')}</strong>.</p>
           <p><a href="${signupUrl}" style="background:#2563eb;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;display:inline-block;">Accept Invitation</a></p>
           <p>Or copy this link: ${signupUrl}</p>
-          <p>This invitation expires in 7 days.</p>
+          <p>This invitation expires in 30 days.</p>
         `,
       })
       emailSent = true

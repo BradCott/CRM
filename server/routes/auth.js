@@ -150,6 +150,7 @@ router.get('/google/callback', async (req, res) => {
         const inv = db.prepare(`SELECT * FROM invitations WHERE token = ?`).get(inviteToken)
         if (!inv)            return errorRedirect('invite_invalid')
         if (inv.accepted_at) return errorRedirect('invite_used')
+        if (isInviteExpired(inv.created_at)) return errorRedirect('invite_expired')
 
         // Email must match the invitation (case-insensitive)
         if (email.toLowerCase() !== inv.email.toLowerCase()) {
@@ -268,13 +269,26 @@ router.delete('/google', (_req, res) => {
 
 // ── Invite: check token ───────────────────────────────────────────────────────
 
+const INVITE_EXPIRY_DAYS = 30
+
+/** Returns true if the invitation's created_at is older than INVITE_EXPIRY_DAYS. */
+function isInviteExpired(createdAt) {
+  // SQLite datetime('now') stores UTC as 'YYYY-MM-DD HH:MM:SS' (no Z).
+  // Append 'Z' so JavaScript parses it as UTC, not local time.
+  const created = new Date(createdAt.replace(' ', 'T') + 'Z')
+  const expiry  = new Date(created.getTime() + INVITE_EXPIRY_DAYS * 24 * 60 * 60 * 1000)
+  return Date.now() > expiry.getTime()
+}
+
 router.get('/invite/:token', (req, res) => {
   const inv = db.prepare(
-    `SELECT id, email, role, accepted_at FROM invitations WHERE token = ?`
+    `SELECT id, email, role, accepted_at, created_at FROM invitations WHERE token = ?`
   ).get(req.params.token)
 
-  if (!inv)             return res.status(404).json({ error: 'Invitation not found.' })
-  if (inv.accepted_at)  return res.status(410).json({ error: 'This invitation has already been used.' })
+  if (!inv)            return res.status(404).json({ code: 'not_found', error: 'Invitation not found. The link may be incorrect.' })
+  if (inv.accepted_at) return res.status(410).json({ code: 'used',      error: 'This invitation has already been used.' })
+  if (isInviteExpired(inv.created_at))
+                       return res.status(410).json({ code: 'expired',   error: `This invitation has expired (links are valid for ${INVITE_EXPIRY_DAYS} days). Please ask your admin to send a new invite.` })
 
   res.json({ email: inv.email, role: inv.role })
 })
@@ -307,8 +321,10 @@ router.post('/signup', async (req, res) => {
     if (!email) return res.status(400).json({ error: 'Email is required.' })
   } else {
     const inv = db.prepare(`SELECT * FROM invitations WHERE token = ?`).get(token)
-    if (!inv)            return res.status(404).json({ error: 'Invitation not found.' })
+    if (!inv)            return res.status(404).json({ error: 'Invitation not found. The link may be incorrect.' })
     if (inv.accepted_at) return res.status(410).json({ error: 'This invitation has already been used.' })
+    if (isInviteExpired(inv.created_at))
+      return res.status(410).json({ error: `This invitation has expired (links are valid for ${INVITE_EXPIRY_DAYS} days). Please ask your admin to send a new invite.` })
     email = inv.email.toLowerCase()
     role  = inv.role
   }

@@ -13,10 +13,18 @@ const ROLE_LABELS = {
 const GOOGLE_ERROR_MESSAGES = {
   google_cancelled:     'Google sign-in was cancelled.',
   google_failed:        'Google sign-in failed. Please try again.',
-  invite_invalid:       'This invitation link is invalid.',
+  invite_invalid:       'This invitation link is invalid or was not found.',
   invite_used:          'This invitation has already been used.',
+  invite_expired:       'This invitation has expired. Please ask your admin to send a new invite.',
   google_email_mismatch: 'The Google account email does not match your invitation. Please use the email address you were invited with.',
   signup_not_allowed:   'Signup is only available for the first user. Contact your admin for an invitation.',
+}
+
+/** Maps the error code returned by GET /api/auth/invite/:token to a heading. */
+const INVITE_ERROR_HEADINGS = {
+  not_found: 'Invitation Not Found',
+  used:      'Invitation Already Used',
+  expired:   'Invitation Expired',
 }
 
 export default function SignupPage() {
@@ -25,9 +33,10 @@ export default function SignupPage() {
   const navigate           = useNavigate()
   const { login }          = useAuth()
 
-  const [invite, setInvite]       = useState(null)
-  const [checking, setChecking]   = useState(!!token)
+  const [invite, setInvite]           = useState(null)
+  const [checking, setChecking]       = useState(!!token)
   const [inviteError, setInviteError] = useState(null)
+  const [inviteErrorCode, setInviteErrorCode] = useState(null)  // 'not_found' | 'used' | 'expired'
 
   // Controlled form fields
   const [email, setEmail]       = useState('')  // only for first-user bootstrap
@@ -43,12 +52,19 @@ export default function SignupPage() {
   useEffect(() => {
     if (!token) return
     fetch(`/api/auth/invite/${token}`)
-      .then(r => r.json())
-      .then(data => {
-        if (data.error) setInviteError(data.error)
-        else setInvite(data)
+      .then(async r => {
+        const data = await r.json()
+        if (!r.ok || data.error) {
+          setInviteError(data.error || 'Could not verify invitation.')
+          setInviteErrorCode(data.code || 'invalid')
+        } else {
+          setInvite(data)
+        }
       })
-      .catch(() => setInviteError('Could not verify invitation.'))
+      .catch(() => {
+        setInviteError('Could not connect to the server. Please try again.')
+        setInviteErrorCode('invalid')
+      })
       .finally(() => setChecking(false))
   }, [token])
 
@@ -95,15 +111,22 @@ export default function SignupPage() {
     )
   }
 
-  // ── Invalid invite (bad token, already used, etc.) ────────────────────────────
+  // ── Invalid invite (bad token, already used, expired, etc.) ─────────────────
   if (inviteError) {
+    const heading = INVITE_ERROR_HEADINGS[inviteErrorCode] || 'Invalid Invitation'
+    const isExpired = inviteErrorCode === 'expired'
+    const isUsed    = inviteErrorCode === 'used'
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
         <div className="text-center max-w-sm">
-          <div className="w-14 h-14 rounded-2xl bg-red-100 flex items-center justify-center mx-auto mb-4">
-            <AlertCircle className="w-7 h-7 text-red-500" />
+          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center mx-auto mb-4 ${
+            isExpired ? 'bg-amber-100' : isUsed ? 'bg-slate-100' : 'bg-red-100'
+          }`}>
+            <AlertCircle className={`w-7 h-7 ${
+              isExpired ? 'text-amber-500' : isUsed ? 'text-slate-400' : 'text-red-500'
+            }`} />
           </div>
-          <h2 className="text-xl font-semibold text-slate-900 mb-2">Invalid Invitation</h2>
+          <h2 className="text-xl font-semibold text-slate-900 mb-2">{heading}</h2>
           <p className="text-sm text-slate-500 mb-6">{inviteError}</p>
           <a href="/login" className="text-sm text-blue-600 hover:underline">Back to login</a>
         </div>
