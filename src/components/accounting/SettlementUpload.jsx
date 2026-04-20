@@ -120,14 +120,12 @@ function buildClipboardText(journal, fields, date) {
 // ── Uncertain items — category map + helpers ──────────────────────────────────
 
 const FIELD_MAP = {
-  'Building/Land Cost Basis': 'total_closing_costs',
-  'Closing Costs':            'total_closing_costs',
-  'Loan Amount':              'loan_amount',
-  'Cash to Close':            'cash_to_close',
-  'Earnest Money':            'earnest_money',
-  'Prorated Rent':            'prorated_rent',
-  'Tax Proration':            'tax_credits',
-  'Ignore':                   null,
+  'Loan Amount':  'loan_amount',
+  'Cash to Close': 'cash_to_close',
+  'Earnest Money': 'earnest_money',
+  'Prorated Rent': 'prorated_rent',
+  'Tax Proration': 'tax_credits',
+  'Ignore':        null,
 }
 
 /** Returns true if the item description looks like a broker/agent commission. */
@@ -141,16 +139,16 @@ function isBrokerFee(description) {
 function guessCategory(suggestion, description) {
   // Broker/agent commissions are almost always a seller expense — suggest Ignore for buyers
   if (isBrokerFee(description)) return 'Ignore'
-  if (!suggestion) return 'Closing Costs'
+  if (!suggestion) return 'Ignore'
   const s = suggestion.toLowerCase()
   if (s.includes('loan') || s.includes('mortgage') || s.includes('principal')) return 'Loan Amount'
   if (s.includes('cash') && (s.includes('close') || s.includes('closing')))    return 'Cash to Close'
   if (s.includes('earnest'))                                                     return 'Earnest Money'
   if (s.includes('rent'))                                                        return 'Prorated Rent'
   if (s.includes('tax') || s.includes('proration'))                             return 'Tax Proration'
-  if (s.includes('ignore') || s.includes('n/a') || s.includes('exclude'))      return 'Ignore'
-  if (s.includes('building') || s.includes('land') || s.includes('basis'))     return 'Building/Land Cost Basis'
-  return 'Closing Costs'
+  // Anything that used to suggest closing costs / cost basis defaults to Ignore —
+  // those totals come from the settlement statement total and shouldn't be adjusted here
+  return 'Ignore'
 }
 
 /** A single uncertain-item row — owns its own dropdown selection state. */
@@ -211,14 +209,17 @@ function UncertainItemsPanel({ items, onAssign }) {
   if (!items || items.length === 0) return null
   return (
     <div className="px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl space-y-2">
-      <div className="flex items-center gap-2 mb-1">
-        <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0" />
-        <span className="text-sm font-semibold text-amber-800">
-          {items.length} item{items.length !== 1 ? 's' : ''} flagged for review
-        </span>
-        <span className="text-xs text-amber-600 ml-auto">
-          Assign each to the correct field or choose Ignore
-        </span>
+      <div className="flex items-start gap-2 mb-1">
+        <AlertTriangle className="w-4 h-4 text-amber-500 shrink-0 mt-0.5" />
+        <div>
+          <span className="text-sm font-semibold text-amber-800">
+            {items.length} item{items.length !== 1 ? 's' : ''} flagged for review
+          </span>
+          <p className="text-xs text-amber-700 mt-0.5">
+            These items need clarification. Assign each one to a credit field if applicable,
+            or ignore if it is a seller expense or already included in your totals.
+          </p>
+        </div>
       </div>
       {items.map((item, idx) => (
         <UncertainItem
