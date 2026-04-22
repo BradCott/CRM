@@ -1,8 +1,9 @@
 import express from 'express'
 import db from '../db.js'
 
-const router = express.Router()
-const HW_BASE = 'https://api.handwrytten.com/v1'
+const router       = express.Router()
+const HW_BASE      = 'https://api.handwrytten.com/v1'
+const HW_LOGIN_URL = 'https://api.handwrytten.com/v1/user/login'
 
 // ── Handwrytten session cache ─────────────────────────────────────────────────
 // The API uses a two-step flow: POST /user/login → session token, then pass
@@ -29,7 +30,7 @@ async function hwLogin() {
 
   console.log(`[Handwrytten] logging in as ${email}…`)
 
-  const res  = await fetch(`${HW_BASE}/user/login`, {
+  const res  = await fetch(HW_LOGIN_URL, {
     method:  'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
     body,
