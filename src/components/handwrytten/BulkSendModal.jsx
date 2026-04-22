@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { X, Mail, Loader2, CheckCircle, AlertCircle, ChevronRight, Users } from 'lucide-react'
+import { X, Mail, Loader2, CheckCircle, AlertCircle, ChevronRight, Users, Search } from 'lucide-react'
 import {
   getHandwryttenCards,
   getHandwryttenFonts,
@@ -20,6 +20,8 @@ const CHAR_MAX  = 1000
 const COST_LOW  = 3.00
 const COST_HIGH = 4.00
 
+const OWNER_TYPES = ['Individual', 'LLC', 'Trust', 'Institution', 'Corporation']
+
 function applyMerge(template, person, property) {
   if (!template) return ''
   const first = person?.first_name || (person?.name || '').split(' ')[0] || ''
@@ -33,6 +35,100 @@ function applyMerge(template, person, property) {
     .replace(/\{state\}/gi,      property?.state || '[State]')
 }
 
+// ── Multi-select state picker ─────────────────────────────────────────────────
+function StateMultiSelect({ allStates, selected, onChange }) {
+  const [query, setQuery] = useState('')
+  const visible = allStates.filter(s => !query || s.toLowerCase().includes(query.toLowerCase()))
+
+  function toggle(s) {
+    onChange(
+      selected.includes(s) ? selected.filter(x => x !== s) : [...selected, s]
+    )
+  }
+
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50">
+        <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+        <input
+          type="text"
+          value={query}
+          onChange={e => setQuery(e.target.value)}
+          placeholder="Search states…"
+          className="flex-1 text-sm bg-transparent outline-none placeholder-slate-400"
+        />
+        {selected.length > 0 && (
+          <button onClick={() => onChange([])} className="text-xs text-blue-600 hover:text-blue-800 shrink-0">
+            Clear
+          </button>
+        )}
+      </div>
+      <div className="max-h-36 overflow-y-auto">
+        {visible.length === 0 && (
+          <p className="text-xs text-slate-400 px-3 py-2">No states match</p>
+        )}
+        {visible.map(s => (
+          <label key={s} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={selected.includes(s)}
+              onChange={() => toggle(s)}
+              className="accent-blue-600 w-3.5 h-3.5"
+            />
+            <span className="text-sm text-slate-700">{s}</span>
+          </label>
+        ))}
+      </div>
+      {selected.length > 0 && (
+        <div className="px-3 py-1.5 border-t border-slate-100 bg-blue-50">
+          <p className="text-xs text-blue-700 font-medium">
+            {selected.join(', ')}
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Owner type checkbox list ──────────────────────────────────────────────────
+function OwnerTypeCheckboxes({ selected, onChange }) {
+  function toggle(t) {
+    onChange(
+      selected.includes(t) ? selected.filter(x => x !== t) : [...selected, t]
+    )
+  }
+  return (
+    <div className="flex flex-wrap gap-2">
+      {OWNER_TYPES.map(t => (
+        <label
+          key={t}
+          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium cursor-pointer transition-colors ${
+            selected.includes(t)
+              ? 'bg-blue-600 text-white border-blue-600'
+              : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={selected.includes(t)}
+            onChange={() => toggle(t)}
+            className="sr-only"
+          />
+          {t}
+        </label>
+      ))}
+      {selected.length > 0 && (
+        <button
+          onClick={() => onChange([])}
+          className="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-400 hover:text-slate-600"
+        >
+          Clear
+        </button>
+      )}
+    </div>
+  )
+}
+
 // Steps: filters → preview → sending → done
 const STEPS = ['filters', 'preview', 'sending', 'done']
 
@@ -40,14 +136,14 @@ export default function BulkSendModal({ onClose, onDone }) {
   const { tenantBrands, propertyStates } = useApp()
 
   // ── Filter state ───────────────────────────────────────────────────────────
-  const [filterState,      setFilterState]      = useState('')
-  const [filterTenant,     setFilterTenant]     = useState('')
-  const [filterOwnerType,  setFilterOwnerType]  = useState('')
-  const [filterLeaseStart, setFilterLeaseStart] = useState('')
-  const [filterLeaseEnd,   setFilterLeaseEnd]   = useState('')
+  const [filterStates,     setFilterStates]     = useState([])       // multi-select
+  const [filterTenant,     setFilterTenant]     = useState('')       // text search
+  const [filterOwnerTypes, setFilterOwnerTypes] = useState([])       // multi-select checkboxes
+  const [filterLeaseStart, setFilterLeaseStart] = useState('')       // optional
+  const [filterLeaseEnd,   setFilterLeaseEnd]   = useState('')       // optional
 
   // ── Recipients state ───────────────────────────────────────────────────────
-  const [recipients,    setRecipients]    = useState([]) // [{contact_id, property_id, name, address, city, state, tenant, property_address}]
+  const [recipients,    setRecipients]    = useState([])
   const [loadingRec,    setLoadingRec]    = useState(false)
 
   // ── Letter state ───────────────────────────────────────────────────────────
@@ -90,15 +186,32 @@ export default function BulkSendModal({ onClose, onDone }) {
   const buildRecipients = useCallback(async () => {
     setLoadingRec(true)
     try {
-      // Fetch up to 2000 properties matching filters, then collect unique owners
-      const params = { limit: 2000, offset: 0 }
-      if (filterState)  params.state  = filterState
-      if (filterTenant) params.tenant = filterTenant
+      // Fetch all properties (up to 5000) — we filter client-side for flexibility
+      const { rows } = await getProperties({ limit: 5000, offset: 0 })
 
-      const { rows } = await getProperties(params)
-
-      // Filter by lease expiration range
       let filtered = rows
+
+      // State filter — skip if none selected
+      if (filterStates.length > 0) {
+        filtered = filtered.filter(p => filterStates.includes(p.state))
+      }
+
+      // Tenant filter — text search against tenant_brand_name
+      if (filterTenant.trim()) {
+        const q = filterTenant.trim().toLowerCase()
+        filtered = filtered.filter(p =>
+          (p.tenant_brand_name || '').toLowerCase().includes(q)
+        )
+      }
+
+      // Owner type filter — skip if none selected (show all)
+      if (filterOwnerTypes.length > 0) {
+        filtered = filtered.filter(p =>
+          filterOwnerTypes.includes(p.owner_type || 'Individual')
+        )
+      }
+
+      // Lease expiration — completely optional; only apply if a date is set
       if (filterLeaseStart) {
         filtered = filtered.filter(p => p.lease_end && p.lease_end >= filterLeaseStart)
       }
@@ -106,19 +219,14 @@ export default function BulkSendModal({ onClose, onDone }) {
         filtered = filtered.filter(p => p.lease_end && p.lease_end <= filterLeaseEnd)
       }
 
-      // Filter by owner type (done client-side from the join data)
-      if (filterOwnerType) {
-        filtered = filtered.filter(p => p.owner_type === filterOwnerType)
-      }
-
-      // Deduplicate by owner — one letter per unique owner
+      // Deduplicate by owner — one letter per unique owner (first property wins)
+      // A valid recipient must have: owner_id + owner_address + owner_city + owner_state
       const seen = new Set()
       const list = []
       for (const p of filtered) {
         if (!p.owner_id) continue
         if (seen.has(p.owner_id)) continue
-        // Skip if no address
-        if (!p.owner_address) continue
+        if (!p.owner_address || !p.owner_city || !p.owner_state) continue
         seen.add(p.owner_id)
         list.push({
           contact_id:       p.owner_id,
@@ -127,12 +235,13 @@ export default function BulkSendModal({ onClose, onDone }) {
           address:          p.owner_address,
           city:             p.owner_city,
           state:            p.owner_state,
+          zip:              p.owner_zip || '',
           tenant:           p.tenant_brand_name || '',
           property_address: p.address,
           property_city:    p.city,
           property_state:   p.state,
           // for merge preview
-          first_name:       p.owner_first_name || (p.owner_name || '').split(' ')[0],
+          first_name:       p.owner_first_name || (p.owner_name || '').split(' ')[0] || '',
           owner_name:       p.owner_name,
         })
       }
@@ -142,7 +251,7 @@ export default function BulkSendModal({ onClose, onDone }) {
     } finally {
       setLoadingRec(false)
     }
-  }, [filterState, filterTenant, filterOwnerType, filterLeaseStart, filterLeaseEnd])
+  }, [filterStates, filterTenant, filterOwnerTypes, filterLeaseStart, filterLeaseEnd])
 
   // ── Send ───────────────────────────────────────────────────────────────────
   async function handleSend() {
@@ -169,6 +278,14 @@ export default function BulkSendModal({ onClose, onDone }) {
 
   const overLimit = message.length > CHAR_MAX
 
+  // Active filter summary for display
+  const activeFilterCount = [
+    filterStates.length > 0,
+    filterTenant.trim() !== '',
+    filterOwnerTypes.length > 0,
+    filterLeaseStart !== '' || filterLeaseEnd !== '',
+  ].filter(Boolean).length
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
@@ -182,7 +299,6 @@ export default function BulkSendModal({ onClose, onDone }) {
             <h2 className="text-base font-bold text-slate-900">Mail Campaign</h2>
           </div>
           <div className="flex items-center gap-3">
-            {/* Step indicators */}
             <div className="hidden sm:flex items-center gap-1 text-xs text-slate-400">
               {['Filters', 'Preview', step === 'sending' ? 'Sending…' : 'Done'].map((label, i) => {
                 const active = i === STEPS.indexOf(step) || (step === 'done' && i === 2) || (step === 'sending' && i === 2)
@@ -205,72 +321,79 @@ export default function BulkSendModal({ onClose, onDone }) {
           <>
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
               <p className="text-sm text-slate-500">
-                Filter which property owners will receive letters. Leave filters blank to include all owners with a mailing address on file.
+                Narrow which property owners receive letters. All filters are optional — leave everything blank to include every owner with a valid mailing address.
               </p>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">State</label>
-                  <select
-                    value={filterState}
-                    onChange={e => setFilterState(e.target.value)}
-                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">All states</option>
-                    {propertyStates.map(s => <option key={s} value={s}>{s}</option>)}
-                  </select>
-                </div>
+              {/* State multi-select */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">
+                  State {filterStates.length > 0 && <span className="ml-1 text-blue-600 normal-case font-normal">({filterStates.length} selected)</span>}
+                </label>
+                <StateMultiSelect
+                  allStates={propertyStates}
+                  selected={filterStates}
+                  onChange={setFilterStates}
+                />
+              </div>
 
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Tenant</label>
-                  <select
+              {/* Tenant text search */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">Tenant</label>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+                  <input
+                    type="text"
                     value={filterTenant}
                     onChange={e => setFilterTenant(e.target.value)}
-                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">All tenants</option>
-                    {tenantBrands.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Owner Type</label>
-                  <select
-                    value={filterOwnerType}
-                    onChange={e => setFilterOwnerType(e.target.value)}
-                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">All types</option>
-                    <option value="Individual">Individual</option>
-                    <option value="LLC">LLC</option>
-                    <option value="Institution">Institution</option>
-                    <option value="Trust">Trust</option>
-                    <option value="Corporation">Corporation</option>
-                  </select>
-                </div>
-
-                <div className="col-span-2">
-                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Lease Expiration Range</label>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="date"
-                      value={filterLeaseStart}
-                      onChange={e => setFilterLeaseStart(e.target.value)}
-                      className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="From"
-                    />
-                    <span className="text-slate-400 text-sm">to</span>
-                    <input
-                      type="date"
-                      value={filterLeaseEnd}
-                      onChange={e => setFilterLeaseEnd(e.target.value)}
-                      className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                      placeholder="To"
-                    />
-                  </div>
+                    placeholder="e.g. McDonald's, Dollar General…"
+                    className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
               </div>
+
+              {/* Owner type checkboxes */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">
+                  Owner Type {filterOwnerTypes.length > 0 && <span className="ml-1 text-blue-600 normal-case font-normal">(filtered)</span>}
+                </label>
+                <OwnerTypeCheckboxes selected={filterOwnerTypes} onChange={setFilterOwnerTypes} />
+              </div>
+
+              {/* Lease expiration — optional */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">
+                  Lease Expiration <span className="ml-1 text-slate-400 normal-case font-normal">(optional)</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="date"
+                    value={filterLeaseStart}
+                    onChange={e => setFilterLeaseStart(e.target.value)}
+                    className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="text-slate-400 text-sm shrink-0">to</span>
+                  <input
+                    type="date"
+                    value={filterLeaseEnd}
+                    onChange={e => setFilterLeaseEnd(e.target.value)}
+                    className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  {(filterLeaseStart || filterLeaseEnd) && (
+                    <button
+                      onClick={() => { setFilterLeaseStart(''); setFilterLeaseEnd('') }}
+                      className="text-xs text-slate-400 hover:text-slate-600 shrink-0"
+                    >Clear</button>
+                  )}
+                </div>
+              </div>
+
+              {activeFilterCount === 0 && (
+                <p className="text-xs text-slate-400 bg-slate-50 rounded-xl px-3 py-2">
+                  No filters selected — all owners with a mailing address on file will be included.
+                </p>
+              )}
             </div>
+
             <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100">
               <button onClick={onClose} className="text-sm text-slate-500 hover:text-slate-700">Cancel</button>
               <Button
@@ -305,7 +428,7 @@ export default function BulkSendModal({ onClose, onDone }) {
 
                 {recipients.length === 0 ? (
                   <div className="rounded-xl border border-slate-200 p-6 text-center">
-                    <p className="text-sm text-slate-400">No owners with a mailing address match these filters.</p>
+                    <p className="text-sm text-slate-400">No owners with a complete mailing address match these filters.</p>
                     <button onClick={() => setStep('filters')} className="text-xs text-blue-600 hover:underline mt-2">
                       Adjust filters
                     </button>
@@ -353,7 +476,6 @@ export default function BulkSendModal({ onClose, onDone }) {
                   <code className="bg-slate-100 px-1 rounded">{'{city}'}</code>{' '}
                   <code className="bg-slate-100 px-1 rounded">{'{state}'}</code>
                 </p>
-                {/* Preview for first recipient */}
                 {recipients.length > 0 && (
                   <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-slate-700 leading-relaxed">
                     <span className="font-semibold text-slate-500 block mb-1">Preview (first recipient):</span>

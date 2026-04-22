@@ -10,32 +10,69 @@ function apiKey() {
   return process.env.HANDWRYTTEN_API_KEY || ''
 }
 
-/** GET from Handwrytten API (tries Bearer first) */
-async function hwGet(path) {
-  const res = await fetch(`${HW_BASE}${path}`, {
-    headers: {
-      'Authorization': `Bearer ${apiKey()}`,
-      'Accept': 'application/json',
-    },
-  })
-  if (!res.ok) {
+/**
+ * Try a single request strategy and return { ok, status, data, text }.
+ * Never throws — failed attempts return ok:false.
+ */
+async function hwTry(method, url, extraHeaders = {}, body = null) {
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { 'Accept': 'application/json', ...extraHeaders },
+      body,
+    })
     const text = await res.text()
-    throw new Error(`Handwrytten API ${res.status}: ${text}`)
+    let data = null
+    try { data = JSON.parse(text) } catch (_) { /* not JSON */ }
+    console.log(`[Handwrytten] ${method} ${url} → ${res.status} | ${text.slice(0, 300)}`)
+    return { ok: res.ok, status: res.status, data, text }
+  } catch (err) {
+    console.log(`[Handwrytten] ${method} ${url} → network error: ${err.message}`)
+    return { ok: false, status: 0, data: null, text: err.message }
   }
-  return res.json()
+}
+
+/** Form-encoded body helper */
+function formBody(extra = {}) {
+  return new URLSearchParams({ login: apiKey(), password: apiKey(), ...extra }).toString()
+}
+
+/**
+ * Probe multiple paths + auth strategies for a read endpoint.
+ * Returns the first successful JSON response data.
+ * Tries in order:
+ *   1. POST /path  (form auth — most common for Handwrytten v1)
+ *   2. GET  /path  with Bearer token
+ *   3. GET  /path  with ?login=&password= query params
+ */
+async function hwProbe(paths) {
+  const key = apiKey()
+  for (const path of paths) {
+    const url = `${HW_BASE}${path}`
+
+    // 1. POST with form auth
+    const postFormHeaders = { 'Content-Type': 'application/x-www-form-urlencoded' }
+    const r1 = await hwTry('POST', url, postFormHeaders, formBody())
+    if (r1.ok && r1.data !== null) return r1.data
+
+    // 2. GET with Bearer token
+    const r2 = await hwTry('GET', url, { 'Authorization': `Bearer ${key}` })
+    if (r2.ok && r2.data !== null) return r2.data
+
+    // 3. GET with query-param auth
+    const r3 = await hwTry('GET', `${url}?login=${key}&password=${key}`)
+    if (r3.ok && r3.data !== null) return r3.data
+  }
+  throw new Error(`All probed paths failed: ${paths.join(', ')}`)
 }
 
 /** POST to Handwrytten API (form-encoded with login/password = API key) */
 async function hwPost(path, params = {}) {
-  const body = new URLSearchParams({
-    login:    apiKey(),
-    password: apiKey(),
-    ...params,
-  })
+  const body = formBody(params)
   const res = await fetch(`${HW_BASE}${path}`, {
     method:  'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body:    body.toString(),
+    body,
   })
   if (!res.ok) {
     const text = await res.text()
@@ -60,22 +97,24 @@ function resolveMergeFields(template, person, property) {
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-/** GET /api/handwrytten/cards */
+/** GET /api/handwrytten/cards — probe multiple known Handwrytten endpoints */
 router.get('/cards', async (_req, res) => {
   try {
-    const data = await hwGet('/cards')
+    const data = await hwProbe(['/cards', '/templates', '/products'])
     res.json(data)
   } catch (err) {
+    console.error('[Handwrytten] /cards probe exhausted:', err.message)
     res.status(502).json({ error: err.message })
   }
 })
 
-/** GET /api/handwrytten/fonts */
+/** GET /api/handwrytten/fonts — probe multiple known Handwrytten endpoints */
 router.get('/fonts', async (_req, res) => {
   try {
-    const data = await hwGet('/fonts')
+    const data = await hwProbe(['/fonts', '/handwriting-styles', '/styles'])
     res.json(data)
   } catch (err) {
+    console.error('[Handwrytten] /fonts probe exhausted:', err.message)
     res.status(502).json({ error: err.message })
   }
 })

@@ -21,10 +21,16 @@ function resolveOwner(f) {
 const BASE_SELECT = `
   SELECT p.*,
     t.name AS tenant_brand_name,
-    o.name AS owner_name,
-    o.phone AS owner_phone,
-    o.email AS owner_email,
-    o.do_not_contact AS owner_do_not_contact
+    o.name       AS owner_name,
+    o.first_name AS owner_first_name,
+    o.phone      AS owner_phone,
+    o.email      AS owner_email,
+    o.do_not_contact AS owner_do_not_contact,
+    o.owner_type AS owner_type,
+    o.address    AS owner_address,
+    o.city       AS owner_city,
+    o.state      AS owner_state,
+    o.zip        AS owner_zip
   FROM properties p
   LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
   LEFT JOIN people o ON o.id = p.owner_id
