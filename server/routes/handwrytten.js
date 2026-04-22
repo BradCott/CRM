@@ -4,81 +4,168 @@ import db from '../db.js'
 const router = express.Router()
 const HW_BASE = 'https://api.handwrytten.com/v1'
 
-// ── Handwrytten API helpers ───────────────────────────────────────────────────
+// ── Handwrytten session cache ─────────────────────────────────────────────────
+// The API uses a two-step flow: POST /user/login → session token, then pass
+// that token on every subsequent call.  We cache it in memory and re-login
+// whenever we receive a 440 (session timeout) or 401/403.
 
-function apiKey() {
-  return process.env.HANDWRYTTEN_API_KEY || ''
+let _sessionToken  = null   // cached token string
+let _sessionExpiry = 0      // unix ms — 0 means "unknown / treat as expired"
+
+function creds() {
+  return {
+    email:    process.env.HANDWRYTTEN_EMAIL    || '',
+    password: process.env.HANDWRYTTEN_PASSWORD || process.env.HANDWRYTTEN_API_KEY || '',
+  }
 }
 
 /**
- * Try a single request strategy and return { ok, status, data, text }.
- * Never throws — failed attempts return ok:false.
+ * Login and cache the session token.
+ * Logs the FULL response body so we can see the token format.
  */
-async function hwTry(method, url, extraHeaders = {}, body = null) {
-  try {
-    const res = await fetch(url, {
-      method,
-      headers: { 'Accept': 'application/json', ...extraHeaders },
+async function hwLogin() {
+  const { email, password } = creds()
+  const body = new URLSearchParams({ login: email, password }).toString()
+
+  console.log(`[Handwrytten] logging in as ${email}…`)
+
+  const res  = await fetch(`${HW_BASE}/user/login`, {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
+    body,
+  })
+  const text = await res.text()
+
+  // ── Log the full login response ──────────────────────────────────────────
+  console.log(`[Handwrytten] /user/login → HTTP ${res.status}`)
+  console.log(`[Handwrytten] /user/login response body:\n${text}`)
+
+  if (!res.ok) {
+    throw new Error(`Handwrytten login failed (${res.status}): ${text}`)
+  }
+
+  let data
+  try { data = JSON.parse(text) } catch (_) {
+    throw new Error(`Handwrytten login returned non-JSON: ${text}`)
+  }
+
+  // Extract token — try every common field name
+  const token =
+    data?.token        ||
+    data?.access_token ||
+    data?.session_token||
+    data?.sessionToken ||
+    data?.api_token    ||
+    data?.data?.token  ||
+    data?.data?.session_token ||
+    null
+
+  if (!token) {
+    throw new Error(`Handwrytten login succeeded but no token found in response: ${JSON.stringify(data)}`)
+  }
+
+  console.log(`[Handwrytten] session token acquired (${String(token).slice(0, 12)}…)`)
+
+  _sessionToken  = String(token)
+  // Default TTL: 55 minutes (conservative — most APIs use 60 min)
+  _sessionExpiry = Date.now() + 55 * 60 * 1000
+
+  return _sessionToken
+}
+
+/**
+ * Return a valid session token, logging in first if the cache is empty/expired.
+ */
+async function getToken() {
+  if (_sessionToken && Date.now() < _sessionExpiry) return _sessionToken
+  return hwLogin()
+}
+
+/** Invalidate the cached session (force re-login on next request). */
+function invalidateSession() {
+  _sessionToken  = null
+  _sessionExpiry = 0
+}
+
+// ── Authenticated request helpers ─────────────────────────────────────────────
+
+/**
+ * GET from Handwrytten using the session token.
+ * Automatically re-logs in and retries once on 440/401/403.
+ */
+async function hwGet(path) {
+  const token = await getToken()
+  const url   = `${HW_BASE}${path}`
+
+  const res  = await fetch(url, {
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'X-API-Token':   token,
+      'Accept':        'application/json',
+    },
+  })
+  const text = await res.text()
+  console.log(`[Handwrytten] GET ${path} → ${res.status} | ${text.slice(0, 400)}`)
+
+  // Session expired — invalidate, re-login, retry once
+  if (res.status === 440 || res.status === 401 || res.status === 403) {
+    console.log('[Handwrytten] session expired or unauthorised — re-logging in…')
+    invalidateSession()
+    const fresh = await getToken()
+    const r2    = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${fresh}`,
+        'X-API-Token':   fresh,
+        'Accept':        'application/json',
+      },
+    })
+    const t2 = await r2.text()
+    console.log(`[Handwrytten] GET ${path} (retry) → ${r2.status} | ${t2.slice(0, 400)}`)
+    if (!r2.ok) throw new Error(`Handwrytten API ${r2.status}: ${t2}`)
+    return JSON.parse(t2)
+  }
+
+  if (!res.ok) throw new Error(`Handwrytten API ${res.status}: ${text}`)
+  return JSON.parse(text)
+}
+
+/**
+ * POST to Handwrytten using the session token (form-encoded body).
+ * Automatically re-logs in and retries once on 440/401/403.
+ */
+async function hwPost(path, params = {}) {
+  async function attempt(token) {
+    const body = new URLSearchParams({ token, ...params }).toString()
+    const url  = `${HW_BASE}${path}`
+    const res  = await fetch(url, {
+      method:  'POST',
+      headers: {
+        'Content-Type':  'application/x-www-form-urlencoded',
+        'Authorization': `Bearer ${token}`,
+      },
       body,
     })
     const text = await res.text()
-    let data = null
-    try { data = JSON.parse(text) } catch (_) { /* not JSON */ }
-    console.log(`[Handwrytten] ${method} ${url} → ${res.status} | ${text.slice(0, 300)}`)
-    return { ok: res.ok, status: res.status, data, text }
-  } catch (err) {
-    console.log(`[Handwrytten] ${method} ${url} → network error: ${err.message}`)
-    return { ok: false, status: 0, data: null, text: err.message }
+    console.log(`[Handwrytten] POST ${path} → ${res.status} | ${text.slice(0, 400)}`)
+    return { res, text }
   }
-}
 
-/** Form-encoded body helper */
-function formBody(extra = {}) {
-  return new URLSearchParams({ login: apiKey(), password: apiKey(), ...extra }).toString()
-}
+  let token       = await getToken()
+  let { res, text } = await attempt(token)
 
-/**
- * Probe multiple paths + auth strategies for a read endpoint.
- * Returns the first successful JSON response data.
- * Tries in order:
- *   1. POST /path  (form auth — most common for Handwrytten v1)
- *   2. GET  /path  with Bearer token
- *   3. GET  /path  with ?login=&password= query params
- */
-async function hwProbe(paths) {
-  const key = apiKey()
-  for (const path of paths) {
-    const url = `${HW_BASE}${path}`
-
-    // 1. POST with form auth
-    const postFormHeaders = { 'Content-Type': 'application/x-www-form-urlencoded' }
-    const r1 = await hwTry('POST', url, postFormHeaders, formBody())
-    if (r1.ok && r1.data !== null) return r1.data
-
-    // 2. GET with Bearer token
-    const r2 = await hwTry('GET', url, { 'Authorization': `Bearer ${key}` })
-    if (r2.ok && r2.data !== null) return r2.data
-
-    // 3. GET with query-param auth
-    const r3 = await hwTry('GET', `${url}?login=${key}&password=${key}`)
-    if (r3.ok && r3.data !== null) return r3.data
+  // Session expired — invalidate, re-login, retry once
+  if (res.status === 440 || res.status === 401 || res.status === 403) {
+    console.log('[Handwrytten] session expired or unauthorised — re-logging in…')
+    invalidateSession()
+    token             = await getToken()
+    ;({ res, text }   = await attempt(token))
   }
-  throw new Error(`All probed paths failed: ${paths.join(', ')}`)
-}
 
-/** POST to Handwrytten API (form-encoded with login/password = API key) */
-async function hwPost(path, params = {}) {
-  const body = formBody(params)
-  const res = await fetch(`${HW_BASE}${path}`, {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body,
-  })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(`Handwrytten API ${res.status}: ${text}`)
+  if (!res.ok) throw new Error(`Handwrytten API ${res.status}: ${text}`)
+
+  try { return JSON.parse(text) } catch (_) {
+    throw new Error(`Handwrytten API returned non-JSON: ${text}`)
   }
-  return res.json()
 }
 
 // ── Merge field helpers ───────────────────────────────────────────────────────
@@ -97,24 +184,24 @@ function resolveMergeFields(template, person, property) {
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-/** GET /api/handwrytten/cards — probe multiple known Handwrytten endpoints */
+/** GET /api/handwrytten/cards */
 router.get('/cards', async (_req, res) => {
   try {
-    const data = await hwProbe(['/cards', '/templates', '/products'])
+    const data = await hwGet('/cards')
     res.json(data)
   } catch (err) {
-    console.error('[Handwrytten] /cards probe exhausted:', err.message)
+    console.error('[Handwrytten] /cards error:', err.message)
     res.status(502).json({ error: err.message })
   }
 })
 
-/** GET /api/handwrytten/fonts — probe multiple known Handwrytten endpoints */
+/** GET /api/handwrytten/fonts */
 router.get('/fonts', async (_req, res) => {
   try {
-    const data = await hwProbe(['/fonts', '/handwriting-styles', '/styles'])
+    const data = await hwGet('/fonts')
     res.json(data)
   } catch (err) {
-    console.error('[Handwrytten] /fonts probe exhausted:', err.message)
+    console.error('[Handwrytten] /fonts error:', err.message)
     res.status(502).json({ error: err.message })
   }
 })
@@ -278,7 +365,7 @@ router.post('/send', async (req, res) => {
       fromlastname:   senderLast,
     }
 
-    const hwResult = await hwPost('/orders/createSingleRecipient', orderParams)
+    const hwResult = await hwPost('/orders/create', orderParams)
     const orderId  = hwResult?.order?.id || hwResult?.id || hwResult?.order_id || null
 
     db.prepare(`
@@ -407,7 +494,7 @@ router.post('/send-bulk', async (req, res) => {
         fromlastname:   senderLast,
       }
 
-      const hwResult = await hwPost('/orders/createSingleRecipient', orderParams)
+      const hwResult = await hwPost('/orders/create', orderParams)
       const orderId  = hwResult?.order?.id || hwResult?.id || hwResult?.order_id || null
 
       db.prepare(`
