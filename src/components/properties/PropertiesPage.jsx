@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Building2, Plus, MoreHorizontal, Pencil, Trash2, Loader2,
-  ChevronLeft, ChevronRight, AlertCircle, Settings2,
+  ChevronLeft, ChevronRight, AlertCircle, Settings2, Upload, Mail,
 } from 'lucide-react'
 import { getProperties } from '../../api/client'
 import { useApp } from '../../context/AppContext'
@@ -12,6 +13,7 @@ import ConfirmDialog from '../ui/ConfirmDialog'
 import EmptyState from '../ui/EmptyState'
 import PropertyForm from './PropertyForm'
 import PropertyDetail from './PropertyDetail'
+import BulkSendModal from '../handwrytten/BulkSendModal'
 import ColumnCustomizer, {
   buildPanelCols, loadSavedCols, detectPreset, saveColsToStorage,
 } from '../ui/ColumnCustomizer'
@@ -180,6 +182,8 @@ const PRESET_VIEWS = [
 // ── Main component ────────────────────────────────────────────────────────────
 export default function PropertiesPage() {
   const { tenantBrands, propertyStates, addProperty, editProperty, removeProperty } = useApp()
+  const navigate = useNavigate()
+  const [showBulkSend, setShowBulkSend] = useState(false)
 
   const [rows, setRows]                 = useState([])
   const [total, setTotal]               = useState(0)
@@ -284,6 +288,20 @@ export default function PropertiesPage() {
               <Settings2 className="w-4 h-4" />
               {activePresetLabel ?? 'Columns'}
             </button>
+            <button
+              onClick={() => setShowBulkSend(true)}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium border rounded-lg transition-colors text-slate-600 border-slate-200 hover:bg-slate-50"
+            >
+              <Mail className="w-4 h-4" />
+              Mail Campaign
+            </button>
+            <button
+              onClick={() => navigate('/import')}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium border rounded-lg transition-colors text-slate-600 border-slate-200 hover:bg-slate-50"
+            >
+              <Upload className="w-4 h-4" />
+              Import Properties
+            </button>
             <Button onClick={() => { setEditTarget(null); setShowForm(true) }}>
               <Plus className="w-4 h-4" /> New property
             </Button>
@@ -371,6 +389,12 @@ export default function PropertiesPage() {
         </>
       )}
       {openMenu && <div className="fixed inset-0 z-0" onClick={() => setOpenMenu(null)} />}
+      {showBulkSend && (
+        <BulkSendModal
+          onClose={() => setShowBulkSend(false)}
+          onDone={() => setShowBulkSend(false)}
+        />
+      )}
     </div>
   )
 }

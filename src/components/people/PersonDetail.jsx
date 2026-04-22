@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { X, Pencil, Phone, Mail, MapPin, FileText, Building2, AlertCircle, User, TrendingUp, Send, ChevronDown, ChevronUp, Trash2 } from 'lucide-react'
-import { getPerson, getEmails, createEmail, deleteEmail } from '../../api/client'
+import { X, Pencil, Phone, Mail, MapPin, FileText, Building2, AlertCircle, User, TrendingUp, Send, ChevronDown, ChevronUp, Trash2, PenLine, CheckCircle } from 'lucide-react'
+import { getPerson, getEmails, createEmail, deleteEmail, getHandwryttenContactSends } from '../../api/client'
 import Button from '../ui/Button'
 import Avatar from '../ui/Avatar'
+import SendLetterModal from '../handwrytten/SendLetterModal'
 
 const ROLE_LABELS = {
   owner:          'Owner',
@@ -30,15 +31,19 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
   const [logOpen, setLogOpen]   = useState(false)
   const [logForm, setLogForm]   = useState({ subject: '', body_preview: '', direction: 'outbound', date: new Date().toISOString().slice(0, 10) })
   const [saving, setSaving]     = useState(false)
+  const [showLetterModal, setShowLetterModal] = useState(false)
+  const [letters, setLetters]   = useState([])
 
   useEffect(() => {
     if (!personId) return
     setData(null)
     setEmails([])
+    setLetters([])
     setLogOpen(false)
     setExpandedEmail(null)
     getPerson(personId).then(setData).catch(console.error)
     getEmails(personId).then(setEmails).catch(() => {})
+    getHandwryttenContactSends(personId).then(setLetters).catch(() => {})
   }, [personId])
 
   async function handleLogEmail(e) {
@@ -111,6 +116,9 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
                 )}
               </div>
               <div className="flex items-center gap-1 shrink-0">
+                <Button variant="ghost" size="sm" onClick={() => setShowLetterModal(true)} title="Send Handwritten Letter">
+                  <PenLine className="w-3.5 h-3.5 mr-1" /> Letter
+                </Button>
                 <Button variant="ghost" size="sm" onClick={onEdit}>
                   <Pencil className="w-3.5 h-3.5 mr-1" /> Edit
                 </Button>
@@ -230,6 +238,44 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
             </div>
           </Section>
         )}
+
+        {/* Letters Sent */}
+        <Section icon={PenLine} title={`Letters Sent${letters.length > 0 ? ` (${letters.length})` : ''}`}>
+          <div className="space-y-2">
+            {letters.length === 0 ? (
+              <p className="text-sm text-slate-400 italic">No letters sent yet</p>
+            ) : (
+              letters.map(l => (
+                <div key={l.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
+                  <div className="flex items-center justify-between gap-2 mb-1">
+                    <span className="text-xs text-slate-400">{fmtEmailDate(l.sent_at)}</span>
+                    <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${
+                      l.status === 'sent'    ? 'bg-green-50 text-green-700' :
+                      l.status === 'failed'  ? 'bg-red-50 text-red-600' :
+                      'bg-slate-100 text-slate-500'
+                    }`}>
+                      {l.status === 'sent' ? (
+                        <span className="flex items-center gap-0.5"><CheckCircle className="w-3 h-3" /> Sent</span>
+                      ) : l.status}
+                    </span>
+                  </div>
+                  <p className="text-sm text-slate-700 line-clamp-2 leading-relaxed">{l.message}</p>
+                  {l.tenant_brand_name && (
+                    <p className="text-xs text-slate-400 mt-1">
+                      {l.tenant_brand_name}{l.property_city ? ` · ${l.property_city}, ${l.property_state}` : ''}
+                    </p>
+                  )}
+                </div>
+              ))
+            )}
+            <button
+              onClick={() => setShowLetterModal(true)}
+              className="flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800 mt-1"
+            >
+              <PenLine className="w-3.5 h-3.5" /> Send a handwritten letter
+            </button>
+          </div>
+        </Section>
 
         {/* Email History */}
         <Section icon={Mail} title={`Email History${emails.length > 0 ? ` (${emails.length})` : ''}`}>
@@ -373,6 +419,18 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
 
         <div className="h-8" />
       </div>
+
+      {/* Send Letter modal */}
+      {showLetterModal && data && (
+        <SendLetterModal
+          person={data}
+          property={data.properties?.[0] || null}
+          onClose={() => setShowLetterModal(false)}
+          onSent={() => {
+            getHandwryttenContactSends(personId).then(setLetters).catch(() => {})
+          }}
+        />
+      )}
     </div>
   )
 }

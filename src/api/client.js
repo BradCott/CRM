@@ -197,3 +197,19 @@ export const getPropertyContacts  = (propId)      => req('GET',    `/management/
 export const createContact        = (propId, data) => req('POST',   `/management/${propId}/contacts`, data)
 export const updateContact        = (id, data)     => req('PUT',    `/management/contacts/${id}`, data)
 export const deleteContact        = (id)           => req('DELETE', `/management/contacts/${id}`)
+
+// Handwrytten
+export const getHandwryttenCards      = ()          => req('GET', '/handwrytten/cards')
+export const getHandwryttenFonts      = ()          => req('GET', '/handwrytten/fonts')
+export const sendHandwryttenLetter    = (data)      => req('POST', '/handwrytten/send', data)
+export const sendHandwryttenBulk      = (data)      => req('POST', '/handwrytten/send-bulk', data)
+export const getHandwryttenSends      = (params={}) => {
+  const qs = new URLSearchParams(params).toString()
+  return req('GET', `/handwrytten/sends${qs ? '?' + qs : ''}`)
+}
+export const getHandwryttenContactSends = (contactId) =>
+  req('GET', `/handwrytten/sends/contact/${contactId}`)
+export const getHandwryttenCampaigns  = (params={}) => {
+  const qs = new URLSearchParams(params).toString()
+  return req('GET', `/handwrytten/campaigns${qs ? '?' + qs : ''}`)
+}

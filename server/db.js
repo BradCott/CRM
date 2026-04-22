@@ -464,6 +464,44 @@ try {
   console.warn('[db] default task migration skipped:', e.message)
 }
 
+// ── Handwrytten ───────────────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS handwrytten_campaigns (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    message_template TEXT NOT NULL,
+    card_id          TEXT,
+    font             TEXT,
+    filters          TEXT,
+    sent_by_user_id  INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    sent_at          TEXT DEFAULT (datetime('now')),
+    total_count      INTEGER DEFAULT 0,
+    sent_count       INTEGER DEFAULT 0,
+    failed_count     INTEGER DEFAULT 0,
+    status           TEXT NOT NULL DEFAULT 'sending'
+                     CHECK(status IN ('sending','complete','partial','failed'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_hw_campaigns_sent_at ON handwrytten_campaigns(sent_at);
+
+  CREATE TABLE IF NOT EXISTS handwrytten_sends (
+    id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+    contact_id           INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    property_id          INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+    campaign_id          INTEGER REFERENCES handwrytten_campaigns(id) ON DELETE SET NULL,
+    message              TEXT NOT NULL,
+    card_id              TEXT,
+    font                 TEXT,
+    sent_by_user_id      INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    sent_at              TEXT DEFAULT (datetime('now')),
+    handwrytten_order_id TEXT,
+    status               TEXT NOT NULL DEFAULT 'pending'
+                         CHECK(status IN ('pending','sent','failed')),
+    error_message        TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_hw_sends_contact  ON handwrytten_sends(contact_id);
+  CREATE INDEX IF NOT EXISTS idx_hw_sends_campaign ON handwrytten_sends(campaign_id);
+  CREATE INDEX IF NOT EXISTS idx_hw_sends_sent_at  ON handwrytten_sends(sent_at);
+`)
+
 // Auto-tag existing owners whose name suggests LLC/entity type
 db.exec(`
   UPDATE people SET owner_type = 'LLC'

@@ -12,7 +12,7 @@ export const ROLES = {
 // Pages each role can access (route path prefix)
 const ROLE_ACCESS = {
   admin:        ['*'],  // everything
-  full_agent:   ['/dashboard', '/people', '/properties', '/portfolio', '/accounting', '/investors', '/pipeline', '/reports', '/management'],
+  full_agent:   ['/dashboard', '/people', '/properties', '/portfolio', '/accounting', '/investors', '/pipeline', '/reports', '/management', '/campaigns'],
   junior_agent: ['/dashboard', '/people', '/properties', '/pipeline', '/reports'],
 }
 

@@ -21,6 +21,7 @@ import loiImportRouter      from './routes/loiImport.js'
 import accountingRouter     from './routes/accounting.js'
 import usersRouter          from './routes/users.js'
 import managementRouter     from './routes/management.js'
+import handwryttenRouter   from './routes/handwrytten.js'
 
 import { requireAuth, requireWrite, requireRole } from './middleware/auth.js'
 
@@ -67,6 +68,9 @@ app.use('/api/emails',           requireAuth, requireWrite, emailsRouter)
 
 // Property management — admin + full_agent
 app.use('/api/management',       requireAuth, requireRole('admin', 'full_agent'), managementRouter)
+
+// Handwrytten — admin + full_agent
+app.use('/api/handwrytten',      requireAuth, requireRole('admin', 'full_agent'), handwryttenRouter)
 
 // Admin-only write routes
 app.use('/api/import',           requireAuth, requireRole('admin'), importRouter)

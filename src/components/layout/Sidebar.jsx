@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   Users, KanbanSquare, Building2, Upload, FileSearch,
-  Landmark, TrendingUp, LayoutDashboard, Settings, BookOpen, ShieldCheck, LogOut, ClipboardList,
+  Landmark, TrendingUp, LayoutDashboard, Settings, BookOpen, ShieldCheck, LogOut, ClipboardList, Mail,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import knoxKC from '../../assets/Knox-KC.jpg'
@@ -16,6 +16,7 @@ const NAV = [
   { to: '/accounting', label: 'Accounting',          icon: BookOpen,       roles: ['admin', 'full_agent'] },
   { to: '/investors',  label: 'Investors',         icon: TrendingUp,      roles: ['admin', 'full_agent'] },
   { to: '/pipeline',   label: 'Pipeline',          icon: KanbanSquare,    roles: ['admin', 'full_agent', 'junior_agent'] },
+  { to: '/campaigns',  label: 'Mail Campaigns',    icon: Mail,            roles: ['admin', 'full_agent'] },
   { to: '/reports',    label: 'Reports',           icon: FileSearch,      roles: ['admin', 'full_agent', 'junior_agent'] },
 ]
 
