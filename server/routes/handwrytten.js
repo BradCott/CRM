@@ -12,27 +12,17 @@ const HW_BASE = 'https://api.handwrytten.com/v1'
 let _sessionToken  = null   // cached token string
 let _sessionExpiry = 0      // unix ms — 0 means "unknown / treat as expired"
 
-function creds() {
-  return {
-    email:    process.env.HANDWRYTTEN_EMAIL    || '',
-    password: process.env.HANDWRYTTEN_PASSWORD || process.env.HANDWRYTTEN_API_KEY || '',
-  }
-}
-
 /**
  * Login and cache the session token.
  * Logs the FULL response body so we can see the token format.
  */
 async function hwLogin() {
-  const { email, password } = creds()
-  const body = new URLSearchParams({ login: email, password }).toString()
+  console.log('[Handwrytten] logging in…')
 
-  console.log(`[Handwrytten] logging in as ${email}…`)
-
-  const res  = await fetch('https://api.handwrytten.com/v1/user/login', {
-    method:  'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'Accept': 'application/json' },
-    body,
+  const res = await fetch('https://api.handwrytten.com/v1/user/login', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: `login=${encodeURIComponent(process.env.HANDWRYTTEN_EMAIL)}&password=${encodeURIComponent(process.env.HANDWRYTTEN_PASSWORD)}`
   })
   const text = await res.text()
 
@@ -67,7 +57,6 @@ async function hwLogin() {
   console.log(`[Handwrytten] session token acquired (${String(token).slice(0, 12)}…)`)
 
   _sessionToken  = String(token)
-  // Default TTL: 55 minutes (conservative — most APIs use 60 min)
   _sessionExpiry = Date.now() + 55 * 60 * 1000
 
   return _sessionToken
