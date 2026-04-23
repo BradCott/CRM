@@ -2,156 +2,40 @@ import express from 'express'
 import db from '../db.js'
 
 const router  = express.Router()
-const HW_BASE = 'https://api.handwrytten.com/api/v1'
-
-// ── Handwrytten session cache ─────────────────────────────────────────────────
-// The API uses a two-step flow: POST /user/login → session token, then pass
-// that token on every subsequent call.  We cache it in memory and re-login
-// whenever we receive a 440 (session timeout) or 401/403.
-
-let _sessionToken  = null   // cached token string
-let _sessionExpiry = 0      // unix ms — 0 means "unknown / treat as expired"
-
-/**
- * Login and cache the session token.
- * Logs the FULL response body so we can see the token format.
- */
-async function hwLogin() {
-  console.log('[Handwrytten] logging in…')
-
-  const res = await fetch('https://api.handwrytten.com/api/v1/user/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `login=${encodeURIComponent(process.env.HANDWRYTTEN_EMAIL)}&password=${encodeURIComponent(process.env.HANDWRYTTEN_PASSWORD)}`
-  })
-  const text = await res.text()
-
-  // ── Log the full login response ──────────────────────────────────────────
-  console.log(`[Handwrytten] /user/login → HTTP ${res.status}`)
-  console.log(`[Handwrytten] /user/login response body:\n${text}`)
-
-  if (!res.ok) {
-    throw new Error(`Handwrytten login failed (${res.status}): ${text}`)
-  }
-
-  let data
-  try { data = JSON.parse(text) } catch (_) {
-    throw new Error(`Handwrytten login returned non-JSON: ${text}`)
-  }
-
-  // Extract token — try every common field name
-  const token =
-    data?.token        ||
-    data?.access_token ||
-    data?.session_token||
-    data?.sessionToken ||
-    data?.api_token    ||
-    data?.data?.token  ||
-    data?.data?.session_token ||
-    null
-
-  if (!token) {
-    throw new Error(`Handwrytten login succeeded but no token found in response: ${JSON.stringify(data)}`)
-  }
-
-  console.log(`[Handwrytten] session token acquired (${String(token).slice(0, 12)}…)`)
-
-  _sessionToken  = String(token)
-  _sessionExpiry = Date.now() + 55 * 60 * 1000
-
-  return _sessionToken
-}
-
-/**
- * Return a valid session token, logging in first if the cache is empty/expired.
- */
-async function getToken() {
-  if (_sessionToken && Date.now() < _sessionExpiry) return _sessionToken
-  return hwLogin()
-}
-
-/** Invalidate the cached session (force re-login on next request). */
-function invalidateSession() {
-  _sessionToken  = null
-  _sessionExpiry = 0
-}
+const HW_BASE = 'https://api.handwrytten.com/v2'
+const HW_KEY  = process.env.HANDWRYTTEN_API_KEY   // Authorization header value — no Bearer prefix
 
 // ── Authenticated request helpers ─────────────────────────────────────────────
 
-/**
- * GET from Handwrytten using the session token.
- * Automatically re-logs in and retries once on 440/401/403.
- */
+/** GET from Handwrytten API v2 using the API key directly. */
 async function hwGet(path) {
-  const token = await getToken()
-  const url   = `${HW_BASE}${path}`
-
+  const url  = `${HW_BASE}${path}`
   const res  = await fetch(url, {
     headers: {
-      'Authorization': `Bearer ${token}`,
-      'X-API-Token':   token,
+      'Authorization': HW_KEY,
       'Accept':        'application/json',
     },
   })
   const text = await res.text()
   console.log(`[Handwrytten] GET ${path} → ${res.status} | ${text.slice(0, 400)}`)
-
-  // Session expired — invalidate, re-login, retry once
-  if (res.status === 440 || res.status === 401 || res.status === 403) {
-    console.log('[Handwrytten] session expired or unauthorised — re-logging in…')
-    invalidateSession()
-    const fresh = await getToken()
-    const r2    = await fetch(url, {
-      headers: {
-        'Authorization': `Bearer ${fresh}`,
-        'X-API-Token':   fresh,
-        'Accept':        'application/json',
-      },
-    })
-    const t2 = await r2.text()
-    console.log(`[Handwrytten] GET ${path} (retry) → ${r2.status} | ${t2.slice(0, 400)}`)
-    if (!r2.ok) throw new Error(`Handwrytten API ${r2.status}: ${t2}`)
-    return JSON.parse(t2)
-  }
-
   if (!res.ok) throw new Error(`Handwrytten API ${res.status}: ${text}`)
   return JSON.parse(text)
 }
 
-/**
- * POST to Handwrytten using the session token (form-encoded body).
- * Automatically re-logs in and retries once on 440/401/403.
- */
+/** POST to Handwrytten API v2 using the API key directly (JSON body). */
 async function hwPost(path, params = {}) {
-  async function attempt(token) {
-    const body = new URLSearchParams({ token, ...params }).toString()
-    const url  = `${HW_BASE}${path}`
-    const res  = await fetch(url, {
-      method:  'POST',
-      headers: {
-        'Content-Type':  'application/x-www-form-urlencoded',
-        'Authorization': `Bearer ${token}`,
-      },
-      body,
-    })
-    const text = await res.text()
-    console.log(`[Handwrytten] POST ${path} → ${res.status} | ${text.slice(0, 400)}`)
-    return { res, text }
-  }
-
-  let token       = await getToken()
-  let { res, text } = await attempt(token)
-
-  // Session expired — invalidate, re-login, retry once
-  if (res.status === 440 || res.status === 401 || res.status === 403) {
-    console.log('[Handwrytten] session expired or unauthorised — re-logging in…')
-    invalidateSession()
-    token             = await getToken()
-    ;({ res, text }   = await attempt(token))
-  }
-
+  const url  = `${HW_BASE}${path}`
+  const res  = await fetch(url, {
+    method:  'POST',
+    headers: {
+      'Content-Type':  'application/json',
+      'Authorization': HW_KEY,
+    },
+    body: JSON.stringify(params),
+  })
+  const text = await res.text()
+  console.log(`[Handwrytten] POST ${path} → ${res.status} | ${text.slice(0, 400)}`)
   if (!res.ok) throw new Error(`Handwrytten API ${res.status}: ${text}`)
-
   try { return JSON.parse(text) } catch (_) {
     throw new Error(`Handwrytten API returned non-JSON: ${text}`)
   }
@@ -176,7 +60,7 @@ function resolveMergeFields(template, person, property) {
 /** GET /api/handwrytten/cards */
 router.get('/cards', async (_req, res) => {
   try {
-    const data = await hwGet('/cards')
+    const data = await hwGet('/cards/listCards')
     res.json(data)
   } catch (err) {
     console.error('[Handwrytten] /cards error:', err.message)
@@ -187,7 +71,7 @@ router.get('/cards', async (_req, res) => {
 /** GET /api/handwrytten/fonts */
 router.get('/fonts', async (_req, res) => {
   try {
-    const data = await hwGet('/fonts')
+    const data = await hwGet('/handwriting/list')
     res.json(data)
   } catch (err) {
     console.error('[Handwrytten] /fonts error:', err.message)
@@ -354,7 +238,7 @@ router.post('/send', async (req, res) => {
       fromlastname:   senderLast,
     }
 
-    const hwResult = await hwPost('/orders/create', orderParams)
+    const hwResult = await hwPost('/orders/createSingleRecipient', orderParams)
     const orderId  = hwResult?.order?.id || hwResult?.id || hwResult?.order_id || null
 
     db.prepare(`
@@ -483,7 +367,7 @@ router.post('/send-bulk', async (req, res) => {
         fromlastname:   senderLast,
       }
 
-      const hwResult = await hwPost('/orders/create', orderParams)
+      const hwResult = await hwPost('/orders/createSingleRecipient', orderParams)
       const orderId  = hwResult?.order?.id || hwResult?.id || hwResult?.order_id || null
 
       db.prepare(`
