@@ -2,7 +2,7 @@ import express from 'express'
 import db from '../db.js'
 
 const router  = express.Router()
-const HW_BASE = 'https://api.handwrytten.com/v1'
+const HW_BASE = 'https://api.handwrytten.com/api/v1'
 
 // ── Handwrytten session cache ─────────────────────────────────────────────────
 // The API uses a two-step flow: POST /user/login → session token, then pass
@@ -19,7 +19,7 @@ let _sessionExpiry = 0      // unix ms — 0 means "unknown / treat as expired"
 async function hwLogin() {
   console.log('[Handwrytten] logging in…')
 
-  const res = await fetch('https://api.handwrytten.com/v1/user/login', {
+  const res = await fetch('https://api.handwrytten.com/api/v1/user/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: `login=${encodeURIComponent(process.env.HANDWRYTTEN_EMAIL)}&password=${encodeURIComponent(process.env.HANDWRYTTEN_PASSWORD)}`
