@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Oakleaf Ridge — Homeowner Registration</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <header class="site-header">
+    <div class="container">
+      <h1>Oakleaf Ridge</h1>
+      <p class="subtitle">Homeowner Control Campaign — Register Your Support</p>
+    </div>
+  </header>
+
+  <main class="container">
+    <div class="intro-banner">
+      <p>Select your lot to register. <strong>Green lots</strong> are already claimed.</p>
+      <div class="legend">
+        <span><span class="legend-dot unregistered"></span>Available</span>
+        <span><span class="legend-dot registered"></span>Registered</span>
+      </div>
+    </div>
+
+    <p id="grid-status" class="grid-status hidden">Loading registrations…</p>
+    <div id="lot-grid" class="lot-grid" role="list" aria-label="Oakleaf Ridge lot map"></div>
+  </main>
+
+  <!-- Registration modal -->
+  <div id="modal-overlay" class="modal-overlay hidden"
+       role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div class="modal">
+      <button id="modal-close" class="modal-close" aria-label="Close">&times;</button>
+      <h2 id="modal-title">Register — <span id="modal-lot-label"></span></h2>
+      <p class="modal-intro">Your information is shared only with campaign organizers.</p>
+
+      <form id="registration-form" novalidate>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="firstName">First Name <span class="req">*</span></label>
+            <input type="text" id="firstName" name="firstName"
+                   autocomplete="given-name" required />
+          </div>
+          <div class="form-group">
+            <label for="lastName">Last Name <span class="req">*</span></label>
+            <input type="text" id="lastName" name="lastName"
+                   autocomplete="family-name" required />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="email">Email Address <span class="req">*</span></label>
+          <input type="email" id="email" name="email"
+                 autocomplete="email" required />
+        </div>
+
+        <div class="form-group">
+          <label for="phone">Phone Number</label>
+          <input type="tel" id="phone" name="phone" autocomplete="tel" />
+        </div>
+
+        <div class="form-row">
+          <div class="form-group">
+            <label for="lotNumber">Lot Number <span class="req">*</span></label>
+            <input type="number" id="lotNumber" name="lotNumber" readonly tabindex="-1" />
+          </div>
+          <div class="form-group">
+            <label for="years">Years at Address</label>
+            <input type="number" id="years" name="years" min="0" max="99" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label for="support">
+            Do you support homeowner control of the HOA?
+            <span class="req">*</span>
+          </label>
+          <select id="support" name="support" required>
+            <option value="">— Select an option —</option>
+            <option value="Yes">Yes</option>
+            <option value="Want to learn more">Want to learn more</option>
+            <option value="No opinion">No opinion</option>
+          </select>
+        </div>
+
+        <button type="submit" id="submit-btn" class="btn-primary">Submit Registration</button>
+        <p id="form-message" class="form-message" aria-live="polite"></p>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

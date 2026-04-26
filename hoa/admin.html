@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Admin — Oakleaf Ridge HOA</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+  <!-- Login screen -->
+  <div id="login-screen" class="login-screen">
+    <div class="login-box">
+      <h2>Admin Access</h2>
+      <div class="form-group">
+        <label for="admin-pw">Password</label>
+        <input type="password" id="admin-pw" autocomplete="current-password" />
+      </div>
+      <button id="login-btn" class="btn-primary">Enter</button>
+      <p id="login-error" class="form-message error hidden">Incorrect password.</p>
+    </div>
+  </div>
+
+  <!-- Admin panel (hidden until authenticated) -->
+  <div id="admin-panel" class="hidden">
+    <header class="site-header">
+      <div class="container header-row">
+        <div>
+          <h1>Oakleaf Ridge</h1>
+          <p class="subtitle">Registration Admin</p>
+        </div>
+        <div class="header-actions">
+          <button id="export-btn" class="btn-secondary">Export CSV</button>
+          <button id="logout-btn" class="btn-ghost">Log out</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="container">
+      <div id="admin-stats" class="stats-row"></div>
+
+      <div class="table-wrapper">
+        <table id="reg-table">
+          <thead>
+            <tr>
+              <th>Lot</th>
+              <th>First Name</th>
+              <th>Last Name</th>
+              <th>Email</th>
+              <th>Phone</th>
+              <th>Years</th>
+              <th>Support</th>
+              <th>Submitted</th>
+            </tr>
+          </thead>
+          <tbody id="reg-tbody"></tbody>
+        </table>
+        <p id="admin-empty" class="hidden"
+           style="text-align:center;padding:2.5rem;color:#6c757d;">
+          No registrations yet.
+        </p>
+      </div>
+    </main>
+  </div>
+
+  <script src="admin.js"></script>
+</body>
+</html>
