@@ -25,7 +25,13 @@
     </div>
 
     <p id="grid-status" class="grid-status hidden">Loading registrations…</p>
-    <div id="lot-grid" class="lot-grid" role="list" aria-label="Oakleaf Ridge lot map"></div>
+
+    <div class="map-wrap">
+      <img src="oakleaf-map.jpg" alt="Oakleaf Ridge subdivision aerial map" id="lot-map-img" />
+      <svg id="lot-svg" viewBox="0 0 1092 1092" xmlns="http://www.w3.org/2000/svg"
+           preserveAspectRatio="xMidYMid meet" aria-label="Interactive lot map">
+      </svg>
+    </div>
   </main>
 
   <!-- Registration modal -->

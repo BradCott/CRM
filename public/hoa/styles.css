@@ -427,3 +427,75 @@ tbody td {
 
 /* ── Utility ──────────────────────────────────── */
 .hidden { display: none !important; }
+
+/* ── Interactive map ──────────────────────────── */
+.map-wrap {
+  position: relative;
+  margin: 0 0 40px;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.14);
+  background: #e8f0eb; /* fallback while image loads */
+  line-height: 0;      /* collapse inline-block gap under img */
+}
+
+.map-wrap img {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+#lot-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  cursor: default;
+  /* Don't let the SVG itself block pointer events — only zones do */
+  pointer-events: none;
+}
+
+/* Re-enable pointer events on individual zones */
+.lot-zone {
+  pointer-events: all;
+}
+
+.lot-zone polygon {
+  fill: transparent;
+  stroke: transparent;
+  stroke-width: 2;
+  transition: fill 0.15s ease, stroke 0.15s ease;
+}
+
+.lot-zone:not(.registered) {
+  cursor: pointer;
+}
+
+.lot-zone:not(.registered):hover polygon,
+.lot-zone:not(.registered):focus polygon {
+  fill: rgba(42, 110, 66, 0.22);
+  stroke: rgba(42, 110, 66, 0.75);
+}
+
+/* Remove default focus ring — polygon provides visual feedback */
+.lot-zone:focus { outline: none; }
+
+.lot-zone.registered {
+  cursor: default;
+}
+
+.lot-zone.registered polygon {
+  fill: rgba(42, 110, 66, 0.52);
+  stroke: rgba(42, 110, 66, 0.9);
+}
+
+.lot-owner-label {
+  fill: #fff;
+  font-size: 22px;
+  font-weight: 700;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  /* White text with dark shadow so it reads on any background */
+  filter: drop-shadow(0 1px 3px rgba(0,0,0,0.85));
+  pointer-events: none;
+  user-select: none;
+}
