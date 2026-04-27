@@ -64,12 +64,38 @@ body {
   color: #444;
 }
 
+.banner-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+
 .legend {
   display: flex;
   align-items: center;
   gap: 16px;
   font-size: 0.82rem;
   white-space: nowrap;
+}
+
+.btn-debug {
+  background: none;
+  border: 1.5px solid #adb5bd;
+  border-radius: 6px;
+  padding: 5px 11px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #6c757d;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.btn-debug:hover { border-color: #888; color: #333; }
+.btn-debug[aria-pressed="true"] {
+  background: #fff0f0;
+  border-color: #e05252;
+  color: #c0392b;
 }
 
 .legend-dot {
@@ -494,8 +520,41 @@ tbody td {
   font-size: 22px;
   font-weight: 700;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  /* White text with dark shadow so it reads on any background */
   filter: drop-shadow(0 1px 3px rgba(0,0,0,0.85));
   pointer-events: none;
   user-select: none;
+}
+
+/* ── Debug mode ───────────────────────────────── */
+.lot-number-label {
+  display: none; /* hidden in normal mode */
+  fill: #c0392b;
+  font-size: 28px;
+  font-weight: 900;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  paint-order: stroke fill;
+  stroke: #fff;
+  stroke-width: 5px;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* When #lot-svg has .debug, reveal all zone outlines and number labels */
+#lot-svg.debug .lot-zone polygon {
+  fill: rgba(220, 53, 69, 0.15) !important;
+  stroke: #dc3545 !important;
+  stroke-width: 2.5 !important;
+}
+
+#lot-svg.debug .lot-zone.registered polygon {
+  fill: rgba(220, 53, 69, 0.28) !important;
+}
+
+#lot-svg.debug .lot-number-label {
+  display: block;
+}
+
+/* Dim the owner labels in debug mode so numbers are readable */
+#lot-svg.debug .lot-owner-label {
+  opacity: 0.4;
 }

@@ -68,11 +68,21 @@ function buildMap() {
     poly.setAttribute('points', zone.points);
     g.appendChild(poly);
 
+    // Lot number label — always in DOM, visible only in debug mode
+    const numLabel = svgEl('text');
+    numLabel.classList.add('lot-number-label');
+    numLabel.setAttribute('x', zone.cx);
+    numLabel.setAttribute('y', zone.cy);
+    numLabel.setAttribute('text-anchor', 'middle');
+    numLabel.setAttribute('dominant-baseline', 'middle');
+    numLabel.textContent = lotNum;
+    g.appendChild(numLabel);
+
     // Owner name label — only visible when registered
     const text = svgEl('text');
     text.classList.add('lot-owner-label');
     text.setAttribute('x', zone.cx);
-    text.setAttribute('y', zone.cy);
+    text.setAttribute('y', zone.cy + 26); // sit below the lot number in debug
     text.setAttribute('text-anchor', 'middle');
     text.setAttribute('dominant-baseline', 'middle');
     text.style.display = 'none';
@@ -99,6 +109,14 @@ function applyRegistered(lotNumber, firstName, lastName) {
   const g = document.querySelector(`#lot-svg [data-lot="${lotNumber}"]`);
   if (g) applyZoneRegistered(g, firstName, lastName);
 }
+
+// ── Debug toggle ──────────────────────────────────────────────────────────────
+document.getElementById('debug-toggle').addEventListener('click', function () {
+  const svg    = document.getElementById('lot-svg');
+  const active = svg.classList.toggle('debug');
+  this.setAttribute('aria-pressed', active);
+  this.textContent = active ? 'Hide zones' : 'Debug zones';
+});
 
 // ── Map interaction ───────────────────────────────────────────────────────────
 document.getElementById('lot-svg').addEventListener('click', e => {
