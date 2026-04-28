@@ -1,0 +1,494 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Oakleaf Ridge — Circle Calibration</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    /* ── Calibration SVG overlay ─────────────────── */
+    #cal-svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;   /* SVG root doesn't steal clicks */
+      overflow: visible;
+    }
+
+    .cal-zone {
+      pointer-events: all;
+      cursor: grab;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    .cal-zone.dragging { cursor: grabbing; }
+
+    .cal-zone circle {
+      fill: rgba(42, 110, 66, 0.72);
+      stroke: #1f5c36;
+      stroke-width: 2.5;
+      transition: fill 0.1s, stroke-width 0.1s;
+    }
+
+    .cal-zone:hover circle           { fill: rgba(42, 110, 66, 0.88); }
+    .cal-zone.dragging circle        { fill: #1a4d2e; stroke: #0d3320; stroke-width: 3.5; }
+
+    .cal-zone text {
+      fill: #fff;
+      font-size: 24px;
+      font-weight: 900;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      pointer-events: none;
+      user-select: none;
+      -webkit-user-select: none;
+      paint-order: stroke fill;
+      stroke: rgba(0,0,0,0.45);
+      stroke-width: 3px;
+    }
+
+    /* ── Toolbar & controls ──────────────────────── */
+    .cal-toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin: 18px 0 10px;
+    }
+
+    .cal-toolbar .btn-primary  { width: auto; margin-top: 0; }
+    .cal-toolbar .btn-secondary { }
+
+    .drag-status {
+      font-size: 0.83rem;
+      color: #6c757d;
+      min-height: 20px;
+      margin-bottom: 10px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .save-flash {
+      font-size: 0.83rem;
+      font-weight: 600;
+      color: #2a6e42;
+    }
+
+    /* ── Export box ──────────────────────────────── */
+    .export-wrap {
+      margin: 14px 0 40px;
+    }
+
+    .export-wrap p {
+      font-size: 0.83rem;
+      color: #444;
+      margin-bottom: 8px;
+    }
+
+    .export-box {
+      width: 100%;
+      height: 340px;
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      font-size: 0.78rem;
+      line-height: 1.5;
+      border: 1px solid #ced4da;
+      border-radius: 6px;
+      padding: 10px 12px;
+      background: #f5f6f8;
+      color: #1a1a1a;
+      resize: vertical;
+    }
+
+    .copy-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 8px;
+    }
+
+    .copy-flash {
+      font-size: 0.82rem;
+      color: #2a6e42;
+      font-weight: 600;
+    }
+
+    /* ── Instructions banner ─────────────────────── */
+    .instructions {
+      font-size: 0.88rem;
+      color: #444;
+      background: #fff;
+      border: 1px solid #dde1e7;
+      border-radius: 8px;
+      padding: 12px 16px;
+      margin: 16px 0 0;
+      line-height: 1.6;
+    }
+
+    .instructions strong { color: #1f5c36; }
+  </style>
+</head>
+<body>
+
+<!-- ── Login screen ──────────────────────────────────────────────────────── -->
+<div id="login-screen" class="login-screen">
+  <div class="login-box">
+    <h2>Calibration Login</h2>
+    <div class="form-group">
+      <label for="cal-pw">Password</label>
+      <input type="password" id="cal-pw" autocomplete="current-password"
+             placeholder="Admin password" />
+    </div>
+    <button id="cal-login-btn" class="btn-primary">Login</button>
+    <p id="cal-login-err" class="form-message error" style="display:none">Incorrect password.</p>
+  </div>
+</div>
+
+<!-- ── Calibration screen ────────────────────────────────────────────────── -->
+<div id="cal-screen" class="hidden">
+
+  <header class="site-header">
+    <div class="container">
+      <div class="header-row">
+        <div>
+          <h1>Oakleaf Ridge</h1>
+          <p class="subtitle">Circle Calibration Tool</p>
+        </div>
+        <div class="header-actions">
+          <a href="index.html" class="btn-ghost">← Back to map</a>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="container">
+
+    <p class="instructions">
+      <strong>Drag</strong> each circle to center it on its lot number in the aerial photo.
+      The lot number is shown inside the circle as you drag.
+      When satisfied, click <strong>Save positions</strong> (persists in this browser),
+      then <strong>Export coordinates</strong> to get code you can paste directly into app.js.
+    </p>
+
+    <div class="cal-toolbar">
+      <button id="save-btn"   class="btn-primary">Save positions</button>
+      <button id="export-btn" class="btn-secondary">Export coordinates</button>
+      <button id="reset-btn"  class="btn-secondary">Reset to defaults</button>
+      <span   id="save-flash" class="save-flash" style="display:none">✓ Saved to browser</span>
+    </div>
+
+    <p id="drag-status" class="drag-status">Click and drag any circle to reposition it.</p>
+
+    <div class="map-wrap">
+      <img src="oakleaf-map.jpg" alt="Oakleaf Ridge subdivision map" />
+      <svg id="cal-svg" viewBox="0 0 1092 1092"
+           xmlns="http://www.w3.org/2000/svg"
+           preserveAspectRatio="xMidYMid meet"
+           aria-hidden="true">
+      </svg>
+    </div>
+
+    <div id="export-wrap" class="export-wrap" style="display:none">
+      <p>Copy the block below and paste it into <code>app.js</code> to replace the <code>LOT_ZONES</code> object:</p>
+      <textarea id="export-box" class="export-box" readonly spellcheck="false"></textarea>
+      <div class="copy-row">
+        <button id="copy-btn" class="btn-secondary">Copy to clipboard</button>
+        <span id="copy-flash" class="copy-flash" style="display:none">Copied!</span>
+      </div>
+    </div>
+
+  </main>
+</div><!-- /#cal-screen -->
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+const ADMIN_PASSWORD = 'DougRemer86!';
+const STORAGE_KEY    = 'hoa-calibrate-positions';
+const CIRCLE_R       = 48;
+
+// ── Default positions — kept in sync with LOT_ZONES in app.js ────────────────
+const DEFAULTS = {
+   1: { cx:  48, cy: 251 },
+   2: { cx: 186, cy: 240 },
+   3: { cx: 229, cy:  76 },
+   4: { cx: 382, cy:  76 },
+   5: { cx: 360, cy: 186 },
+   6: { cx: 306, cy: 284 },
+   7: { cx: 328, cy: 437 },
+   8: { cx: 295, cy: 350 },
+   9: { cx: 229, cy: 350 },
+  10: { cx:  44, cy: 393 },
+  11: { cx:  44, cy: 590 },
+  12: { cx: 153, cy: 579 },
+  13: { cx: 218, cy: 557 },
+  14: { cx: 306, cy: 644 },
+  15: { cx: 339, cy: 688 },
+  16: { cx: 513, cy: 557 },
+  17: { cx: 415, cy: 513 },
+  18: { cx: 513, cy: 437 },
+  19: { cx: 612, cy: 339 },
+  20: { cx: 601, cy: 229 },
+  21: { cx: 568, cy:  44 },
+  22: { cx: 863, cy:  33 },
+  23: { cx: 841, cy: 153 },
+  24: { cx: 830, cy: 328 },
+  25: { cx: 841, cy: 481 },
+  26: { cx: 732, cy: 612 },
+  27: { cx: 765, cy: 841 },
+  28: { cx: 863, cy: 623 },
+  29: { cx: 623, cy: 852 },
+  30: { cx: 470, cy: 852 },
+  31: { cx: 317, cy: 863 },
+};
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let positions  = {};   // lot string → { cx, cy }
+let dragState  = null; // { lot, g, offsetX, offsetY }
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+const $login  = document.getElementById('login-screen');
+const $cal    = document.getElementById('cal-screen');
+const $calPw  = document.getElementById('cal-pw');
+const $calErr = document.getElementById('cal-login-err');
+
+if (sessionStorage.getItem('hoa-cal-auth') === 'ok') boot();
+
+document.getElementById('cal-login-btn').addEventListener('click', tryLogin);
+$calPw.addEventListener('keydown', e => { if (e.key === 'Enter') tryLogin(); });
+
+function tryLogin() {
+  if ($calPw.value === ADMIN_PASSWORD) {
+    sessionStorage.setItem('hoa-cal-auth', 'ok');
+    boot();
+  } else {
+    $calErr.style.display = '';
+    $calPw.select();
+  }
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+function boot() {
+  $login.classList.add('hidden');
+  $cal.classList.remove('hidden');
+  loadPositions();
+  buildMap();
+}
+
+// ── Positions ─────────────────────────────────────────────────────────────────
+function loadPositions() {
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY)); } catch (_) {}
+
+  positions = {};
+  for (const lot of Object.keys(DEFAULTS)) {
+    const d = DEFAULTS[lot];
+    positions[lot] = (saved && saved[lot])
+      ? { cx: Number(saved[lot].cx), cy: Number(saved[lot].cy) }
+      : { cx: d.cx, cy: d.cy };
+  }
+}
+
+function savePositions() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(positions));
+  const fl = document.getElementById('save-flash');
+  fl.style.display = '';
+  clearTimeout(savePositions._t);
+  savePositions._t = setTimeout(() => { fl.style.display = 'none'; }, 2200);
+}
+
+function resetToDefaults() {
+  if (!confirm('Reset all 31 circles to the default positions? Saved positions in this browser will be cleared.')) return;
+  localStorage.removeItem(STORAGE_KEY);
+  loadPositions();
+  buildMap();
+  document.getElementById('drag-status').textContent = 'Reset to defaults. Drag circles to calibrate.';
+}
+
+// ── SVG helpers ───────────────────────────────────────────────────────────────
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const mkEl   = tag => document.createElementNS(SVG_NS, tag);
+
+function toSVG(clientX, clientY) {
+  const svg = document.getElementById('cal-svg');
+  const pt  = svg.createSVGPoint();
+  pt.x = clientX;
+  pt.y = clientY;
+  return pt.matrixTransform(svg.getScreenCTM().inverse());
+}
+
+// ── Map build ─────────────────────────────────────────────────────────────────
+function buildMap() {
+  const svg  = document.getElementById('cal-svg');
+  svg.innerHTML = '';
+
+  const lots = Object.keys(positions).sort((a, b) => +a - +b);
+  for (const lot of lots) {
+    const { cx, cy } = positions[lot];
+
+    const g = mkEl('g');
+    g.dataset.lot = lot;
+    g.classList.add('cal-zone');
+
+    const c = mkEl('circle');
+    c.setAttribute('cx', cx);
+    c.setAttribute('cy', cy);
+    c.setAttribute('r',  CIRCLE_R);
+    g.appendChild(c);
+
+    const t = mkEl('text');
+    t.setAttribute('x',                  cx);
+    t.setAttribute('y',                  cy);
+    t.setAttribute('text-anchor',        'middle');
+    t.setAttribute('dominant-baseline',  'middle');
+    t.textContent = lot;
+    g.appendChild(t);
+
+    g.addEventListener('mousedown', startDrag);
+    g.addEventListener('touchstart', startTouch, { passive: false });
+
+    svg.appendChild(g);
+  }
+}
+
+function moveCircle(lot, cx, cy) {
+  const g = document.querySelector(`#cal-svg [data-lot="${lot}"]`);
+  if (!g) return;
+  g.querySelector('circle').setAttribute('cx', cx);
+  g.querySelector('circle').setAttribute('cy', cy);
+  g.querySelector('text').setAttribute('x',   cx);
+  g.querySelector('text').setAttribute('y',   cy);
+}
+
+// ── Drag — mouse ──────────────────────────────────────────────────────────────
+function startDrag(e) {
+  e.preventDefault();
+  const g   = e.currentTarget;
+  const lot = g.dataset.lot;
+  const p   = toSVG(e.clientX, e.clientY);
+
+  dragState = {
+    lot, g,
+    ox: p.x - positions[lot].cx,
+    oy: p.y - positions[lot].cy,
+  };
+
+  g.classList.add('dragging');
+  setStatus(`Dragging lot ${lot} — release to place`);
+
+  window.addEventListener('mousemove', moveDrag);
+  window.addEventListener('mouseup',   endDrag);
+}
+
+function moveDrag(e) {
+  if (!dragState) return;
+  const p  = toSVG(e.clientX, e.clientY);
+  const cx = clamp(Math.round(p.x - dragState.ox), 0, 1092);
+  const cy = clamp(Math.round(p.y - dragState.oy), 0, 1092);
+  positions[dragState.lot] = { cx, cy };
+  moveCircle(dragState.lot, cx, cy);
+  setStatus(`Lot ${dragState.lot}  →  cx: ${cx},  cy: ${cy}`);
+}
+
+function endDrag() {
+  if (!dragState) return;
+  dragState.g.classList.remove('dragging');
+  const { cx, cy } = positions[dragState.lot];
+  setStatus(`Lot ${dragState.lot} placed — cx: ${cx}, cy: ${cy}  (click Save to keep)`);
+  dragState = null;
+  window.removeEventListener('mousemove', moveDrag);
+  window.removeEventListener('mouseup',   endDrag);
+}
+
+// ── Drag — touch ──────────────────────────────────────────────────────────────
+function startTouch(e) {
+  e.preventDefault();
+  const g     = e.currentTarget;
+  const lot   = g.dataset.lot;
+  const touch = e.touches[0];
+  const p     = toSVG(touch.clientX, touch.clientY);
+
+  dragState = {
+    lot, g,
+    ox: p.x - positions[lot].cx,
+    oy: p.y - positions[lot].cy,
+  };
+
+  g.classList.add('dragging');
+  setStatus(`Dragging lot ${lot}`);
+
+  window.addEventListener('touchmove', moveTouch, { passive: false });
+  window.addEventListener('touchend',  endTouch);
+}
+
+function moveTouch(e) {
+  e.preventDefault();
+  if (!dragState) return;
+  const touch = e.touches[0];
+  const p  = toSVG(touch.clientX, touch.clientY);
+  const cx = clamp(Math.round(p.x - dragState.ox), 0, 1092);
+  const cy = clamp(Math.round(p.y - dragState.oy), 0, 1092);
+  positions[dragState.lot] = { cx, cy };
+  moveCircle(dragState.lot, cx, cy);
+  setStatus(`Lot ${dragState.lot}  →  cx: ${cx},  cy: ${cy}`);
+}
+
+function endTouch() {
+  if (!dragState) return;
+  dragState.g.classList.remove('dragging');
+  dragState = null;
+  window.removeEventListener('touchmove', moveTouch);
+  window.removeEventListener('touchend',  endTouch);
+}
+
+// ── Export ────────────────────────────────────────────────────────────────────
+function buildExport() {
+  const lots  = Object.keys(positions).sort((a, b) => +a - +b);
+  const lines = lots.map(lot => {
+    const { cx, cy } = positions[lot];
+    const n   = String(+lot).padStart(2, ' ');
+    const cxs = String(cx).padStart(4, ' ');
+    const cys = String(cy).padStart(4, ' ');
+    return `  ${n}: { cx: ${cxs}, cy: ${cys} },`;
+  });
+  return `const LOT_ZONES = {\n${lines.join('\n')}\n};`;
+}
+
+function showExport() {
+  const wrap = document.getElementById('export-wrap');
+  const box  = document.getElementById('export-box');
+  box.value  = buildExport();
+  wrap.style.display = '';
+  box.focus();
+  box.select();
+}
+
+function copyToClipboard() {
+  const box = document.getElementById('export-box');
+  box.select();
+  try {
+    navigator.clipboard.writeText(box.value).then(() => flashCopy());
+  } catch (_) {
+    document.execCommand('copy');
+    flashCopy();
+  }
+}
+
+function flashCopy() {
+  const fl = document.getElementById('copy-flash');
+  fl.style.display = '';
+  clearTimeout(flashCopy._t);
+  flashCopy._t = setTimeout(() => { fl.style.display = 'none'; }, 2000);
+}
+
+// ── Wiring ────────────────────────────────────────────────────────────────────
+document.getElementById('save-btn').addEventListener('click',   savePositions);
+document.getElementById('export-btn').addEventListener('click', showExport);
+document.getElementById('reset-btn').addEventListener('click',  resetToDefaults);
+document.getElementById('copy-btn').addEventListener('click',   copyToClipboard);
+
+// ── Utility ───────────────────────────────────────────────────────────────────
+function clamp(v, lo, hi) { return Math.max(lo, Math.min(hi, v)); }
+function setStatus(msg)    { document.getElementById('drag-status').textContent = msg; }
+</script>
+
+</body>
+</html>
