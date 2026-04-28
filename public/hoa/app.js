@@ -1,44 +1,45 @@
 // ── Config ────────────────────────────────────────────────────────────────────
 const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwSreJEU5kPtUM_wNmHq2XWgZ74aH3WlJw7kVLVtr0Hfba7aS_E1eUw6KDISkw3_do/exec';
+const CIRCLE_R    = 48; // radius in SVG units (1092×1092 space) ≈ 38px at max container width
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const registrations = {}; // lot number (string) → { firstName, lastName }
 
-// ── Lot zone definitions ──────────────────────────────────────────────────────
-// Polygon coordinates are in the 1092×1092 image coordinate space.
-// cx/cy = label anchor point for the registered-owner name overlay.
+// ── Lot circle centers ────────────────────────────────────────────────────────
+// cx/cy are in the 1092×1092 image coordinate space, placed over the lot number
+// text that is already printed on the aerial photo.
 const LOT_ZONES = {
-   1: { points: "0,135 120,135 120,390 0,390",                              cx: 60,  cy: 263 },
-   2: { points: "120,145 360,145 360,380 120,380",                          cx: 240, cy: 263 },
-   3: { points: "120,0 360,0 360,145 120,145",                              cx: 240, cy: 73  },
-   4: { points: "360,0 575,0 575,145 360,145",                              cx: 468, cy: 73  },
-   5: { points: "360,145 535,145 535,293 360,293",                          cx: 448, cy: 219 },
-   6: { points: "360,293 510,293 488,490 360,490",                          cx: 427, cy: 392 },
-   7: { points: "360,490 468,490 448,555 416,645 360,645",                  cx: 415, cy: 568 },
-   8: { points: "272,380 360,380 360,490 255,490 255,430",                  cx: 308, cy: 440 },
-   9: { points: "120,380 255,380 255,490 120,490",                          cx: 188, cy: 435 },
-  10: { points: "0,390 120,390 120,545 0,545",                              cx: 60,  cy: 468 },
-  11: { points: "0,545 120,545 120,820 0,820",                          cx: 60,  cy: 683 },
-  12: { points: "120,545 250,545 250,820 120,820",                      cx: 185, cy: 683 },
-  13: { points: "250,545 360,545 360,680 295,820 250,820",              cx: 305, cy: 683 },
-  14: { points: "360,680 440,680 440,825 360,825",                      cx: 400, cy: 753 },
-  15: { points: "440,660 570,660 560,875 488,915 440,875",              cx: 495, cy: 775 },
-  16: { points: "575,545 742,545 742,820 575,820",                      cx: 659, cy: 683 },
-  17: { points: "468,490 575,490 575,680 468,680",                      cx: 522, cy: 585 },
-  18: { points: "575,412 742,412 742,545 575,545",                      cx: 659, cy: 479 },
-  19: { points: "575,280 808,280 808,415 575,415",                      cx: 692, cy: 348 },
-  20: { points: "575,145 808,145 808,280 575,280",                      cx: 692, cy: 213 },
-  21: { points: "575,0 808,0 808,145 575,145",                          cx: 692, cy: 73  },
-  22: { points: "808,0 1092,0 1092,145 808,145",                        cx: 950, cy: 73  },
-  23: { points: "808,145 1092,145 1092,295 808,295",                    cx: 950, cy: 220 },
-  24: { points: "808,295 1092,295 1092,455 808,455",                    cx: 950, cy: 375 },
-  25: { points: "808,455 1092,455 1092,600 808,600",                    cx: 950, cy: 528 },
-  26: { points: "742,600 808,600 808,820 742,820",                      cx: 775, cy: 710 },
-  27: { points: "742,820 1092,820 1092,1020 742,1020",                  cx: 917, cy: 920 },
-  28: { points: "808,600 1092,600 1092,820 808,820",                    cx: 950, cy: 710 },
-  29: { points: "545,880 742,880 742,1020 545,1020",                    cx: 644, cy: 950 },
-  30: { points: "393,858 545,858 545,1020 393,1020",                    cx: 469, cy: 939 },
-  31: { points: "255,872 393,872 393,1020 255,1020",                    cx: 324, cy: 946 },
+   1: { cx:  55, cy: 255 },
+   2: { cx: 192, cy: 245 },
+   3: { cx: 232, cy:  72 },
+   4: { cx: 382, cy:  72 },
+   5: { cx: 370, cy: 192 },
+   6: { cx: 325, cy: 285 },
+   7: { cx: 345, cy: 420 },
+   8: { cx: 310, cy: 362 },
+   9: { cx: 250, cy: 362 },
+  10: { cx:  55, cy: 382 },
+  11: { cx:  48, cy: 578 },
+  12: { cx: 158, cy: 575 },
+  13: { cx: 225, cy: 556 },
+  14: { cx: 302, cy: 616 },
+  15: { cx: 345, cy: 665 },
+  16: { cx: 517, cy: 543 },
+  17: { cx: 398, cy: 493 },
+  18: { cx: 520, cy: 420 },
+  19: { cx: 600, cy: 340 },
+  20: { cx: 600, cy: 218 },
+  21: { cx: 585, cy:  69 },
+  22: { cx: 855, cy:  43 },
+  23: { cx: 830, cy: 157 },
+  24: { cx: 828, cy: 332 },
+  25: { cx: 828, cy: 458 },
+  26: { cx: 758, cy: 665 },
+  27: { cx: 788, cy: 745 },
+  28: { cx: 862, cy: 617 },
+  29: { cx: 620, cy: 810 },
+  30: { cx: 465, cy: 810 },
+  31: { cx: 312, cy: 818 },
 };
 
 // ── SVG helpers ───────────────────────────────────────────────────────────────
@@ -64,11 +65,13 @@ function buildMap() {
     title.textContent = `Lot ${lotNum}`;
     g.appendChild(title);
 
-    const poly = svgEl('polygon');
-    poly.setAttribute('points', zone.points);
-    g.appendChild(poly);
+    const circle = svgEl('circle');
+    circle.setAttribute('cx', zone.cx);
+    circle.setAttribute('cy', zone.cy);
+    circle.setAttribute('r', CIRCLE_R);
+    g.appendChild(circle);
 
-    // Lot number label — always in DOM, visible only in debug mode
+    // Lot number — visible in debug mode, confirms circle is over the right number
     const numLabel = svgEl('text');
     numLabel.classList.add('lot-number-label');
     numLabel.setAttribute('x', zone.cx);
@@ -78,11 +81,11 @@ function buildMap() {
     numLabel.textContent = lotNum;
     g.appendChild(numLabel);
 
-    // Owner name label — only visible when registered
+    // Owner name — centered in circle, visible when registered
     const text = svgEl('text');
     text.classList.add('lot-owner-label');
     text.setAttribute('x', zone.cx);
-    text.setAttribute('y', zone.cy + 26); // sit below the lot number in debug
+    text.setAttribute('y', zone.cy);
     text.setAttribute('text-anchor', 'middle');
     text.setAttribute('dominant-baseline', 'middle');
     text.style.display = 'none';
