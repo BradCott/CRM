@@ -1,40 +1,11 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Landmark, TrendingUp, Users, FileCheck2, AlertTriangle,
-  CalendarClock, Loader2,
+  CalendarClock, Loader2, KanbanSquare,
 } from 'lucide-react'
-import { getDashboard } from '../../api/client'
+import { getDashboard, getDeals } from '../../api/client'
 import knoxLogo from '../../assets/Knox.png'
-
-// ── Quotes ────────────────────────────────────────────────────────────────────
-const QUOTES = [
-  { text: "Buy land, they're not making it anymore.", author: "Mark Twain" },
-  { text: "The best investment on earth is earth.", author: "Louis Glickman" },
-  { text: "Don't wait to buy real estate. Buy real estate and wait.", author: "Will Rogers" },
-  { text: "Real estate cannot be lost or stolen, nor can it be carried away.", author: "Franklin D. Roosevelt" },
-  { text: "Ninety percent of all millionaires become so through owning real estate.", author: "Andrew Carnegie" },
-  { text: "The wise young man or wage earner of today invests his money in real estate.", author: "Andrew Carnegie" },
-  { text: "In real estate, you make 10% of your money because you're a genius and 90% because you catch a great wave.", author: "Jeff Greene" },
-  { text: "The major fortunes in America have been made in land.", author: "John D. Rockefeller" },
-  { text: "To be successful in real estate, you must always and consistently put your clients' best interests first.", author: "Anthony Hitt" },
-  { text: "Every person who invests in well-selected real estate in a growing section of a prosperous community adopts the surest and safest method of becoming independent.", author: "Theodore Roosevelt" },
-  { text: "Real estate investing, even on a very small scale, remains a tried and true means of building an individual's cash flow.", author: "Robert Kiyosaki" },
-  { text: "The secret of getting ahead is getting started.", author: "Mark Twain" },
-  { text: "Success usually comes to those who are too busy to be looking for it.", author: "Henry David Thoreau" },
-  { text: "The best time to plant a tree was 20 years ago. The second best time is now.", author: "Chinese Proverb" },
-  { text: "Opportunities are usually disguised as hard work, so most people don't recognize them.", author: "Ann Landers" },
-  { text: "It's not about how much money you make, but how much money you keep.", author: "Robert Kiyosaki" },
-  { text: "Real estate is at the corner of every great fortune.", author: "Ivar Kreuger" },
-  { text: "Location, location, location.", author: "Harold Samuel" },
-  { text: "If you don't own a home, buy one. If you own a home, buy another one.", author: "John Paulson" },
-  { text: "A man who has money may be anxious, but not afraid. It is the man without money who is afraid.", author: "E.W. Howe" },
-  { text: "The art of investing in real estate is to buy land on which others want to build.", author: "Carolus Linnaeus" },
-]
-
-function getQuote() {
-  const day = Math.floor(Date.now() / 86_400_000)
-  return QUOTES[day % QUOTES.length]
-}
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 function fmt$(v) {
@@ -59,17 +30,41 @@ function monthsUntil(d) {
   return (new Date(d + 'T00:00:00') - new Date()) / (86_400_000 * 30.44)
 }
 
+// ── Pipeline stage config ─────────────────────────────────────────────────────
+const STAGE_ORDER = { 'Money Hard': 1, 'Under Contract': 2, 'PSA Negotiation': 3, 'LOI': 4 }
+
+const STAGE_BADGE = {
+  'Money Hard':      'bg-emerald-100 text-emerald-800 border border-emerald-200',
+  'Under Contract':  'bg-blue-100 text-blue-800 border border-blue-200',
+  'PSA Negotiation': 'bg-amber-100 text-amber-800 border border-amber-200',
+  'LOI':             'bg-violet-100 text-violet-800 border border-violet-200',
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function DashboardPage() {
+  const navigate = useNavigate()
   const [data, setData] = useState(null)
   const [loading, setLoading] = useState(true)
-  const quote = getQuote()
+  const [pipeline, setPipeline] = useState([])
 
   useEffect(() => {
     getDashboard()
       .then(setData)
       .catch(console.error)
       .finally(() => setLoading(false))
+
+    getDeals()
+      .then(deals => {
+        const active = deals
+          .filter(d => d.stage !== 'Closed' && d.stage !== 'Dropped')
+          .sort((a, b) => {
+            const ao = STAGE_ORDER[a.stage] ?? 99
+            const bo = STAGE_ORDER[b.stage] ?? 99
+            return ao - bo
+          })
+        setPipeline(active)
+      })
+      .catch(console.error)
   }, [])
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
@@ -105,12 +100,6 @@ export default function DashboardPage() {
         <div className="flex items-center justify-between">
           <LogoOrFallback />
           <p className="text-sm text-slate-400">{today}</p>
-        </div>
-
-        {/* ── Quote ──────────────────────────────────────────────────────── */}
-        <div className="bg-white rounded-2xl border border-slate-200 px-8 py-5 shadow-sm">
-          <p className="text-slate-600 italic text-base leading-relaxed">"{quote.text}"</p>
-          <p className="text-sm text-slate-400 mt-2">— {quote.author}</p>
         </div>
 
         {/* ── Metric cards ───────────────────────────────────────────────── */}
@@ -183,6 +172,59 @@ export default function DashboardPage() {
                             </span>
                           ) : <span className="text-slate-300">—</span>}
                         </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Section>
+
+        {/* ── Active Pipeline ────────────────────────────────────────────── */}
+        <Section title="Active Pipeline" icon={KanbanSquare}>
+          {pipeline.length === 0 ? (
+            <EmptyRow message="No active pipeline deals." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    {['Address', 'Tenant', 'Deal Stage', 'Purchase Price', 'EMD Amount', 'Est. Equity (25%)'].map(h => (
+                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {pipeline.map((deal, i) => {
+                    const equity = deal.purchase_price ? deal.purchase_price * 0.25 : null
+                    return (
+                      <tr
+                        key={deal.id}
+                        onClick={() => navigate('/pipeline')}
+                        className={`border-b border-slate-100 last:border-0 cursor-pointer hover:bg-blue-50/50 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`}
+                      >
+                        <td className="px-4 py-3">
+                          <p className="font-medium text-slate-900">{deal.address || '—'}</p>
+                          {(deal.city || deal.state) && (
+                            <p className="text-xs text-slate-500">{[deal.city, deal.state].filter(Boolean).join(', ')}</p>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {deal.tenant_brand_name
+                            ? <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">{deal.tenant_brand_name}</span>
+                            : deal.tenant
+                              ? <span className="text-sm text-slate-700">{deal.tenant}</span>
+                              : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-4 py-3">
+                          <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${STAGE_BADGE[deal.stage] || 'bg-slate-100 text-slate-600 border border-slate-200'}`}>
+                            {deal.stage}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 font-medium text-slate-900">{fmt$(deal.purchase_price)}</td>
+                        <td className="px-4 py-3 text-slate-700">{fmt$(deal.earnest_money)}</td>
+                        <td className="px-4 py-3 text-emerald-700 font-medium">{fmt$(equity)}</td>
                       </tr>
                     )
                   })}
