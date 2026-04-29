@@ -360,20 +360,32 @@ router.post('/:propertyId/insurance/upload', upload.single('file'), async (req, 
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
 
   const mediaType = req.file.mimetype || 'application/pdf'
-  const prompt = `Extract insurance policy information from this document. Return ONLY valid JSON with these fields (use null for any field not found):
+  const prompt = `You are extracting key information from a commercial property insurance policy. Return ONLY a valid JSON object with these exact fields — no explanation, no markdown:
+
 {
-  "carrier": "insurance company name",
-  "policy_number": "policy number",
-  "premium": numeric annual premium amount (number, no $ or commas),
-  "coverage_amount": numeric total coverage/limit (number),
-  "deductible": numeric deductible amount (number),
-  "effective_date": "YYYY-MM-DD",
-  "expiry_date": "YYYY-MM-DD",
-  "agent_name": "agent name",
-  "agent_phone": "agent phone",
-  "agent_email": "agent email"
+  "insurance_company": "",
+  "policy_number": "",
+  "named_insured": "",
+  "property_address": "",
+  "effective_date": "",
+  "expiration_date": "",
+  "premium": "",
+  "premium_due_date": "",
+  "deductible": "",
+  "building_coverage": "",
+  "general_liability_coverage": "",
+  "general_aggregate": "",
+  "agent_name": "",
+  "agent_phone": "",
+  "mortgagee": "",
+  "construction_type": "",
+  "year_built": "",
+  "valuation_method": ""
 }
-Return ONLY the JSON object, no markdown, no explanation.`
+
+For premium_due_date: look for a payment due date or bill due date. If not found, use the effective date.
+For mortgagee: look for any lender or mortgagee listed on the policy. If none, return "".
+Extract exact values as they appear in the document. For dollar amounts include the $ sign.`
 
   try {
     // Truncate PDF to first 20 pages to stay within Anthropic's 100-page limit

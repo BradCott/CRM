@@ -290,21 +290,59 @@ function TasksSection({ propertyId }) {
 
 // ── Insurance Section ─────────────────────────────────────────────────────────
 
+const INS_REVIEW_SECTIONS = [
+  { label: 'POLICY INFO', fields: [
+    { key: 'insurance_company', label: 'Insurance Company' },
+    { key: 'policy_number',     label: 'Policy Number'     },
+    { key: 'named_insured',     label: 'Named Insured'     },
+    { key: 'agent_name',        label: 'Agent Name'        },
+    { key: 'agent_phone',       label: 'Agent Phone'       },
+  ]},
+  { label: 'PROPERTY', fields: [
+    { key: 'property_address',  label: 'Property Address'  },
+    { key: 'construction_type', label: 'Construction Type' },
+    { key: 'year_built',        label: 'Year Built'        },
+    { key: 'valuation_method',  label: 'Valuation Method'  },
+  ]},
+  { label: 'COVERAGE & COSTS', span: 2, fields: [
+    { key: 'premium',                    label: 'Premium'                    },
+    { key: 'premium_due_date',           label: 'Premium Due Date'           },
+    { key: 'deductible',                 label: 'Deductible'                 },
+    { key: 'building_coverage',          label: 'Building Coverage'          },
+    { key: 'general_liability_coverage', label: 'General Liability Coverage' },
+    { key: 'general_aggregate',          label: 'General Aggregate'          },
+  ]},
+  { label: 'MORTGAGE', fields: [
+    { key: 'mortgagee', label: 'Mortgagee' },
+  ]},
+  { label: 'DATES', fields: [
+    { key: 'effective_date',  label: 'Effective Date'  },
+    { key: 'expiration_date', label: 'Expiration Date' },
+  ]},
+]
+
 const INS_EMPTY = {
   carrier: '', policy_number: '', premium: '', coverage_amount: '', deductible: '',
   effective_date: '', expiry_date: '', auto_renewal: false,
   agent_name: '', agent_phone: '', agent_email: '', notes: '',
 }
 
+function parseAmount(str) {
+  if (str == null || str === '') return ''
+  const n = parseFloat(String(str).replace(/[$,]/g, ''))
+  return isNaN(n) ? '' : String(n)
+}
+
 function InsuranceSection({ propertyId }) {
-  const [policies, setPolicies]     = useState([])
-  const [loading, setLoading]       = useState(true)
-  const [modal, setModal]           = useState(null) // null | 'add' | policy object
-  const [form, setForm]             = useState({})
-  const [saving, setSaving]         = useState(false)
-  const [uploading, setUploading]   = useState(false)
-  const [parseError, setParseError] = useState(null)
-  const fileInputRef                = useRef(null)
+  const [policies, setPolicies]           = useState([])
+  const [loading, setLoading]             = useState(true)
+  const [modal, setModal]                 = useState(null) // null | 'add' | policy object
+  const [form, setForm]                   = useState({})
+  const [saving, setSaving]               = useState(false)
+  const [uploading, setUploading]         = useState(false)
+  const [parseError, setParseError]       = useState(null)
+  const [extractedData, setExtractedData] = useState(null)
+  const fileInputRef                      = useRef(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -326,7 +364,6 @@ function InsuranceSection({ propertyId }) {
     setModal(p)
   }
 
-  // Standalone "Upload PDF" button — triggers file picker, parses, then opens pre-filled modal
   function handleUploadClick() {
     setParseError(null)
     fileInputRef.current?.click()
@@ -335,31 +372,55 @@ function InsuranceSection({ propertyId }) {
   async function handleFileSelected(e) {
     const file = e.target.files?.[0]
     if (!file) return
-    // Reset the input so the same file can be re-selected if needed
     e.target.value = ''
     setUploading(true)
     setParseError(null)
     try {
       const data = await uploadInsurancePdf(propertyId, file)
-      // Merge AI result into a fresh form and open the add modal
-      setForm({
-        ...INS_EMPTY,
-        carrier:         data.carrier          || '',
-        policy_number:   data.policy_number    || '',
-        premium:         data.premium      != null ? String(data.premium)         : '',
-        coverage_amount: data.coverage_amount != null ? String(data.coverage_amount) : '',
-        deductible:      data.deductible   != null ? String(data.deductible)      : '',
-        effective_date:  data.effective_date   || '',
-        expiry_date:     data.expiry_date      || '',
-        agent_name:      data.agent_name       || '',
-        agent_phone:     data.agent_phone      || '',
-        agent_email:     data.agent_email      || '',
-      })
-      setModal('add')
+      setExtractedData(data)
     } catch (err) {
       setParseError(err.message)
     } finally {
       setUploading(false)
+    }
+  }
+
+  async function handleSaveExtracted() {
+    const d = extractedData
+    const extraLines = []
+    if (d.named_insured)              extraLines.push(`Named Insured: ${d.named_insured}`)
+    if (d.property_address)           extraLines.push(`Property Address: ${d.property_address}`)
+    if (d.premium_due_date)           extraLines.push(`Premium Due Date: ${d.premium_due_date}`)
+    if (d.building_coverage)          extraLines.push(`Building Coverage: ${d.building_coverage}`)
+    if (d.general_liability_coverage) extraLines.push(`General Liability Coverage: ${d.general_liability_coverage}`)
+    if (d.general_aggregate)          extraLines.push(`General Aggregate: ${d.general_aggregate}`)
+    if (d.mortgagee)                  extraLines.push(`Mortgagee: ${d.mortgagee}`)
+    if (d.construction_type)          extraLines.push(`Construction Type: ${d.construction_type}`)
+    if (d.year_built)                 extraLines.push(`Year Built: ${d.year_built}`)
+    if (d.valuation_method)           extraLines.push(`Valuation Method: ${d.valuation_method}`)
+
+    const payload = {
+      carrier:         d.insurance_company || '',
+      policy_number:   d.policy_number     || '',
+      premium:         parseAmount(d.premium),
+      deductible:      parseAmount(d.deductible),
+      effective_date:  d.effective_date    || '',
+      expiry_date:     d.expiration_date   || '',
+      agent_name:      d.agent_name        || '',
+      agent_phone:     d.agent_phone       || '',
+      coverage_amount: parseAmount(d.building_coverage),
+      notes:           extraLines.join('\n'),
+    }
+
+    setSaving(true)
+    try {
+      await createInsurance(propertyId, payload)
+      setExtractedData(null)
+      await load()
+    } catch (err) {
+      alert('Error saving: ' + err.message)
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -395,7 +456,6 @@ function InsuranceSection({ propertyId }) {
       title={`Insurance (${policies.length})`}
       actions={
         <>
-          {/* Hidden file input for the upload button */}
           <input
             ref={fileInputRef}
             type="file"
@@ -403,8 +463,6 @@ function InsuranceSection({ propertyId }) {
             className="hidden"
             onChange={handleFileSelected}
           />
-
-          {/* Upload PDF — prominent standalone button */}
           <button
             onClick={handleUploadClick}
             disabled={uploading}
@@ -415,7 +473,6 @@ function InsuranceSection({ propertyId }) {
               : <><FileUp className="w-3.5 h-3.5" /> Upload PDF</>
             }
           </button>
-
           <button
             onClick={openAdd}
             className="flex items-center gap-1 text-xs text-blue-600 hover:underline font-medium"
@@ -449,7 +506,7 @@ function InsuranceSection({ propertyId }) {
           : (
             <div className="space-y-2">
               {policies.map(p => {
-                const days        = daysUntil(p.expiry_date)
+                const days         = daysUntil(p.expiry_date)
                 const expiringSoon = days !== null && days <= 90
                 const expired      = days !== null && days < 0
                 return (
@@ -466,9 +523,9 @@ function InsuranceSection({ propertyId }) {
                         <p className="text-sm font-semibold text-slate-900">{p.carrier || 'Unknown carrier'}</p>
                         <p className="text-xs text-slate-500 font-mono mt-0.5">{p.policy_number || '—'}</p>
                         <div className="flex flex-wrap gap-4 mt-2 text-xs text-slate-600">
-                          {p.premium      != null && <span>Premium: <strong>{fmt(p.premium)}</strong></span>}
+                          {p.premium        != null && <span>Premium: <strong>{fmt(p.premium)}</strong></span>}
                           {p.coverage_amount != null && <span>Coverage: <strong>{fmt(p.coverage_amount)}</strong></span>}
-                          {p.deductible   != null && <span>Deductible: <strong>{fmt(p.deductible)}</strong></span>}
+                          {p.deductible     != null && <span>Deductible: <strong>{fmt(p.deductible)}</strong></span>}
                         </div>
                         <div className="flex flex-wrap gap-4 mt-1 text-xs text-slate-500">
                           {p.effective_date && <span>Effective: {fmtDate(p.effective_date)}</span>}
@@ -496,6 +553,49 @@ function InsuranceSection({ propertyId }) {
             </div>
           )
       )}
+
+      {/* Extraction review modal — shown after PDF parse, before saving */}
+      <Modal
+        isOpen={!!extractedData}
+        onClose={() => setExtractedData(null)}
+        title="Extracted Insurance Data"
+        size="lg"
+      >
+        <div className="px-6 py-5 space-y-5">
+          <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+            Review the information extracted from the PDF, then click <strong>Save Policy</strong> to add it to this property.
+          </p>
+
+          <div className="grid grid-cols-2 gap-x-6 gap-y-5">
+            {INS_REVIEW_SECTIONS.map(section => (
+              <div key={section.label} className={section.span === 2 ? 'col-span-2' : ''}>
+                <div className="text-[10px] font-semibold tracking-widest text-slate-400 uppercase mb-2 pb-1.5 border-b border-slate-100">
+                  {section.label}
+                </div>
+                <table className="w-full text-xs">
+                  <tbody>
+                    {section.fields.map(f => (
+                      <tr key={f.key} className="border-b border-slate-50 last:border-0">
+                        <td className="py-1 pr-4 text-slate-500 whitespace-nowrap w-2/5">{f.label}</td>
+                        <td className="py-1 text-slate-900 font-medium">
+                          {extractedData?.[f.key] || <span className="text-slate-300">—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1 border-t border-slate-100">
+            <Button type="button" variant="secondary" onClick={() => setExtractedData(null)}>Discard</Button>
+            <Button type="button" disabled={saving} onClick={handleSaveExtracted}>
+              {saving ? 'Saving…' : 'Save Policy'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       {/* Add / Edit policy modal */}
       <Modal
