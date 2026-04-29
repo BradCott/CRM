@@ -44,8 +44,9 @@ async function hwPost(path, params = {}) {
 // ── Merge field helpers ───────────────────────────────────────────────────────
 
 function resolveMergeFields(template, person, property) {
-  const first = person.first_name || (person.name || '').split(' ')[0] || ''
-  const last  = person.last_name  || (person.name || '').split(' ').slice(1).join(' ') || ''
+  const nameParts = (person.name || '').trim().split(/\s+/)
+  const first = nameParts[0] || 'Friend'
+  const last  = nameParts.slice(1).join(' ') || ''
   return template
     .replace(/\{first_name\}/gi, first)
     .replace(/\{last_name\}/gi,  last)
@@ -225,8 +226,11 @@ router.post('/send', async (req, res) => {
   const senderLast  = senderParts.slice(1).join(' ') || ''
 
   // Parse recipient name
-  const toFirstName = person.first_name || person.name.split(' ')[0] || ''
-  const toLastName  = person.last_name  || person.name.split(' ').slice(1).join(' ') || ''
+  const nameParts = (person.name || '').trim().split(/\s+/)
+  const firstName = nameParts[0] || 'Friend'
+  const lastName  = nameParts.slice(1).join(' ') || ''
+
+  console.log(`[Handwrytten] send — firstName: "${firstName}" lastName: "${lastName}" | message: ${resolvedMessage}`)
 
   try {
     const orderParams = {
@@ -234,12 +238,12 @@ router.post('/send', async (req, res) => {
       font_label:           font    || '',
       message:              resolvedMessage,
       wishes:               senderName,
-      tofirstname:          toFirstName,
-      tolastname:           toLastName,
-      toaddress1:           person.address  || '',
-      tocity:               person.city     || '',
-      tostate:              person.state    || '',
-      tozip:                person.zip      || '',
+      recipient_first_name: firstName,
+      recipient_last_name:  lastName,
+      recipient_address1:   person.address  || '',
+      recipient_city:       person.city     || '',
+      recipient_state:      person.state    || '',
+      recipient_zip:        person.zip      || '',
       tocountry:            'US',
       sender_first_name:    'Knox',
       sender_last_name:     'Capital',
@@ -369,12 +373,12 @@ router.post('/send-bulk', async (req, res) => {
         font_label:           font    || '',
         message:              resolvedMessage,
         wishes:               senderName,
-        tofirstname:          toFirstName,
-        tolastname:           toLastName,
-        toaddress1:           person.address  || '',
-        tocity:               person.city     || '',
-        tostate:              person.state    || '',
-        tozip:                person.zip      || '',
+        recipient_first_name: toFirstName,
+        recipient_last_name:  toLastName,
+        recipient_address1:   person.address  || '',
+        recipient_city:       person.city     || '',
+        recipient_state:      person.state    || '',
+        recipient_zip:        person.zip      || '',
         tocountry:            'US',
         sender_first_name:    'Knox',
         sender_last_name:     'Capital',
