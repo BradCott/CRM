@@ -8,7 +8,7 @@ import {
 import {
   getProperty,
   getPropertyTasks,      createTask,        updateTask,        completeTask,    deleteTask,
-  getPropertyInsurance,  createInsurance,   updateInsurance,   deleteInsurance, uploadInsurancePdf,
+  getPropertyInsurance,  createInsurance,   updateInsurance,   deleteInsurance, uploadInsurancePdf, markInsurancePaid,
   getPropertyTaxes,      createTax,         updateTax,         deleteTax,
   getPropertyMaintenance, createMaintenance, updateMaintenance, deleteMaintenance,
   getPropertyContacts,   createContact,     updateContact,     deleteContact,
@@ -424,16 +424,17 @@ function InsuranceSection({ propertyId }) {
     if (d.valuation_method)           extraLines.push(`Valuation Method: ${d.valuation_method}`)
 
     const payload = {
-      carrier:         d.insurance_company  || '',
-      policy_number:   d.policy_number      || '',
-      premium:         parseAmount(d.premium),
-      deductible:      parseAmount(d.deductible),
-      effective_date:  toYMD(d.effective_date),
-      expiry_date:     toYMD(d.expiration_date),
-      agent_name:      d.agent_name         || '',
-      agent_phone:     d.agent_phone        || '',
-      coverage_amount: parseAmount(d.building_coverage),
-      notes:           extraLines.join('\n'),
+      carrier:          d.insurance_company  || '',
+      policy_number:    d.policy_number      || '',
+      premium:          parseAmount(d.premium),
+      deductible:       parseAmount(d.deductible),
+      effective_date:   toYMD(d.effective_date),
+      expiry_date:      toYMD(d.expiration_date),
+      premium_due_date: toYMD(d.premium_due_date),
+      agent_name:       d.agent_name         || '',
+      agent_phone:      d.agent_phone        || '',
+      coverage_amount:  parseAmount(d.building_coverage),
+      notes:            extraLines.join('\n'),
     }
 
     setSaving(true)
@@ -472,6 +473,15 @@ function InsuranceSection({ propertyId }) {
     if (!confirm('Delete this policy?')) return
     await deleteInsurance(id)
     await load()
+  }
+
+  async function handleMarkPaid(id, paid) {
+    try {
+      await markInsurancePaid(id, paid)
+      await load()
+    } catch (err) {
+      alert('Error: ' + err.message)
+    }
   }
 
   return (
@@ -582,13 +592,40 @@ function InsuranceSection({ propertyId }) {
                                      'border-slate-200 bg-white'
                     }`}
                   >
-                    {/* Card header with edit/delete */}
+                    {/* Card header with paid badge + edit/delete */}
                     <div className="flex items-start justify-between gap-3 mb-3">
-                      <div>
-                        <p className="text-sm font-semibold text-slate-900">{p.carrier || 'Unknown carrier'}</p>
-                        {p.policy_number && <p className="text-xs text-slate-500 font-mono mt-0.5">{p.policy_number}</p>}
+                      <div className="flex items-start gap-3">
+                        {/* Paid status badge */}
+                        {p.paid_status === 'paid' ? (
+                          <div className="flex flex-col items-center">
+                            <span className="px-2.5 py-1 rounded-lg bg-green-100 border border-green-300 text-green-700 text-xs font-black tracking-widest uppercase">PAID</span>
+                            {p.paid_date && <span className="text-[10px] text-green-600 mt-0.5">{fmtDate(p.paid_date)}</span>}
+                          </div>
+                        ) : (
+                          <span className="px-2.5 py-1 rounded-lg bg-red-100 border border-red-300 text-red-700 text-xs font-black tracking-widest uppercase">UNPAID</span>
+                        )}
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">{p.carrier || 'Unknown carrier'}</p>
+                          {p.policy_number && <p className="text-xs text-slate-500 font-mono mt-0.5">{p.policy_number}</p>}
+                        </div>
                       </div>
-                      <div className="flex gap-1 shrink-0">
+                      <div className="flex items-center gap-2 shrink-0">
+                        {/* Mark as Paid / Undo */}
+                        {p.paid_status === 'paid' ? (
+                          <button
+                            onClick={() => handleMarkPaid(p.id, false)}
+                            className="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200 transition-colors"
+                          >
+                            Undo
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleMarkPaid(p.id, true)}
+                            className="px-2.5 py-1 rounded-lg text-xs font-semibold bg-green-600 text-white hover:bg-green-700 transition-colors"
+                          >
+                            Mark as Paid
+                          </button>
+                        )}
                         <button onClick={() => openEdit(p)} className="p-1.5 rounded hover:bg-white/80 text-slate-400 hover:text-slate-600 transition-colors">
                           <Pencil className="w-3.5 h-3.5" />
                         </button>

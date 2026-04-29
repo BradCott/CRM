@@ -235,6 +235,11 @@ const migrations = [
   `ALTER TABLE investors ADD COLUMN tax_id               TEXT`,
   `ALTER TABLE investors ADD COLUMN accreditation_status TEXT DEFAULT 'Accredited'`,
   `ALTER TABLE investors ADD COLUMN is_incomplete        INTEGER DEFAULT 0`,
+  // Insurance paid status
+  `ALTER TABLE property_insurance ADD COLUMN paid_status TEXT NOT NULL DEFAULT 'unpaid'`,
+  `ALTER TABLE property_insurance ADD COLUMN paid_date   TEXT`,
+  // Task priority
+  `ALTER TABLE property_tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

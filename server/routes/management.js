@@ -298,35 +298,55 @@ router.get('/:propertyId/insurance', (req, res) => {
 })
 
 router.post('/:propertyId/insurance', (req, res) => {
-  const f = req.body
+  const f   = req.body
+  const pid = req.params.propertyId
   const r = db.prepare(`
     INSERT INTO property_insurance
       (property_id, carrier, policy_number, premium, coverage_amount, deductible,
-       effective_date, expiry_date, auto_renewal, agent_name, agent_phone, agent_email, notes)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+       effective_date, expiry_date, auto_renewal, agent_name, agent_phone, agent_email,
+       notes, paid_status, paid_date)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
-    req.params.propertyId,
+    pid,
     f.carrier || null, f.policy_number || null,
-    f.premium != null ? parseFloat(f.premium) : null,
+    f.premium        != null ? parseFloat(f.premium)         : null,
     f.coverage_amount != null ? parseFloat(f.coverage_amount) : null,
-    f.deductible != null ? parseFloat(f.deductible) : null,
+    f.deductible     != null ? parseFloat(f.deductible)      : null,
     f.effective_date || null, f.expiry_date || null,
     f.auto_renewal ? 1 : 0,
-    f.agent_name || null, f.agent_phone || null, f.agent_email || null, f.notes || null
+    f.agent_name || null, f.agent_phone || null, f.agent_email || null,
+    f.notes || null,
+    f.paid_status || 'unpaid',
+    f.paid_date   || null
   )
-  // Auto-create a renewal task if expiry_date provided
+
+  // Auto-create renewal reminder task if expiry_date provided
   if (f.expiry_date) {
     const reminderDate = addDays(f.expiry_date, -60)
     db.prepare(`
       INSERT INTO property_tasks (property_id, title, task_type, due_date, recurs, notes)
       VALUES (?, ?, 'insurance', ?, 'annually', ?)
     `).run(
-      req.params.propertyId,
+      pid,
       `Insurance renewal — ${f.carrier || 'policy'} expires ${f.expiry_date}`,
       reminderDate,
       `Policy: ${f.policy_number || 'N/A'} | Carrier: ${f.carrier || 'N/A'}`
     )
   }
+
+  // Auto-create premium payment task
+  const premiumDue = f.premium_due_date || f.effective_date || null
+  db.prepare(`
+    INSERT INTO property_tasks (property_id, title, task_type, due_date, recurs, notes, priority)
+    VALUES (?, 'Pay Insurance Premium', 'insurance', ?, 'none', ?, 'high')
+  `).run(pid, premiumDue, `Carrier: ${f.carrier || 'N/A'} | Policy: ${f.policy_number || 'N/A'}`)
+
+  // Auto-create reimbursement task (due_date set when premium is paid)
+  db.prepare(`
+    INSERT INTO property_tasks (property_id, title, task_type, due_date, recurs, notes, priority)
+    VALUES (?, 'Request Tenant Insurance Reimbursement', 'insurance', NULL, 'none', 'Complete after insurance premium is paid', 'high')
+  `).run(pid)
+
   res.status(201).json(db.prepare('SELECT * FROM property_insurance WHERE id = ?').get(r.lastInsertRowid))
 })
 
@@ -335,18 +355,60 @@ router.put('/insurance/:id', (req, res) => {
   db.prepare(`
     UPDATE property_insurance SET
       carrier=?, policy_number=?, premium=?, coverage_amount=?, deductible=?,
-      effective_date=?, expiry_date=?, auto_renewal=?, agent_name=?, agent_phone=?, agent_email=?, notes=?
+      effective_date=?, expiry_date=?, auto_renewal=?, agent_name=?, agent_phone=?, agent_email=?,
+      notes=?, paid_status=?, paid_date=?
     WHERE id=?
   `).run(
     f.carrier || null, f.policy_number || null,
-    f.premium != null ? parseFloat(f.premium) : null,
+    f.premium         != null ? parseFloat(f.premium)         : null,
     f.coverage_amount != null ? parseFloat(f.coverage_amount) : null,
-    f.deductible != null ? parseFloat(f.deductible) : null,
+    f.deductible      != null ? parseFloat(f.deductible)      : null,
     f.effective_date || null, f.expiry_date || null,
     f.auto_renewal ? 1 : 0,
-    f.agent_name || null, f.agent_phone || null, f.agent_email || null, f.notes || null,
+    f.agent_name || null, f.agent_phone || null, f.agent_email || null,
+    f.notes       || null,
+    f.paid_status || 'unpaid',
+    f.paid_date   || null,
     req.params.id
   )
+  res.json(db.prepare('SELECT * FROM property_insurance WHERE id = ?').get(req.params.id))
+})
+
+// PATCH /insurance/:id/paid — toggle paid status and cascade to reimbursement task
+router.patch('/insurance/:id/paid', (req, res) => {
+  const { paid } = req.body  // true = mark paid, false = undo
+  const policy = db.prepare('SELECT * FROM property_insurance WHERE id = ?').get(req.params.id)
+  if (!policy) return res.status(404).json({ error: 'Policy not found' })
+
+  const paidDate   = paid ? today() : null
+  const paidStatus = paid ? 'paid' : 'unpaid'
+
+  db.prepare(`UPDATE property_insurance SET paid_status=?, paid_date=? WHERE id=?`)
+    .run(paidStatus, paidDate, req.params.id)
+
+  // When marking paid: find the matching reimbursement task and set due 7 days out
+  if (paid) {
+    const dueDate = addDays(today(), 7)
+    db.prepare(`
+      UPDATE property_tasks
+      SET due_date = ?, completed_at = NULL
+      WHERE property_id = ?
+        AND completed_at IS NULL
+        AND title = 'Request Tenant Insurance Reimbursement'
+    `).run(dueDate, policy.property_id)
+  }
+
+  // When undoing: clear the due date on the reimbursement task
+  if (!paid) {
+    db.prepare(`
+      UPDATE property_tasks
+      SET due_date = NULL
+      WHERE property_id = ?
+        AND completed_at IS NULL
+        AND title = 'Request Tenant Insurance Reimbursement'
+    `).run(policy.property_id)
+  }
+
   res.json(db.prepare('SELECT * FROM property_insurance WHERE id = ?').get(req.params.id))
 })
 

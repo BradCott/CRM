@@ -174,6 +174,7 @@ export const getPropertyInsurance  = (propId)      => req('GET',    `/management
 export const createInsurance       = (propId, data) => req('POST',   `/management/${propId}/insurance`, data)
 export const updateInsurance       = (id, data)     => req('PUT',    `/management/insurance/${id}`, data)
 export const deleteInsurance       = (id)           => req('DELETE', `/management/insurance/${id}`)
+export const markInsurancePaid     = (id, paid)     => req('PATCH',  `/management/insurance/${id}/paid`, { paid })
 export async function uploadInsurancePdf(propId, file) {
   const fd = new FormData()
   fd.append('file', file)
