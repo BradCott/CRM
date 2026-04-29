@@ -243,8 +243,10 @@ const migrations = [
   `ALTER TABLE property_insurance ADD COLUMN reimbursed_date   TEXT`,
   // Task priority
   `ALTER TABLE property_tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`,
-  // Deal timestamps (for activity feed)
-  `ALTER TABLE deals ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
+  // Deal timestamps (for activity feed).
+  // SQLite rejects expression defaults (datetime('now')) in ALTER TABLE ADD COLUMN,
+  // so use no default — existing rows get NULL, new rows need explicit value.
+  `ALTER TABLE deals ADD COLUMN created_at TEXT`,
   // Property geocoordinates for portfolio map
   `ALTER TABLE properties ADD COLUMN lat REAL`,
   `ALTER TABLE properties ADD COLUMN lng REAL`,

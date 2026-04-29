@@ -294,13 +294,16 @@ router.get('/activity', (req, res) => {
     ORDER BY pt.completed_at DESC LIMIT 20
   `).all()
 
+  // deals table has no reliable created_at (migration for it uses an expression
+  // default that SQLite rejects in ALTER TABLE, so the column may not exist).
+  // Use NULL for timestamp — rows with no timestamp are filtered out below.
   const dealRows = db.prepare(`
     SELECT
       'deal'                                                            AS type,
       d.id,
       'Deal: ' || COALESCE(d.address, p.address, 'Unknown')
         || ' — ' || d.stage                                            AS description,
-      d.created_at                                                      AS timestamp,
+      NULL                                                              AS timestamp,
       NULL                                                              AS actor,
       d.property_id,
       COALESCE(d.address, p.address)                                    AS property_address
