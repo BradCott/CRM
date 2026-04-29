@@ -57,37 +57,43 @@ function resolveMergeFields(template, person, property) {
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-/** GET /api/handwrytten/cards — returns only custom cards */
+/** GET /api/handwrytten/cards — fetches all cards, filters to account-specific ones */
 router.get('/cards', async (_req, res) => {
-  for (const path of ['/cards/listCustomCards', '/customCards/list']) {
-    try {
-      const raw = await hwGet(path)
-      console.log(`[Handwrytten] ${path} FULL response:`, JSON.stringify(raw))
-      const cards = Array.isArray(raw) ? raw : raw?.cards || raw?.data || []
-      if (cards.length > 0) {
-        console.log(`[Handwrytten] cards: using ${path} — ${cards.length} custom cards found`)
-        return res.json(cards)
-      }
-      console.log(`[Handwrytten] ${path} returned 0 cards — trying next`)
-    } catch (e) {
-      console.log(`[Handwrytten] ${path} failed: ${e.message}`)
-    }
+  try {
+    const raw = await hwGet('/cards/list')
+    console.log('[Handwrytten] /cards/list FULL response:', JSON.stringify(raw))
+
+    const allCards = Array.isArray(raw) ? raw : raw?.cards || raw?.data || []
+    console.log(`[Handwrytten] cards: ${allCards.length} total from API`)
+
+    // Prefer cards that belong to this account (Knox-branded, custom, or team cards)
+    const filtered = allCards.filter(c =>
+      (c.name || '').toLowerCase().includes('knox') ||
+      c.isCustom === true ||
+      c.is_custom === true ||
+      c.is_team_card === true
+    )
+
+    const result = filtered.length > 0 ? filtered : allCards
+    console.log(`[Handwrytten] cards: returning ${result.length} (${filtered.length} filtered, fallback=${filtered.length === 0})`)
+    res.json(result)
+  } catch (err) {
+    console.error('[Handwrytten] /cards error:', err.message)
+    res.status(502).json({ error: err.message })
   }
-  console.error('[Handwrytten] cards: all custom card endpoints failed')
-  res.status(502).json({ error: 'Could not load custom cards — all endpoints failed' })
 })
 
-/** GET /api/handwrytten/fonts — tries multiple endpoints until one returns data */
+/** GET /api/handwrytten/fonts — fetches available handwriting fonts */
 router.get('/fonts', async (_req, res) => {
   const attempts = ['/fonts/list', '/fonts/listFonts', '/handwriting/listFonts', '/handwriting/list']
 
   for (const path of attempts) {
     try {
       const data = await hwGet(path)
-      console.log(`[Handwrytten] ${path} FULL response:`, JSON.stringify(data))
+      console.log(`[Handwrytten] ${path} FULL raw response:`, JSON.stringify(data))
       const fonts = Array.isArray(data) ? data : data?.fonts || data?.data || []
       if (fonts.length > 0) {
-        console.log(`[Handwrytten] fonts: using ${path} — ${fonts.length} fonts found`)
+        console.log(`[Handwrytten] fonts: using ${path} — ${fonts.length} fonts. First item keys: ${Object.keys(fonts[0]).join(', ')}`)
         return res.json(data)
       }
       console.log(`[Handwrytten] ${path} returned 0 fonts — trying next`)
