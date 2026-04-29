@@ -3,8 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import {
   Landmark, TrendingUp, Users, FileCheck2, AlertTriangle,
   CalendarClock, Loader2, KanbanSquare,
+  Clock, History, Mail, Shield, CheckCircle2, DollarSign, Building2, BarChart3,
 } from 'lucide-react'
-import { getDashboard, getDeals } from '../../api/client'
+import { getDashboard, getDeals, getDashboardFinancials, getDashboardDeadlines, getDashboardActivity } from '../../api/client'
 import knoxLogo from '../../assets/Knox.png'
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -30,6 +31,20 @@ function monthsUntil(d) {
   return (new Date(d + 'T00:00:00') - new Date()) / (86_400_000 * 30.44)
 }
 
+// ── Relative time ─────────────────────────────────────────────────────────────
+function timeAgo(ts) {
+  if (!ts) return '—'
+  const diff = Date.now() - new Date(ts).getTime()
+  if (diff < 0) return 'just now'
+  const mins = Math.floor(diff / 60_000)
+  if (mins < 1)  return 'just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24)  return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return `${days}d ago`
+}
+
 // ── Pipeline stage config ─────────────────────────────────────────────────────
 const STAGE_ORDER = { 'Money Hard': 1, 'Under Contract': 2, 'PSA Negotiation': 3, 'LOI': 4 }
 
@@ -43,9 +58,12 @@ const STAGE_BADGE = {
 // ── Main component ────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const navigate = useNavigate()
-  const [data, setData] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [pipeline, setPipeline] = useState([])
+  const [data, setData]           = useState(null)
+  const [loading, setLoading]     = useState(true)
+  const [pipeline, setPipeline]   = useState([])
+  const [financials, setFinancials] = useState(null)
+  const [deadlines, setDeadlines] = useState([])
+  const [activity, setActivity]   = useState([])
 
   useEffect(() => {
     getDashboard()
@@ -65,6 +83,10 @@ export default function DashboardPage() {
         setPipeline(active)
       })
       .catch(console.error)
+
+    getDashboardFinancials().then(setFinancials).catch(console.error)
+    getDashboardDeadlines().then(setDeadlines).catch(console.error)
+    getDashboardActivity().then(setActivity).catch(console.error)
   }, [])
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
@@ -100,6 +122,34 @@ export default function DashboardPage() {
         <div className="flex items-center justify-between">
           <LogoOrFallback />
           <p className="text-sm text-slate-400">{today}</p>
+        </div>
+
+        {/* ── Financial Snapshot ─────────────────────────────────────────── */}
+        <div className="grid grid-cols-4 gap-4">
+          <MetricCard
+            icon={Building2}
+            label="Total Portfolio Value"
+            value={fmt$(financials?.total_portfolio_value)}
+            color="blue"
+          />
+          <MetricCard
+            icon={BarChart3}
+            label="Total Annual Rent"
+            value={fmt$(financials?.total_annual_rent)}
+            color="emerald"
+          />
+          <MetricCard
+            icon={DollarSign}
+            label="Total Equity Deployed"
+            value={fmt$(financials?.total_equity_deployed)}
+            color="violet"
+          />
+          <MetricCard
+            icon={Users}
+            label="Total Investors"
+            value={financials?.total_investors ?? '—'}
+            color="amber"
+          />
         </div>
 
         {/* ── Metric cards ───────────────────────────────────────────────── */}
@@ -231,6 +281,110 @@ export default function DashboardPage() {
                 </tbody>
               </table>
             </div>
+          )}
+        </Section>
+
+        {/* ── Upcoming Deadlines ─────────────────────────────────────────── */}
+        <Section title="Upcoming Deadlines" icon={Clock}>
+          {deadlines.length === 0 ? (
+            <EmptyRow message="No upcoming deadlines." />
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {deadlines.map((item, i) => {
+                const days = daysUntil(item.due_date)
+                const overdue = days !== null && days < 0
+                const urgent  = days !== null && days <= 7
+                const soon    = days !== null && days <= 30
+                const urgencyDot = overdue || urgent ? 'bg-red-400'
+                  : soon ? 'bg-amber-400' : 'bg-emerald-400'
+                const urgencyText = overdue || urgent ? 'text-red-600 font-semibold'
+                  : soon ? 'text-amber-700 font-semibold' : 'text-emerald-700'
+                const typeIcon = item.type === 'insurance' ? Shield
+                  : item.type === 'deal' ? KanbanSquare : Clock
+
+                const TypeIcon = typeIcon
+                const navTarget = item.type === 'insurance'
+                  ? `/management/${item.property_id}?tab=insurance`
+                  : item.type === 'deal'
+                  ? '/pipeline'
+                  : item.property_id ? `/management/${item.property_id}` : null
+
+                return (
+                  <li
+                    key={`${item.type}-${item.id}-${i}`}
+                    onClick={navTarget ? () => navigate(navTarget) : undefined}
+                    className={`flex items-center gap-4 px-6 py-3.5 ${navTarget ? 'cursor-pointer hover:bg-slate-50 transition-colors' : ''}`}
+                  >
+                    <div className={`w-2 h-2 rounded-full shrink-0 ${urgencyDot}`} />
+                    <TypeIcon className="w-4 h-4 text-slate-400 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium text-slate-800 truncate">{item.title}</p>
+                      {item.property_address && (
+                        <p className="text-xs text-slate-400 truncate">
+                          {[item.property_address, item.property_city].filter(Boolean).join(', ')}
+                        </p>
+                      )}
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className={`text-xs ${urgencyText}`}>
+                        {overdue
+                          ? `${Math.abs(days)}d overdue`
+                          : days === 0 ? 'Today'
+                          : `${days}d`}
+                      </p>
+                      <p className="text-xs text-slate-400">{fmtDate(item.due_date)}</p>
+                    </div>
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </Section>
+
+        {/* ── Recent Activity ─────────────────────────────────────────────── */}
+        <Section title="Recent Activity" icon={History}>
+          {activity.length === 0 ? (
+            <EmptyRow message="No recent activity." />
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {activity.map((item, i) => {
+                const TypeIcon = item.type === 'letter'    ? Mail
+                  : item.type === 'insurance' ? Shield
+                  : item.type === 'task_done' ? CheckCircle2
+                  : KanbanSquare
+
+                const iconColor = item.type === 'letter'    ? 'text-blue-400'
+                  : item.type === 'insurance' ? 'text-amber-400'
+                  : item.type === 'task_done' ? 'text-emerald-500'
+                  : 'text-violet-400'
+
+                const navTarget = item.type === 'insurance' && item.property_id
+                  ? `/management/${item.property_id}?tab=insurance`
+                  : (item.type === 'task_done' || item.type === 'insurance') && item.property_id
+                  ? `/management/${item.property_id}`
+                  : item.type === 'deal' ? '/pipeline'
+                  : null
+
+                return (
+                  <li
+                    key={`act-${item.type}-${item.id}-${i}`}
+                    onClick={navTarget ? () => navigate(navTarget) : undefined}
+                    className={`flex items-center gap-4 px-6 py-3.5 ${navTarget ? 'cursor-pointer hover:bg-slate-50 transition-colors' : ''}`}
+                  >
+                    <div className={`w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center shrink-0`}>
+                      <TypeIcon className={`w-4 h-4 ${iconColor}`} />
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm text-slate-800 truncate">{item.description}</p>
+                      {item.actor && (
+                        <p className="text-xs text-slate-400">{item.actor}</p>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-400 shrink-0">{timeAgo(item.timestamp)}</p>
+                  </li>
+                )
+              })}
+            </ul>
           )}
         </Section>
 

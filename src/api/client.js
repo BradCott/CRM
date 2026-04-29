@@ -83,7 +83,10 @@ export async function importCsv(endpoint, file) {
 export const getImportStats = () => req('GET', '/import/stats')
 
 // Dashboard
-export const getDashboard = () => req('GET', '/dashboard')
+export const getDashboard           = () => req('GET', '/dashboard')
+export const getDashboardFinancials = () => req('GET', '/dashboard/financials')
+export const getDashboardDeadlines  = () => req('GET', '/dashboard/deadlines')
+export const getDashboardActivity   = () => req('GET', '/dashboard/activity')
 
 // Google OAuth / Drive
 export const getGoogleStatus  = ()     => req('GET',    '/auth/google/status')

@@ -243,6 +243,8 @@ const migrations = [
   `ALTER TABLE property_insurance ADD COLUMN reimbursed_date   TEXT`,
   // Task priority
   `ALTER TABLE property_tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`,
+  // Deal timestamps (for activity feed)
+  `ALTER TABLE deals ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────
