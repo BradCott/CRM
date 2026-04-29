@@ -4,9 +4,10 @@ import {
   Building2, ClipboardList, AlertTriangle, Shield, Receipt,
   ChevronRight, CheckCircle2, Loader2, RefreshCw,
   LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown,
-  CalendarClock, RefreshCcw,
+  CalendarClock, RefreshCcw, Search, X,
 } from 'lucide-react'
 import { getManagementDashboard, completeTask, getAllManagementTasks } from '../../api/client'
+import InsurancePage from '../insurance/InsurancePage'
 
 // ── Shared utilities ──────────────────────────────────────────────────────────
 
@@ -118,6 +119,7 @@ function PropertyCard({ property, counts = {} }) {
 
 function PropertiesView({ data, onRefresh }) {
   const [propView, setPropView] = useState('cards') // 'cards' | 'list'
+  const [search, setSearch]     = useState('')
 
   const {
     properties = [],
@@ -129,6 +131,14 @@ function PropertiesView({ data, onRefresh }) {
     tax_reimburse_pending = 0,
     ins_reimburse_pending = 0,
   } = data
+
+  const filteredProperties = search.trim()
+    ? properties.filter(p => {
+        const q = search.trim().toLowerCase()
+        return [p.address, p.city, p.state, p.tenant_brand_name, p.owner_name, p.policy_numbers]
+          .some(v => String(v || '').toLowerCase().includes(q))
+      })
+    : properties
 
   const totalRent = properties.reduce((s, p) => s + (p.annual_rent || 0), 0)
 
@@ -164,44 +174,73 @@ function PropertiesView({ data, onRefresh }) {
         </div>
       )}
 
-      {/* Property grid header with view toggle */}
+      {/* Property grid header with search + view toggle */}
       <div>
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+        <div className="flex items-center justify-between mb-3 gap-3">
+          <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-2 shrink-0">
             <Building2 className="w-4 h-4 text-slate-400" />
-            All Portfolio Properties ({properties.length})
+            All Portfolio Properties
+            <span className="font-normal text-slate-400">
+              ({filteredProperties.length}{filteredProperties.length !== properties.length ? ` of ${properties.length}` : ''})
+            </span>
           </h2>
 
-          <div className="flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5">
-            <button
-              onClick={() => setPropView('cards')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                propView === 'cards' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <LayoutGrid className="w-3.5 h-3.5" /> Cards
-            </button>
-            <button
-              onClick={() => setPropView('list')}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                propView === 'list' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <List className="w-3.5 h-3.5" /> List
-            </button>
+          <div className="flex items-center gap-2 flex-1 justify-end">
+            {/* Search bar */}
+            <div className="relative w-72">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search address, tenant, owner, policy…"
+                className="w-full pl-9 pr-8 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+              />
+              {search && (
+                <button
+                  onClick={() => setSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* View toggle */}
+            <div className="flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5 shrink-0">
+              <button
+                onClick={() => setPropView('cards')}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  propView === 'cards' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <LayoutGrid className="w-3.5 h-3.5" /> Cards
+              </button>
+              <button
+                onClick={() => setPropView('list')}
+                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                  propView === 'list' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                <List className="w-3.5 h-3.5" /> List
+              </button>
+            </div>
           </div>
         </div>
 
-        {properties.length === 0 ? (
+        {filteredProperties.length === 0 ? (
           <div className="bg-white border border-dashed border-slate-200 rounded-xl p-10 text-center">
             <Building2 className="w-8 h-8 text-slate-200 mx-auto mb-2" />
-            <p className="text-sm text-slate-400">No portfolio properties yet.</p>
-            <p className="text-xs text-slate-400 mt-1">Add properties from Knox Portfolio and mark them as portfolio.</p>
+            {search
+              ? <p className="text-sm text-slate-400">No properties match &ldquo;{search}&rdquo;.</p>
+              : <><p className="text-sm text-slate-400">No portfolio properties yet.</p>
+                  <p className="text-xs text-slate-400 mt-1">Add properties from Knox Portfolio and mark them as portfolio.</p></>
+            }
           </div>
         ) : propView === 'cards' ? (
           /* Cards grid */
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {properties.map(p => (
+            {filteredProperties.map(p => (
               <PropertyCard key={p.id} property={p} counts={task_counts[p.id] || {}} />
             ))}
           </div>
@@ -221,7 +260,7 @@ function PropertiesView({ data, onRefresh }) {
                 </tr>
               </thead>
               <tbody>
-                {properties.map(p => {
+                {filteredProperties.map(p => {
                   const c = task_counts[p.id] || {}
                   return (
                     <tr key={p.id} className="border-t border-slate-100 hover:bg-blue-50/40 transition-colors">
@@ -518,7 +557,7 @@ export default function ManagementDashboard() {
   const [data, setData]       = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
-  const [view, setView]       = useState('properties') // 'properties' | 'all-tasks'
+  const [view, setView]       = useState('properties') // 'properties' | 'all-tasks' | 'insurance'
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -592,12 +631,21 @@ export default function ManagementDashboard() {
             </span>
           )}
         </button>
+        <button
+          onClick={() => setView('insurance')}
+          className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+            view === 'insurance' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <Shield className="w-3.5 h-3.5" /> Insurance
+        </button>
       </div>
 
       {/* Content */}
-      <div className="flex-1 overflow-y-auto p-6">
-        {view === 'properties' && <PropertiesView data={data} onRefresh={load} />}
-        {view === 'all-tasks'  && <AllTasksView />}
+      <div className="flex-1 overflow-y-auto">
+        {view === 'properties' && <div className="p-6"><PropertiesView data={data} onRefresh={load} /></div>}
+        {view === 'all-tasks'  && <div className="p-6"><AllTasksView /></div>}
+        {view === 'insurance'  && <InsurancePage />}
       </div>
     </div>
   )

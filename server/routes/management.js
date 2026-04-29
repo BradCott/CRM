@@ -88,9 +88,15 @@ router.get('/dashboard', (req, res) => {
 
   const portfolioProps = db.prepare(`
     SELECT p.id, p.address, p.city, p.state, t.name AS tenant_brand_name,
-           p.lease_end, p.annual_rent, p.purchase_price
+           p.lease_end, p.annual_rent, p.purchase_price,
+           o.name AS owner_name,
+           (SELECT GROUP_CONCAT(pi.policy_number, ' ')
+            FROM property_insurance pi
+            WHERE pi.property_id = p.id
+              AND pi.policy_number IS NOT NULL) AS policy_numbers
     FROM properties p
     LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    LEFT JOIN people         o ON o.id = p.owner_id
     WHERE p.is_portfolio = 1
     ORDER BY p.address
   `).all()

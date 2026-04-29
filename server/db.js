@@ -238,6 +238,9 @@ const migrations = [
   // Insurance paid status
   `ALTER TABLE property_insurance ADD COLUMN paid_status TEXT NOT NULL DEFAULT 'unpaid'`,
   `ALTER TABLE property_insurance ADD COLUMN paid_date   TEXT`,
+  // Insurance reimbursed status
+  `ALTER TABLE property_insurance ADD COLUMN reimbursed_status TEXT NOT NULL DEFAULT 'unreimbursed'`,
+  `ALTER TABLE property_insurance ADD COLUMN reimbursed_date   TEXT`,
   // Task priority
   `ALTER TABLE property_tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`,
 ]

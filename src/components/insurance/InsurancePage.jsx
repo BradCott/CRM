@@ -51,8 +51,9 @@ const COLS = [
   { key: 'premium',          label: 'Premium' },
   { key: 'effective_date',   label: 'Effective Date' },
   { key: 'expiry_date',      label: 'Expiration Date' },
-  { key: 'paid_status',      label: 'Paid Status' },
-  { key: 'days_until_expiry', label: 'Days Until Exp.' },
+  { key: 'paid_status',        label: 'Paid Status' },
+  { key: 'reimbursed_status',  label: 'Reimbursed' },
+  { key: 'days_until_expiry',  label: 'Days Until Exp.' },
 ]
 
 function sortValue(row, key) {
@@ -227,6 +228,15 @@ export default function InsurancePage() {
                           <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-green-100 text-green-700 border border-green-200 tracking-wide">PAID</span>
                         ) : (
                           <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-red-100 text-red-700 border border-red-200 tracking-wide">UNPAID</span>
+                        )}
+                      </td>
+
+                      {/* Reimbursed Status */}
+                      <td className="px-4 py-3">
+                        {p.reimbursed_status === 'reimbursed' ? (
+                          <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-green-100 text-green-700 border border-green-200 tracking-wide">REIMBURSED</span>
+                        ) : (
+                          <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-red-100 text-red-700 border border-red-200 tracking-wide">UNREIMBURSED</span>
                         )}
                       </td>
 
