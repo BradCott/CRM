@@ -117,9 +117,8 @@ function PropertyCard({ property, counts = {} }) {
 
 // ── Properties view ───────────────────────────────────────────────────────────
 
-function PropertiesView({ data, onRefresh }) {
+function PropertiesView({ data, onRefresh, search, setSearch }) {
   const [propView, setPropView] = useState('cards') // 'cards' | 'list'
-  const [search, setSearch]     = useState('')
 
   const {
     properties = [],
@@ -174,10 +173,10 @@ function PropertiesView({ data, onRefresh }) {
         </div>
       )}
 
-      {/* Property grid header with search + view toggle */}
+      {/* Property grid header with view toggle */}
       <div>
-        <div className="flex items-center justify-between mb-3 gap-3">
-          <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-2 shrink-0">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
             <Building2 className="w-4 h-4 text-slate-400" />
             All Portfolio Properties
             <span className="font-normal text-slate-400">
@@ -185,46 +184,23 @@ function PropertiesView({ data, onRefresh }) {
             </span>
           </h2>
 
-          <div className="flex items-center gap-2 flex-1 justify-end">
-            {/* Search bar */}
-            <div className="relative w-72">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
-              <input
-                type="text"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                placeholder="Search address, tenant, owner, policy…"
-                className="w-full pl-9 pr-8 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
-              />
-              {search && (
-                <button
-                  onClick={() => setSearch('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              )}
-            </div>
-
-            {/* View toggle */}
-            <div className="flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5 shrink-0">
-              <button
-                onClick={() => setPropView('cards')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                  propView === 'cards' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                <LayoutGrid className="w-3.5 h-3.5" /> Cards
-              </button>
-              <button
-                onClick={() => setPropView('list')}
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
-                  propView === 'list' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                <List className="w-3.5 h-3.5" /> List
-              </button>
-            </div>
+          <div className="flex items-center bg-slate-100 rounded-lg p-0.5 gap-0.5">
+            <button
+              onClick={() => setPropView('cards')}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                propView === 'cards' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <LayoutGrid className="w-3.5 h-3.5" /> Cards
+            </button>
+            <button
+              onClick={() => setPropView('list')}
+              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                propView === 'list' ? 'bg-white shadow-sm text-slate-900' : 'text-slate-500 hover:text-slate-700'
+              }`}
+            >
+              <List className="w-3.5 h-3.5" /> List
+            </button>
           </div>
         </div>
 
@@ -558,6 +534,7 @@ export default function ManagementDashboard() {
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
   const [view, setView]       = useState('properties') // 'properties' | 'all-tasks' | 'insurance'
+  const [search, setSearch]   = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -607,7 +584,7 @@ export default function ManagementDashboard() {
       </div>
 
       {/* View tabs */}
-      <div className="flex gap-1 px-6 py-2 border-b border-slate-200 bg-white shrink-0">
+      <div className="flex items-center gap-1 px-6 py-2 border-b border-slate-200 bg-white shrink-0">
         <button
           onClick={() => setView('properties')}
           className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
@@ -624,7 +601,6 @@ export default function ManagementDashboard() {
         >
           <ClipboardList className="w-3.5 h-3.5" />
           All Tasks
-          {/* Overdue badge on the tab */}
           {(data?.overdue_tasks?.length ?? 0) > 0 && (
             <span className="inline-block text-xs font-bold text-white bg-red-500 px-1.5 py-0.5 rounded-full leading-none">
               {data.overdue_tasks.length}
@@ -639,11 +615,33 @@ export default function ManagementDashboard() {
         >
           <Shield className="w-3.5 h-3.5" /> Insurance
         </button>
+
+        {/* Search — right-aligned, only visible on the Properties tab */}
+        {view === 'properties' && (
+          <div className="relative ml-auto w-72">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search address, tenant, owner, policy…"
+              className="w-full pl-9 pr-8 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        {view === 'properties' && <div className="p-6"><PropertiesView data={data} onRefresh={load} /></div>}
+        {view === 'properties' && <div className="p-6"><PropertiesView data={data} onRefresh={load} search={search} setSearch={setSearch} /></div>}
         {view === 'all-tasks'  && <div className="p-6"><AllTasksView /></div>}
         {view === 'insurance'  && <InsurancePage />}
       </div>
