@@ -57,7 +57,11 @@
       "Bash(node -e \"import\\('xlsx'\\).then\\(m => console.log\\('xlsx OK, version:', m.version || 'loaded'\\)\\)\")",
       "Bash(node -e \"const XLSX = require\\('xlsx'\\); console.log\\('OK'\\)\")",
       "Bash(node -e \"const l = require\\('C:/Users/brad/crm/node_modules/lucide-react'\\); console.log\\('ChevronsUpDown:', !!l.ChevronsUpDown, 'ChevronUp:', !!l.ChevronUp\\)\")",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "Bash(git -C C:\\\\Users\\\\brad\\\\crm status)",
+      "Bash(git -C C:\\\\Users\\\\brad\\\\crm log --oneline -3)",
+      "Bash(git commit -m ' *)",
+      "Bash(node --input-type=module)"
     ]
   }
 }
