@@ -230,14 +230,16 @@ router.post('/send', async (req, res) => {
   const firstName = nameParts[0] || 'Friend'
   const lastName  = nameParts.slice(1).join(' ') || ''
 
-  console.log(`[Handwrytten] send — firstName: "${firstName}" lastName: "${lastName}" | message: ${resolvedMessage}`)
+  const finalMessage = resolvedMessage + ' <sig:1427BC offset=1>'
+
+  console.log(`[Handwrytten] send — firstName: "${firstName}" lastName: "${lastName}" | message: ${finalMessage}`)
 
   try {
     const orderParams = {
       card_id:              card_id || '',
       font_label:           font    || '',
-      message:              resolvedMessage,
-      wishes:               senderName,
+      message:              finalMessage,
+      wishes:               '',
       recipient_first_name: firstName,
       recipient_last_name:  lastName,
       recipient_address1:   person.address  || '',
@@ -346,7 +348,7 @@ router.post('/send-bulk', async (req, res) => {
       `).get(contact_id)
     }
 
-    const resolvedMessage = resolveMergeFields(message, person, property)
+    const resolvedMessage = resolveMergeFields(message, person, property) + ' <sig:1427BC offset=1>'
 
     // Insert pending record
     const insertRes = db.prepare(`
@@ -372,7 +374,7 @@ router.post('/send-bulk', async (req, res) => {
         card_id:              card_id || '',
         font_label:           font    || '',
         message:              resolvedMessage,
-        wishes:               senderName,
+        wishes:               '',
         recipient_first_name: toFirstName,
         recipient_last_name:  toLastName,
         recipient_address1:   person.address  || '',
