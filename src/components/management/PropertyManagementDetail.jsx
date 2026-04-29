@@ -24,14 +24,38 @@ function fmt(n) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n)
 }
 
+function parseDate(s) {
+  if (!s) return null
+  // MM/DD/YYYY
+  const mdyMatch = String(s).match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/)
+  if (mdyMatch) {
+    const d = new Date(Number(mdyMatch[3]), Number(mdyMatch[1]) - 1, Number(mdyMatch[2]), 12)
+    return isNaN(d) ? null : d
+  }
+  // YYYY-MM-DD (and ISO with time)
+  const d = new Date(String(s).length === 10 ? s + 'T12:00:00' : s)
+  return isNaN(d) ? null : d
+}
+
 function fmtDate(s) {
-  if (!s) return '—'
-  return new Date(s + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  const d = parseDate(s)
+  if (!d) return '—'
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function toYMD(s) {
+  if (!s) return ''
+  // Already YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s
+  const d = parseDate(s)
+  if (!d) return ''
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
 function daysUntil(dateStr) {
   if (!dateStr) return null
-  const d = new Date(dateStr + 'T12:00:00')
+  const d = parseDate(dateStr)
+  if (!d) return null
   const today = new Date()
   today.setHours(12, 0, 0, 0)
   return Math.round((d - today) / (1000 * 60 * 60 * 24))
@@ -400,14 +424,14 @@ function InsuranceSection({ propertyId }) {
     if (d.valuation_method)           extraLines.push(`Valuation Method: ${d.valuation_method}`)
 
     const payload = {
-      carrier:         d.insurance_company || '',
-      policy_number:   d.policy_number     || '',
+      carrier:         d.insurance_company  || '',
+      policy_number:   d.policy_number      || '',
       premium:         parseAmount(d.premium),
       deductible:      parseAmount(d.deductible),
-      effective_date:  d.effective_date    || '',
-      expiry_date:     d.expiration_date   || '',
-      agent_name:      d.agent_name        || '',
-      agent_phone:     d.agent_phone       || '',
+      effective_date:  toYMD(d.effective_date),
+      expiry_date:     toYMD(d.expiration_date),
+      agent_name:      d.agent_name         || '',
+      agent_phone:     d.agent_phone        || '',
       coverage_amount: parseAmount(d.building_coverage),
       notes:           extraLines.join('\n'),
     }
@@ -504,11 +528,51 @@ function InsuranceSection({ propertyId }) {
             </div>
           )
           : (
-            <div className="space-y-2">
+            <div className="space-y-4">
               {policies.map(p => {
                 const days         = daysUntil(p.expiry_date)
                 const expiringSoon = days !== null && days <= 90
                 const expired      = days !== null && days < 0
+
+                // Parse extra fields stored in notes
+                const noteLines = (p.notes || '').split('\n')
+                function noteVal(key) {
+                  const line = noteLines.find(l => l.startsWith(key + ': '))
+                  return line ? line.slice(key.length + 2).trim() : ''
+                }
+                const namedInsured    = noteVal('Named Insured')
+                const propertyAddress = noteVal('Property Address')
+                const premiumDueDate  = noteVal('Premium Due Date')
+                const buildingCov     = noteVal('Building Coverage')
+                const genLiability    = noteVal('General Liability Coverage')
+                const genAggregate    = noteVal('General Aggregate')
+                const mortgagee       = noteVal('Mortgagee')
+                const constructionType = noteVal('Construction Type')
+                const yearBuilt       = noteVal('Year Built')
+                const valuationMethod = noteVal('Valuation Method')
+
+                function Row({ label, value, className = '' }) {
+                  if (!value) return null
+                  return (
+                    <div className="grid grid-cols-2 gap-2 py-0.5">
+                      <span className="text-xs text-slate-400">{label}</span>
+                      <span className={`text-xs font-medium text-slate-800 ${className}`}>{value}</span>
+                    </div>
+                  )
+                }
+
+                function SectionHead({ label }) {
+                  return (
+                    <div className="text-[10px] font-semibold tracking-widest text-slate-400 uppercase mt-3 mb-1 pb-1 border-b border-slate-100 first:mt-0">
+                      {label}
+                    </div>
+                  )
+                }
+
+                const expiryDisplay = p.expiry_date
+                  ? `${fmtDate(p.expiry_date)}${days !== null ? ` (${expired ? 'expired' : days + 'd'})` : ''}`
+                  : ''
+
                 return (
                   <div
                     key={p.id}
@@ -518,25 +582,11 @@ function InsuranceSection({ propertyId }) {
                                      'border-slate-200 bg-white'
                     }`}
                   >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="flex-1 min-w-0">
+                    {/* Card header with edit/delete */}
+                    <div className="flex items-start justify-between gap-3 mb-3">
+                      <div>
                         <p className="text-sm font-semibold text-slate-900">{p.carrier || 'Unknown carrier'}</p>
-                        <p className="text-xs text-slate-500 font-mono mt-0.5">{p.policy_number || '—'}</p>
-                        <div className="flex flex-wrap gap-4 mt-2 text-xs text-slate-600">
-                          {p.premium        != null && <span>Premium: <strong>{fmt(p.premium)}</strong></span>}
-                          {p.coverage_amount != null && <span>Coverage: <strong>{fmt(p.coverage_amount)}</strong></span>}
-                          {p.deductible     != null && <span>Deductible: <strong>{fmt(p.deductible)}</strong></span>}
-                        </div>
-                        <div className="flex flex-wrap gap-4 mt-1 text-xs text-slate-500">
-                          {p.effective_date && <span>Effective: {fmtDate(p.effective_date)}</span>}
-                          {p.expiry_date && (
-                            <span className={expired ? 'text-red-600 font-semibold' : expiringSoon ? 'text-amber-700 font-semibold' : ''}>
-                              Expires: {fmtDate(p.expiry_date)}
-                              {days !== null && ` (${expired ? 'expired' : days + 'd'})`}
-                            </span>
-                          )}
-                          {p.agent_name && <span>Agent: {p.agent_name}</span>}
-                        </div>
+                        {p.policy_number && <p className="text-xs text-slate-500 font-mono mt-0.5">{p.policy_number}</p>}
                       </div>
                       <div className="flex gap-1 shrink-0">
                         <button onClick={() => openEdit(p)} className="p-1.5 rounded hover:bg-white/80 text-slate-400 hover:text-slate-600 transition-colors">
@@ -546,6 +596,53 @@ function InsuranceSection({ propertyId }) {
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
+                    </div>
+
+                    {/* Two-column sectioned layout */}
+                    <div className="grid grid-cols-2 gap-x-6">
+
+                      {/* Left column */}
+                      <div>
+                        <SectionHead label="POLICY INFO" />
+                        <Row label="Insurance Company" value={p.carrier} />
+                        <Row label="Policy Number"     value={p.policy_number} />
+                        <Row label="Named Insured"     value={namedInsured} />
+                        <Row label="Agent Name"        value={p.agent_name} />
+                        <Row label="Agent Phone"       value={p.agent_phone} />
+
+                        <SectionHead label="PROPERTY" />
+                        <Row label="Property Address"  value={propertyAddress} />
+                        <Row label="Construction Type" value={constructionType} />
+                        <Row label="Year Built"        value={yearBuilt} />
+                        <Row label="Valuation Method"  value={valuationMethod} />
+                      </div>
+
+                      {/* Right column */}
+                      <div>
+                        <SectionHead label="COVERAGE & COSTS" />
+                        <Row label="Premium"          value={p.premium != null && p.premium !== '' ? fmt(p.premium) : ''} />
+                        <Row label="Premium Due Date" value={premiumDueDate} />
+                        <Row label="Deductible"       value={p.deductible != null && p.deductible !== '' ? fmt(p.deductible) : ''} />
+                        <Row label="Building Coverage"    value={buildingCov  || (p.coverage_amount != null && p.coverage_amount !== '' ? fmt(p.coverage_amount) : '')} />
+                        <Row label="General Liability"    value={genLiability} />
+                        <Row label="General Aggregate"    value={genAggregate} />
+
+                        <SectionHead label="DATES" />
+                        <Row label="Effective Date"   value={fmtDate(p.effective_date)} />
+                        <Row
+                          label="Expiration Date"
+                          value={expiryDisplay}
+                          className={expired ? 'text-red-600' : expiringSoon ? 'text-amber-700' : ''}
+                        />
+
+                        {mortgagee && (
+                          <>
+                            <SectionHead label="MORTGAGE" />
+                            <Row label="Mortgagee" value={mortgagee} />
+                          </>
+                        )}
+                      </div>
+
                     </div>
                   </div>
                 )
