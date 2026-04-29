@@ -111,29 +111,55 @@ router.get('/map-properties', async (req, res) => {
     const updateCoords = db.prepare(`UPDATE properties SET lat = ?, lng = ? WHERE id = ?`)
     const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
+    // Clear out any zero-coordinate entries so they get re-geocoded properly
+    for (const prop of rows) {
+      if (prop.lat === 0 && prop.lng === 0) {
+        updateCoords.run(null, null, prop.id)
+        prop.lat = null
+        prop.lng = null
+      }
+    }
+
+    const nominatim = async (q) => {
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`
+      const r = await fetch(url, { headers: { 'User-Agent': 'KnoxCRM/1.0 (bradcottam@gmail.com)' } })
+      const data = await r.json()
+      return Array.isArray(data) ? data : []
+    }
+
     for (const prop of rows) {
       if (prop.lat != null && prop.lng != null) continue  // already cached
 
-      const q = [prop.address, prop.city, prop.state].filter(Boolean).join(', ')
-      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`
+      const fullAddress = [prop.address, prop.city, prop.state].filter(Boolean).join(', ')
+      let result = []
 
       try {
-        const geocodeRes = await fetch(url, {
-          headers: { 'User-Agent': 'KnoxCRM/1.0 (bradcottam@gmail.com)' },
-        })
-        const data = await geocodeRes.json()
-        if (data && data.length > 0) {
-          const lat = parseFloat(data[0].lat)
-          const lng = parseFloat(data[0].lon)
+        // Primary attempt: full address
+        result = await nominatim(fullAddress)
+        await sleep(1100)
+
+        // Fallback: city + state only
+        if (result.length === 0 && (prop.city || prop.state)) {
+          const fallback = [prop.city, prop.state].filter(Boolean).join(', ')
+          console.warn(`[map] no result for "${fullAddress}" — retrying with "${fallback}"`)
+          result = await nominatim(fallback)
+          await sleep(1100)
+        }
+
+        if (result.length > 0) {
+          const lat = parseFloat(result[0].lat)
+          const lng = parseFloat(result[0].lon)
           updateCoords.run(lat, lng, prop.id)
           prop.lat = lat
           prop.lng = lng
+          console.log(`[map] geocoded "${fullAddress}" → ${lat}, ${lng}`)
+        } else {
+          console.warn(`[map] geocoding failed for all attempts — skipping property ${prop.id}: "${fullAddress}"`)
         }
       } catch (geoErr) {
-        console.warn(`[map] geocode failed for property ${prop.id}:`, geoErr.message)
+        console.error(`[map] fetch error for property ${prop.id} "${fullAddress}":`, geoErr.message)
+        await sleep(1100)
       }
-
-      await sleep(1100)  // Nominatim rate limit: 1 req/sec
     }
 
     res.json(rows)
