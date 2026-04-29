@@ -245,6 +245,9 @@ const migrations = [
   `ALTER TABLE property_tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`,
   // Deal timestamps (for activity feed)
   `ALTER TABLE deals ADD COLUMN created_at TEXT DEFAULT (datetime('now'))`,
+  // Property geocoordinates for portfolio map
+  `ALTER TABLE properties ADD COLUMN lat REAL`,
+  `ALTER TABLE properties ADD COLUMN lng REAL`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

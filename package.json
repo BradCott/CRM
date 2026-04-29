@@ -24,6 +24,7 @@
     "express": "^5.2.1",
     "googleapis": "^144.0.0",
     "jsonwebtoken": "^9.0.3",
+    "leaflet": "^1.9.4",
     "lucide-react": "^0.460.0",
     "mammoth": "^1.8.0",
     "multer": "^2.1.1",
@@ -32,6 +33,7 @@
     "pdf-lib": "^1.17.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-leaflet": "^4.2.1",
     "react-router-dom": "^6.26.2",
     "react-simple-maps": "^3.0.0",
     "xlsx": "^0.18.5"

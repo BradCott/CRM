@@ -4,9 +4,11 @@ import {
   Landmark, TrendingUp, Users, FileCheck2, AlertTriangle,
   CalendarClock, Loader2, KanbanSquare,
   Clock, History, Mail, Shield, CheckCircle2, DollarSign, Building2, BarChart3,
+  MapPin, Calendar,
 } from 'lucide-react'
-import { getDashboard, getDeals, getDashboardFinancials, getDashboardDeadlines, getDashboardActivity } from '../../api/client'
+import { getDashboard, getDeals, getDashboardFinancials, getDashboardDeadlines, getDashboardActivity, getDashboardMapProperties, getDashboardLeaseExpirations } from '../../api/client'
 import knoxLogo from '../../assets/Knox.png'
+import PortfolioMap from './PortfolioMap'
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 function fmt$(v) {
@@ -29,6 +31,24 @@ function daysUntil(d) {
 function monthsUntil(d) {
   if (!d) return null
   return (new Date(d + 'T00:00:00') - new Date()) / (86_400_000 * 30.44)
+}
+
+// ── Lease time remaining ──────────────────────────────────────────────────────
+function timeRemaining(leaseEnd) {
+  if (!leaseEnd) return { label: 'Unknown', cls: 'text-slate-400' }
+  const end   = new Date(leaseEnd + 'T00:00:00')
+  const now   = new Date()
+  const totalMonths = Math.round((end - now) / (1000 * 60 * 60 * 24 * 30.44))
+  if (totalMonths < 0) return { label: 'EXPIRED', cls: 'text-red-600 font-bold' }
+  const years  = Math.floor(totalMonths / 12)
+  const months = totalMonths % 12
+  const parts  = []
+  if (years  > 0) parts.push(`${years} yr${years  > 1 ? 's' : ''}`)
+  if (months > 0 || years === 0) parts.push(`${months} mo`)
+  const cls = totalMonths < 12  ? 'text-red-600 font-semibold'
+            : totalMonths < 24  ? 'text-amber-700 font-semibold'
+            : 'text-emerald-700'
+  return { label: parts.join(' '), cls }
 }
 
 // ── Relative time ─────────────────────────────────────────────────────────────
@@ -61,9 +81,11 @@ export default function DashboardPage() {
   const [data, setData]           = useState(null)
   const [loading, setLoading]     = useState(true)
   const [pipeline, setPipeline]   = useState([])
-  const [financials, setFinancials] = useState(null)
-  const [deadlines, setDeadlines] = useState([])
-  const [activity, setActivity]   = useState([])
+  const [financials, setFinancials]         = useState(null)
+  const [deadlines, setDeadlines]           = useState([])
+  const [activity, setActivity]             = useState([])
+  const [mapProperties, setMapProperties]   = useState([])
+  const [leaseExpirations, setLeaseExpirations] = useState([])
 
   useEffect(() => {
     getDashboard()
@@ -87,6 +109,8 @@ export default function DashboardPage() {
     getDashboardFinancials().then(setFinancials).catch(console.error)
     getDashboardDeadlines().then(setDeadlines).catch(console.error)
     getDashboardActivity().then(setActivity).catch(console.error)
+    getDashboardMapProperties().then(setMapProperties).catch(console.error)
+    getDashboardLeaseExpirations().then(setLeaseExpirations).catch(console.error)
   }, [])
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
@@ -369,6 +393,58 @@ export default function DashboardPage() {
               {groupedLeases.map(group => (
                 <LeaseGroup key={group.label} group={group} />
               ))}
+            </div>
+          )}
+        </Section>
+
+        {/* ── Portfolio Map ───────────────────────────────────────────────── */}
+        <Section title="Portfolio Map" icon={MapPin}>
+          <div className="overflow-hidden rounded-b-2xl">
+            <PortfolioMap properties={mapProperties} />
+          </div>
+        </Section>
+
+        {/* ── Lease Expirations ───────────────────────────────────────────── */}
+        <Section title="Lease Expirations" icon={Calendar}>
+          {leaseExpirations.length === 0 ? (
+            <EmptyRow message="No portfolio properties found." />
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    {['Property', 'Tenant', 'Lease Expiration', 'Time Remaining'].map(h => (
+                      <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {leaseExpirations.map((p, i) => {
+                    const { label, cls } = timeRemaining(p.lease_end)
+                    return (
+                      <tr
+                        key={p.id}
+                        onClick={() => navigate(`/management/${p.id}`)}
+                        className={`border-b border-slate-100 last:border-0 cursor-pointer hover:bg-blue-50/50 transition-colors ${i % 2 === 0 ? 'bg-white' : 'bg-slate-50/40'}`}
+                      >
+                        <td className="px-4 py-3">
+                          <p className="font-medium text-slate-900">{p.address}</p>
+                          {(p.city || p.state) && (
+                            <p className="text-xs text-slate-500">{[p.city, p.state].filter(Boolean).join(', ')}</p>
+                          )}
+                        </td>
+                        <td className="px-4 py-3">
+                          {p.tenant_brand_name
+                            ? <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">{p.tenant_brand_name}</span>
+                            : <span className="text-slate-300">—</span>}
+                        </td>
+                        <td className="px-4 py-3 text-slate-700">{p.lease_end ? fmtDate(p.lease_end) : <span className="text-slate-300">—</span>}</td>
+                        <td className={`px-4 py-3 ${cls}`}>{label}</td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </Section>

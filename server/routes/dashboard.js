@@ -94,6 +94,34 @@ router.get('/', (req, res) => {
   })
 })
 
+// ── GET /map-properties ───────────────────────────────────────────────────────
+router.get('/map-properties', (req, res) => {
+  const rows = db.prepare(`
+    SELECT p.id, p.address, p.city, p.state, p.lat, p.lng,
+           t.name AS tenant_brand_name
+    FROM properties p
+    LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE p.is_portfolio = 1
+    ORDER BY p.address
+  `).all()
+  res.json(rows)
+})
+
+// ── GET /lease-expirations ────────────────────────────────────────────────────
+router.get('/lease-expirations', (req, res) => {
+  const rows = db.prepare(`
+    SELECT p.id, p.address, p.city, p.state, p.lease_end,
+           t.name AS tenant_brand_name
+    FROM properties p
+    LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE p.is_portfolio = 1
+    ORDER BY
+      CASE WHEN p.lease_end IS NULL THEN 1 ELSE 0 END,
+      p.lease_end ASC
+  `).all()
+  res.json(rows)
+})
+
 // ── GET /financials ───────────────────────────────────────────────────────────
 router.get('/financials', (req, res) => {
   const portfolio = db.prepare(`
