@@ -69,12 +69,12 @@ export default function SendLetterModal({ person, property, onClose, onSent }) {
         ) || cardList[0] || null
         setSelectedCard(defaultCard?.id ?? null)
 
-        // Default font: "jokester jared" if available, else first
+        // Default font: "Jokester Jarrod" (label match) if available, else first
         const defaultFont = fontList.find(f =>
-          (f.name || '').toLowerCase().includes('jokester') ||
-          (f.name || '').toLowerCase().includes('jared')
+          (f.label || '').toLowerCase().includes('jarrod') ||
+          (f.label || '').toLowerCase().includes('jokester')
         ) || fontList[0] || null
-        setSelectedFont(defaultFont?.id ?? null)
+        setSelectedFont(defaultFont?.label ?? null)
       } catch (err) {
         setMetaError(err.message)
       } finally {
@@ -268,7 +268,7 @@ export default function SendLetterModal({ person, property, onClose, onSent }) {
                     >
                       <option value="">— Select font —</option>
                       {fonts.map(f => (
-                        <option key={f.id} value={f.id}>{f.name}</option>
+                        <option key={f.id} value={f.label}>{f.label}</option>
                       ))}
                     </select>
                   </div>

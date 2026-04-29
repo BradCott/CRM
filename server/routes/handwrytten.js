@@ -57,30 +57,9 @@ function resolveMergeFields(template, person, property) {
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-/** GET /api/handwrytten/cards — fetches all cards, filters to account-specific ones */
-router.get('/cards', async (_req, res) => {
-  try {
-    const raw = await hwGet('/cards/list')
-    console.log('[Handwrytten] /cards/list FULL response:', JSON.stringify(raw))
-
-    const allCards = Array.isArray(raw) ? raw : raw?.cards || raw?.data || []
-    console.log(`[Handwrytten] cards: ${allCards.length} total from API`)
-
-    // Prefer cards that belong to this account (Knox-branded, custom, or team cards)
-    const filtered = allCards.filter(c =>
-      (c.name || '').toLowerCase().includes('knox') ||
-      c.isCustom === true ||
-      c.is_custom === true ||
-      c.is_team_card === true
-    )
-
-    const result = filtered.length > 0 ? filtered : allCards
-    console.log(`[Handwrytten] cards: returning ${result.length} (${filtered.length} filtered, fallback=${filtered.length === 0})`)
-    res.json(result)
-  } catch (err) {
-    console.error('[Handwrytten] /cards error:', err.message)
-    res.status(502).json({ error: err.message })
-  }
+/** GET /api/handwrytten/cards — returns the hardcoded Knox 1 custom card */
+router.get('/cards', (_req, res) => {
+  res.json([{ id: 192789, name: 'Knox 1', cover: null, isCustom: true }])
 })
 
 /** GET /api/handwrytten/fonts — fetches available handwriting fonts */
