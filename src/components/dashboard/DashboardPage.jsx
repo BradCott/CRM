@@ -124,34 +124,6 @@ export default function DashboardPage() {
           <p className="text-sm text-slate-400">{today}</p>
         </div>
 
-        {/* ── Financial Snapshot ─────────────────────────────────────────── */}
-        <div className="grid grid-cols-4 gap-4">
-          <MetricCard
-            icon={Building2}
-            label="Total Portfolio Value"
-            value={fmt$(financials?.total_portfolio_value)}
-            color="blue"
-          />
-          <MetricCard
-            icon={BarChart3}
-            label="Total Annual Rent"
-            value={fmt$(financials?.total_annual_rent)}
-            color="emerald"
-          />
-          <MetricCard
-            icon={DollarSign}
-            label="Total Equity Deployed"
-            value={fmt$(financials?.total_equity_deployed)}
-            color="violet"
-          />
-          <MetricCard
-            icon={Users}
-            label="Total Investors"
-            value={financials?.total_investors ?? '—'}
-            color="amber"
-          />
-        </div>
-
         {/* ── Metric cards ───────────────────────────────────────────────── */}
         <div className="grid grid-cols-4 gap-4">
           <MetricCard
