@@ -60,7 +60,7 @@ function resolveMergeFields(template, person, property) {
 /** GET /api/handwrytten/cards */
 router.get('/cards', async (_req, res) => {
   try {
-    const data = await hwGet('/cards/listCards')
+    const data = await hwGet('/cards/list')
     res.json(data)
   } catch (err) {
     console.error('[Handwrytten] /cards error:', err.message)
@@ -71,7 +71,7 @@ router.get('/cards', async (_req, res) => {
 /** GET /api/handwrytten/fonts */
 router.get('/fonts', async (_req, res) => {
   try {
-    const data = await hwGet('/handwriting/list')
+    const data = await hwGet('/fonts/list')
     res.json(data)
   } catch (err) {
     console.error('[Handwrytten] /fonts error:', err.message)
@@ -225,8 +225,9 @@ router.post('/send', async (req, res) => {
   try {
     const orderParams = {
       card_id:        card_id || '',
-      font:           font    || '',
+      font_label:     font    || '',
       message:        resolvedMessage,
+      wishes:         senderName,
       tofirstname:    toFirstName,
       tolastname:     toLastName,
       toaddress1:     person.address  || '',
@@ -238,7 +239,7 @@ router.post('/send', async (req, res) => {
       fromlastname:   senderLast,
     }
 
-    const hwResult = await hwPost('/orders/createSingleRecipient', orderParams)
+    const hwResult = await hwPost('/orders/singleStepOrder', orderParams)
     const orderId  = hwResult?.order?.id || hwResult?.id || hwResult?.order_id || null
 
     db.prepare(`
@@ -354,8 +355,9 @@ router.post('/send-bulk', async (req, res) => {
     try {
       const orderParams = {
         card_id:        card_id || '',
-        font:           font    || '',
+        font_label:     font    || '',
         message:        resolvedMessage,
+        wishes:         senderName,
         tofirstname:    toFirstName,
         tolastname:     toLastName,
         toaddress1:     person.address  || '',
@@ -367,7 +369,7 @@ router.post('/send-bulk', async (req, res) => {
         fromlastname:   senderLast,
       }
 
-      const hwResult = await hwPost('/orders/createSingleRecipient', orderParams)
+      const hwResult = await hwPost('/orders/singleStepOrder', orderParams)
       const orderId  = hwResult?.order?.id || hwResult?.id || hwResult?.order_id || null
 
       db.prepare(`
