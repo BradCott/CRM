@@ -57,26 +57,62 @@ function resolveMergeFields(template, person, property) {
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-/** GET /api/handwrytten/cards */
+/** GET /api/handwrytten/cards — fetches standard + custom cards and merges them */
 router.get('/cards', async (_req, res) => {
   try {
-    const data = await hwGet('/cards/list')
-    res.json(data)
+    // ── Standard cards ────────────────────────────────────────────────────────
+    const standardRaw = await hwGet('/cards/list')
+    console.log('[Handwrytten] /cards/list FULL response:', JSON.stringify(standardRaw))
+    const standardCards = Array.isArray(standardRaw)
+      ? standardRaw
+      : standardRaw?.cards || standardRaw?.data || []
+
+    // ── Custom cards — try each path until one works ──────────────────────────
+    let customCards = []
+    for (const path of ['/cards/listCustomCards', '/customCards/list']) {
+      try {
+        const customRaw = await hwGet(path)
+        console.log(`[Handwrytten] ${path} FULL response:`, JSON.stringify(customRaw))
+        const list = Array.isArray(customRaw)
+          ? customRaw
+          : customRaw?.cards || customRaw?.data || []
+        if (list.length > 0) { customCards = list; break }
+        console.log(`[Handwrytten] ${path} returned 0 cards — trying next`)
+      } catch (e) {
+        console.log(`[Handwrytten] ${path} failed: ${e.message}`)
+      }
+    }
+
+    const allCards = [...standardCards, ...customCards]
+    console.log(`[Handwrytten] cards total: ${allCards.length} (${standardCards.length} standard + ${customCards.length} custom)`)
+    res.json(allCards)
   } catch (err) {
     console.error('[Handwrytten] /cards error:', err.message)
     res.status(502).json({ error: err.message })
   }
 })
 
-/** GET /api/handwrytten/fonts */
+/** GET /api/handwrytten/fonts — tries multiple endpoints until one returns data */
 router.get('/fonts', async (_req, res) => {
-  try {
-    const data = await hwGet('/fonts/list')
-    res.json(data)
-  } catch (err) {
-    console.error('[Handwrytten] /fonts error:', err.message)
-    res.status(502).json({ error: err.message })
+  const attempts = ['/fonts/list', '/handwriting/listFonts', '/handwriting/list']
+
+  for (const path of attempts) {
+    try {
+      const data = await hwGet(path)
+      console.log(`[Handwrytten] ${path} FULL response:`, JSON.stringify(data))
+      const fonts = Array.isArray(data) ? data : data?.fonts || data?.data || []
+      if (fonts.length > 0) {
+        console.log(`[Handwrytten] fonts: using ${path} — ${fonts.length} fonts found`)
+        return res.json(data)
+      }
+      console.log(`[Handwrytten] ${path} returned 0 fonts — trying next`)
+    } catch (e) {
+      console.log(`[Handwrytten] ${path} failed: ${e.message}`)
+    }
   }
+
+  console.error('[Handwrytten] fonts: all endpoints failed')
+  res.status(502).json({ error: 'Could not load fonts — all endpoints failed' })
 })
 
 /** GET /api/handwrytten/sends — all history (most-recent first) */
