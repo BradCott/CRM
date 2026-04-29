@@ -1,6 +1,7 @@
-import { Router } from 'express'
-import multer      from 'multer'
-import db          from '../db.js'
+import { Router }   from 'express'
+import multer        from 'multer'
+import db            from '../db.js'
+import { PDFDocument } from 'pdf-lib'
 
 const router  = Router()
 const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
@@ -375,7 +376,21 @@ router.post('/:propertyId/insurance/upload', upload.single('file'), async (req, 
 Return ONLY the JSON object, no markdown, no explanation.`
 
   try {
-    const result = await callClaude(req.file.buffer, mediaType, prompt)
+    // Truncate PDF to first 20 pages to stay within Anthropic's 100-page limit
+    let pdfBuffer = req.file.buffer
+    if (mediaType === 'application/pdf') {
+      const srcDoc  = await PDFDocument.load(pdfBuffer)
+      const total   = srcDoc.getPageCount()
+      if (total > 20) {
+        const trimDoc = await PDFDocument.create()
+        const pages   = await trimDoc.copyPages(srcDoc, [...Array(20).keys()])
+        pages.forEach(p => trimDoc.addPage(p))
+        pdfBuffer = Buffer.from(await trimDoc.save())
+        console.log(`[management] insurance PDF truncated from ${total} to 20 pages`)
+      }
+    }
+
+    const result = await callClaude(pdfBuffer, mediaType, prompt)
     const raw  = result.content[0].text.trim()
     const json = raw.replace(/^```json\s*/i, '').replace(/\s*```$/, '')
     const data = JSON.parse(json)
