@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft, ClipboardList, Shield, Receipt, Wrench, Users,
   Plus, Pencil, Trash2, CheckCircle2, Loader2,
@@ -1142,10 +1142,11 @@ const TABS = [
 ]
 
 export default function PropertyManagementDetail() {
-  const { propertyId } = useParams()
+  const { propertyId }  = useParams()
+  const [searchParams]  = useSearchParams()
   const [property, setProperty] = useState(null)
   const [loading, setLoading]   = useState(true)
-  const [tab, setTab]           = useState('tasks')
+  const [tab, setTab]           = useState(searchParams.get('tab') || 'tasks')
 
   useEffect(() => {
     setLoading(true)

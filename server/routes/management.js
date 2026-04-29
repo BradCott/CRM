@@ -293,6 +293,24 @@ router.delete('/tasks/:id', (req, res) => {
 
 // ── Insurance ─────────────────────────────────────────────────────────────────
 
+// GET /insurance/all — all policies across all portfolio properties
+router.get('/insurance/all', (req, res) => {
+  const rows = db.prepare(`
+    SELECT pi.*,
+      p.id         AS property_id,
+      p.address    AS property_address,
+      p.city       AS property_city,
+      p.state      AS property_state,
+      t.name       AS tenant_name
+    FROM property_insurance pi
+    JOIN  properties   p ON p.id  = pi.property_id
+    LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE p.is_portfolio = 1
+    ORDER BY p.address ASC, pi.effective_date DESC
+  `).all()
+  res.json(rows)
+})
+
 router.get('/:propertyId/insurance', (req, res) => {
   res.json(db.prepare('SELECT * FROM property_insurance WHERE property_id = ? ORDER BY effective_date DESC').all(req.params.propertyId))
 })
@@ -335,7 +353,7 @@ router.post('/:propertyId/insurance', (req, res) => {
   }
 
   // Auto-create premium payment task
-  const premiumDue = f.premium_due_date || f.effective_date || null
+  const premiumDue = f.premium_due_date || null
   db.prepare(`
     INSERT INTO property_tasks (property_id, title, task_type, due_date, recurs, notes, priority)
     VALUES (?, 'Pay Insurance Premium', 'insurance', ?, 'none', ?, 'high')

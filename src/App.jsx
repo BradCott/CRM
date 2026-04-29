@@ -19,6 +19,7 @@ import SignupPage       from './components/auth/SignupPage'
 import AdminPage                 from './components/admin/AdminPage'
 import ManagementDashboard       from './components/management/ManagementDashboard'
 import PropertyManagementDetail  from './components/management/PropertyManagementDetail'
+import InsurancePage             from './components/insurance/InsurancePage'
 import CampaignsPage             from './components/campaigns/CampaignsPage'
 import { Loader2 }      from 'lucide-react'
 
@@ -94,6 +95,7 @@ export default function App() {
               <Route path="/portfolio"   element={<RequireRole><PortfolioPage /></RequireRole>} />
               <Route path="/management"  element={<RequireRole><ManagementDashboard /></RequireRole>} />
               <Route path="/management/:propertyId" element={<RequireRole><PropertyManagementDetail /></RequireRole>} />
+              <Route path="/insurance"  element={<RequireRole><InsurancePage /></RequireRole>} />
               <Route path="/investors"     element={<RequireRole><InvestorsPage /></RequireRole>} />
               <Route path="/investors/:id" element={<RequireRole><InvestorProfilePage /></RequireRole>} />
               <Route path="/accounting" element={<RequireRole><AccountingPage /></RequireRole>} />

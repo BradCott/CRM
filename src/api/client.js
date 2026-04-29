@@ -170,6 +170,7 @@ export const completeTask       = (id)            => req('POST',   `/management/
 export const deleteTask         = (id)            => req('DELETE', `/management/tasks/${id}`)
 
 // Insurance
+export const getAllInsurance        = ()            => req('GET',    `/management/insurance/all`)
 export const getPropertyInsurance  = (propId)      => req('GET',    `/management/${propId}/insurance`)
 export const createInsurance       = (propId, data) => req('POST',   `/management/${propId}/insurance`, data)
 export const updateInsurance       = (id, data)     => req('PUT',    `/management/insurance/${id}`, data)
