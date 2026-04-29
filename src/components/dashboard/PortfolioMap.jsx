@@ -15,26 +15,24 @@ L.Icon.Default.mergeOptions({
   shadowUrl:     markerShadow,
 })
 
+// Default center: geographic center of the contiguous US
+const DEFAULT_CENTER = [39.5, -98.35]
+const DEFAULT_ZOOM   = 4
+
 export default function PortfolioMap({ properties }) {
   const navigate = useNavigate()
   const pinned   = (properties || []).filter(p => p.lat != null && p.lng != null)
 
-  if (pinned.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center h-[400px] bg-slate-50 gap-2">
-        <p className="text-sm text-slate-400">Add coordinates to properties to see them on the map</p>
-        <p className="text-xs text-slate-300">(Set lat/lng on each portfolio property record)</p>
-      </div>
-    )
-  }
-
-  const avgLat = pinned.reduce((s, p) => s + p.lat, 0) / pinned.length
-  const avgLng = pinned.reduce((s, p) => s + p.lng, 0) / pinned.length
+  const center = pinned.length > 0
+    ? [pinned.reduce((s, p) => s + p.lat, 0) / pinned.length,
+       pinned.reduce((s, p) => s + p.lng, 0) / pinned.length]
+    : DEFAULT_CENTER
+  const zoom = pinned.length > 0 ? 5 : DEFAULT_ZOOM
 
   return (
     <MapContainer
-      center={[avgLat, avgLng]}
-      zoom={5}
+      center={center}
+      zoom={zoom}
       style={{ height: 400, width: '100%' }}
       scrollWheelZoom={false}
     >

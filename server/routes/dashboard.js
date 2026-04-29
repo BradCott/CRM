@@ -95,16 +95,52 @@ router.get('/', (req, res) => {
 })
 
 // ── GET /map-properties ───────────────────────────────────────────────────────
-router.get('/map-properties', (req, res) => {
-  const rows = db.prepare(`
-    SELECT p.id, p.address, p.city, p.state, p.lat, p.lng,
-           t.name AS tenant_brand_name
-    FROM properties p
-    LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
-    WHERE p.is_portfolio = 1
-    ORDER BY p.address
-  `).all()
-  res.json(rows)
+// Geocodes any portfolio property that doesn't yet have lat/lng stored,
+// caches results back to the DB, then returns the full list.
+router.get('/map-properties', async (req, res) => {
+  try {
+    const rows = db.prepare(`
+      SELECT p.id, p.address, p.city, p.state, p.lat, p.lng,
+             t.name AS tenant_brand_name
+      FROM properties p
+      LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+      WHERE p.is_portfolio = 1
+      ORDER BY p.address
+    `).all()
+
+    const updateCoords = db.prepare(`UPDATE properties SET lat = ?, lng = ? WHERE id = ?`)
+    const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
+
+    for (const prop of rows) {
+      if (prop.lat != null && prop.lng != null) continue  // already cached
+
+      const q = [prop.address, prop.city, prop.state].filter(Boolean).join(', ')
+      const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1`
+
+      try {
+        const geocodeRes = await fetch(url, {
+          headers: { 'User-Agent': 'KnoxCRM/1.0 (bradcottam@gmail.com)' },
+        })
+        const data = await geocodeRes.json()
+        if (data && data.length > 0) {
+          const lat = parseFloat(data[0].lat)
+          const lng = parseFloat(data[0].lon)
+          updateCoords.run(lat, lng, prop.id)
+          prop.lat = lat
+          prop.lng = lng
+        }
+      } catch (geoErr) {
+        console.warn(`[map] geocode failed for property ${prop.id}:`, geoErr.message)
+      }
+
+      await sleep(1100)  // Nominatim rate limit: 1 req/sec
+    }
+
+    res.json(rows)
+  } catch (err) {
+    console.error('[map-properties]', err)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // ── GET /lease-expirations ────────────────────────────────────────────────────

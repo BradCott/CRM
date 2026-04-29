@@ -337,6 +337,13 @@ export default function DashboardPage() {
           )}
         </Section>
 
+        {/* ── Portfolio Map ───────────────────────────────────────────────── */}
+        <Section title="Portfolio Map" icon={MapPin}>
+          <div className="overflow-hidden rounded-b-2xl">
+            <PortfolioMap properties={mapProperties} />
+          </div>
+        </Section>
+
         {/* ── Recent Activity ─────────────────────────────────────────────── */}
         <Section title="Recent Activity" icon={History}>
           {activity.length === 0 ? (
@@ -395,13 +402,6 @@ export default function DashboardPage() {
               ))}
             </div>
           )}
-        </Section>
-
-        {/* ── Portfolio Map ───────────────────────────────────────────────── */}
-        <Section title="Portfolio Map" icon={MapPin}>
-          <div className="overflow-hidden rounded-b-2xl">
-            <PortfolioMap properties={mapProperties} />
-          </div>
         </Section>
 
         {/* ── Lease Expirations ───────────────────────────────────────────── */}
