@@ -57,44 +57,29 @@ function resolveMergeFields(template, person, property) {
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-/** GET /api/handwrytten/cards — fetches standard + custom cards and merges them */
+/** GET /api/handwrytten/cards — returns only custom cards */
 router.get('/cards', async (_req, res) => {
-  try {
-    // ── Standard cards ────────────────────────────────────────────────────────
-    const standardRaw = await hwGet('/cards/list')
-    console.log('[Handwrytten] /cards/list FULL response:', JSON.stringify(standardRaw))
-    const standardCards = Array.isArray(standardRaw)
-      ? standardRaw
-      : standardRaw?.cards || standardRaw?.data || []
-
-    // ── Custom cards — try each path until one works ──────────────────────────
-    let customCards = []
-    for (const path of ['/cards/listCustomCards', '/customCards/list']) {
-      try {
-        const customRaw = await hwGet(path)
-        console.log(`[Handwrytten] ${path} FULL response:`, JSON.stringify(customRaw))
-        const list = Array.isArray(customRaw)
-          ? customRaw
-          : customRaw?.cards || customRaw?.data || []
-        if (list.length > 0) { customCards = list; break }
-        console.log(`[Handwrytten] ${path} returned 0 cards — trying next`)
-      } catch (e) {
-        console.log(`[Handwrytten] ${path} failed: ${e.message}`)
+  for (const path of ['/cards/listCustomCards', '/customCards/list']) {
+    try {
+      const raw = await hwGet(path)
+      console.log(`[Handwrytten] ${path} FULL response:`, JSON.stringify(raw))
+      const cards = Array.isArray(raw) ? raw : raw?.cards || raw?.data || []
+      if (cards.length > 0) {
+        console.log(`[Handwrytten] cards: using ${path} — ${cards.length} custom cards found`)
+        return res.json(cards)
       }
+      console.log(`[Handwrytten] ${path} returned 0 cards — trying next`)
+    } catch (e) {
+      console.log(`[Handwrytten] ${path} failed: ${e.message}`)
     }
-
-    const allCards = [...standardCards, ...customCards]
-    console.log(`[Handwrytten] cards total: ${allCards.length} (${standardCards.length} standard + ${customCards.length} custom)`)
-    res.json(allCards)
-  } catch (err) {
-    console.error('[Handwrytten] /cards error:', err.message)
-    res.status(502).json({ error: err.message })
   }
+  console.error('[Handwrytten] cards: all custom card endpoints failed')
+  res.status(502).json({ error: 'Could not load custom cards — all endpoints failed' })
 })
 
 /** GET /api/handwrytten/fonts — tries multiple endpoints until one returns data */
 router.get('/fonts', async (_req, res) => {
-  const attempts = ['/fonts/list', '/handwriting/listFonts', '/handwriting/list']
+  const attempts = ['/fonts/list', '/fonts/listFonts', '/handwriting/listFonts', '/handwriting/list']
 
   for (const path of attempts) {
     try {
