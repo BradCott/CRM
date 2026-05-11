@@ -1,10 +1,19 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   X, Pencil, Building2, MapPin, Phone, Mail, FileText,
   AlertCircle, CalendarDays, Wrench, User, TrendingUp, Landmark, CheckCircle2,
 } from 'lucide-react'
 import { getProperty, togglePortfolio } from '../../api/client'
+import { useApp } from '../../context/AppContext'
 import Button from '../ui/Button'
+
+const PIPELINE_STAGES = [
+  { key: 'loi',             label: 'LOI' },
+  { key: 'psa_negotiation', label: 'PSA Negotiation' },
+  { key: 'under_contract',  label: 'Under Contract' },
+  { key: 'money_hard',      label: 'Money Hard' },
+]
 
 const ROLE_LABELS = {
   owner:          'Owner',
@@ -49,8 +58,16 @@ function leaseLabel(m) {
 }
 
 export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfolioChange }) {
+  const { addDeal } = useApp()
+  const navigate = useNavigate()
   const [data, setData] = useState(null)
   const [toggling, setToggling] = useState(false)
+
+  // Add-to-pipeline modal state
+  const [showPipeline, setShowPipeline]   = useState(false)
+  const [pipelinePrice, setPipelinePrice] = useState('')
+  const [pipelineStage, setPipelineStage] = useState('loi')
+  const [pipelineWorking, setPipelineWorking] = useState(false)
 
   useEffect(() => {
     if (!propertyId) return
@@ -67,6 +84,29 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
       if (onPortfolioChange) onPortfolioChange()
     } finally {
       setToggling(false)
+    }
+  }
+
+  async function handleAddToPipeline(e) {
+    e.preventDefault()
+    if (pipelineWorking) return
+    setPipelineWorking(true)
+    try {
+      await addDeal({
+        property_id:    data.id,
+        stage:          pipelineStage,
+        purchase_price: pipelinePrice !== '' ? parseFloat(pipelinePrice) : null,
+        address:        data.address        || null,
+        city:           data.city           || null,
+        state:          data.state          || null,
+        tenant:         data.tenant_brand_name || null,
+      })
+      setShowPipeline(false)
+      setPipelinePrice('')
+      setPipelineStage('loi')
+      navigate('/pipeline')
+    } finally {
+      setPipelineWorking(false)
     }
   }
 
@@ -109,6 +149,13 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
                 ? <><CheckCircle2 className="w-3.5 h-3.5" /> Portfolio</>
                 : <><Landmark className="w-3.5 h-3.5" /> Add to Portfolio</>
               }
+            </button>
+            <button
+              onClick={() => setShowPipeline(true)}
+              title="Add to pipeline"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-slate-200 bg-white text-slate-500 hover:bg-slate-50 transition-colors"
+            >
+              <TrendingUp className="w-3.5 h-3.5" /> Add to Pipeline
             </button>
             <Button variant="ghost" size="sm" onClick={onEdit}>
               <Pencil className="w-3.5 h-3.5 mr-1" /> Edit
@@ -333,6 +380,89 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
         {/* Bottom padding */}
         <div className="h-8" />
       </div>
+
+      {/* Add-to-Pipeline mini-modal */}
+      {showPipeline && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/30 rounded-none">
+          <form
+            onSubmit={handleAddToPipeline}
+            className="bg-white rounded-2xl shadow-2xl w-80 mx-4 p-6 flex flex-col gap-4"
+          >
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <TrendingUp className="w-4 h-4 text-blue-600" />
+                <h3 className="text-sm font-semibold text-slate-900">Add to Pipeline</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowPipeline(false)}
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Property info */}
+            <div className="bg-slate-50 rounded-lg px-3 py-2 text-xs text-slate-600">
+              <p className="font-medium text-slate-800 truncate">{data.address}</p>
+              {data.tenant_brand_name && <p className="text-slate-500 mt-0.5">{data.tenant_brand_name}</p>}
+            </div>
+
+            {/* Purchase Price */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                Purchase Price
+              </label>
+              <div className="relative">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 text-sm">$</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={pipelinePrice}
+                  onChange={e => setPipelinePrice(e.target.value)}
+                  placeholder="0"
+                  className="w-full pl-7 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+                />
+              </div>
+            </div>
+
+            {/* Deal Stage */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-600 mb-1.5">
+                Deal Stage
+              </label>
+              <select
+                value={pipelineStage}
+                onChange={e => setPipelineStage(e.target.value)}
+                className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400 bg-white"
+              >
+                {PIPELINE_STAGES.map(s => (
+                  <option key={s.key} value={s.key}>{s.label}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-2 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowPipeline(false)}
+                className="flex-1 px-3 py-2 rounded-lg text-xs font-medium text-slate-600 border border-slate-200 hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={pipelineWorking}
+                className="flex-1 px-3 py-2 rounded-lg text-xs font-semibold bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
+              >
+                {pipelineWorking ? 'Adding…' : 'Add to Pipeline'}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </div>
   )
 }
