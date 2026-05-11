@@ -27,9 +27,18 @@ export default function DealCard({ deal, index, onEdit, onDelete, onLink }) {
         >
           {/* Tenant Brand + actions */}
           <div className="flex items-start justify-between gap-2 mb-1.5">
-            <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
-              {deal.tenant_brand_name || 'No tenant'}
-            </span>
+            {deal.property_id ? (
+              <button
+                onClick={e => { e.stopPropagation(); navigate(`/properties?open=${deal.property_id}`) }}
+                className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full hover:bg-blue-100 hover:underline text-left"
+              >
+                {deal.tenant_brand_name || 'No tenant'}
+              </button>
+            ) : (
+              <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
+                {deal.tenant_brand_name || 'No tenant'}
+              </span>
+            )}
             <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
               <button
                 onClick={e => { e.stopPropagation(); onLink?.(deal) }}
@@ -53,7 +62,16 @@ export default function DealCard({ deal, index, onEdit, onDelete, onLink }) {
           {address && (
             <div className="flex items-start gap-1.5 mb-2">
               <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
-              <p className="text-sm font-medium text-slate-900 leading-snug">{address}</p>
+              {deal.property_id ? (
+                <button
+                  onClick={e => { e.stopPropagation(); navigate(`/properties?open=${deal.property_id}`) }}
+                  className="text-sm font-medium text-blue-700 leading-snug hover:underline text-left"
+                >
+                  {address}
+                </button>
+              ) : (
+                <p className="text-sm font-medium text-slate-900 leading-snug">{address}</p>
+              )}
             </div>
           )}
 

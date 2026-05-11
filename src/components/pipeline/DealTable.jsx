@@ -329,6 +329,15 @@ export default function DealTable({ deals, onDelete, onCellSave, onCloseDeal, on
                         <div className="min-w-0">
                           {col === 'stage' ? (
                             <StageBadge stage={deal.stage} />
+                          ) : (col === 'address' || col === 'tenant') && deal.property_id ? (
+                            <button
+                              onClick={e => { e.stopPropagation(); navigate(`/properties?open=${deal.property_id}`) }}
+                              className={`block truncate max-w-[220px] hover:underline text-left ${
+                                col === 'tenant' ? 'font-semibold text-blue-700 hover:text-blue-900' : 'text-blue-600 hover:text-blue-800'
+                              }`}
+                            >
+                              {displayValue(col, deal) ?? <span className="text-slate-300 font-normal">—</span>}
+                            </button>
                           ) : (
                             <span className={`block truncate max-w-[220px] ${
                               col === 'tenant'         ? 'font-semibold text-slate-800' :

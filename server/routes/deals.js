@@ -28,6 +28,20 @@ const toFloat = v => (v !== undefined && v !== null && v !== '') ? parseFloat(v)
 const toInt   = v => (v !== undefined && v !== null && v !== '') ? parseInt(v, 10) : null
 const toStr   = v => v || null
 
+// ── Auto-link: match deal address to a market property ────────────────────────
+function tryAutoLink(dealId, address) {
+  if (!address || !address.trim()) return null
+  const match = db.prepare(
+    `SELECT id FROM properties WHERE LOWER(TRIM(address)) = LOWER(TRIM(?))`
+  ).get(address)
+  if (match) {
+    db.prepare('UPDATE deals SET property_id = ? WHERE id = ?').run(match.id, dealId)
+    console.log(`[deals] auto-linked deal ${dealId} → property ${match.id} (address: "${address}")`)
+    return match.id
+  }
+  return null
+}
+
 router.get('/', (req, res) => {
   res.json(db.prepare(SELECT + " WHERE (d.status IS NULL OR d.status = 'active') ORDER BY d.id DESC").all())
 })
@@ -85,6 +99,10 @@ router.post('/', (req, res) => {
   `).run(toStr(property_id), stage, toFloat(purchase_price), toStr(close_date), toStr(notes),
          toStr(address), toStr(city), toStr(state), toStr(tenant),
          toFloat(cap_rate), toInt(due_diligence_days), toStr(dd_deadline), toFloat(earnest_money))
+  // Auto-link to market property if no explicit property_id was provided
+  if (!property_id && address) {
+    tryAutoLink(r.lastInsertRowid, address)
+  }
   res.status(201).json(db.prepare(SELECT + ' WHERE d.id = ?').get(r.lastInsertRowid))
 })
 
@@ -98,12 +116,6 @@ router.put('/:id', (req, res) => {
   `).run(toStr(property_id), stage, toFloat(purchase_price), toStr(close_date), toStr(notes),
          toStr(address), toStr(city), toStr(state), toStr(tenant),
          toFloat(cap_rate), toInt(due_diligence_days), toStr(dd_deadline), toFloat(earnest_money), req.params.id)
-  res.json(db.prepare(SELECT + ' WHERE d.id = ?').get(req.params.id))
-})
-
-router.patch('/:id/link-property', (req, res) => {
-  const { property_id } = req.body
-  db.prepare('UPDATE deals SET property_id = ? WHERE id = ?').run(property_id ?? null, req.params.id)
   res.json(db.prepare(SELECT + ' WHERE d.id = ?').get(req.params.id))
 })
 

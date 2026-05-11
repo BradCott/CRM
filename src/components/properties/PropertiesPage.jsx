@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Building2, Plus, MoreHorizontal, Pencil, Trash2, Loader2,
   ChevronLeft, ChevronRight, AlertCircle, Settings2, Upload, Mail,
@@ -183,6 +183,7 @@ const PRESET_VIEWS = [
 export default function PropertiesPage() {
   const { tenantBrands, propertyStates, addProperty, editProperty, removeProperty } = useApp()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
   const [showBulkSend, setShowBulkSend] = useState(false)
 
   const [rows, setRows]                 = useState([])
@@ -195,7 +196,10 @@ export default function PropertiesPage() {
   const [showForm, setShowForm]         = useState(false)
   const [editTarget, setEditTarget]     = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
-  const [detailId, setDetailId]         = useState(null)
+  const [detailId, setDetailId]         = useState(() => {
+    const id = new URLSearchParams(window.location.search).get('open')
+    return id ? Number(id) : null
+  })
   const [openMenu, setOpenMenu]         = useState(null)
   const [showCustomizer, setShowCustomizer] = useState(false)
 

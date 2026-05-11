@@ -479,6 +479,35 @@ try {
   console.warn('[db] default task migration skipped:', e.message)
 }
 
+// ── One-time: auto-link existing pipeline deals to market properties by address ─
+// Runs every startup but only touches deals that are still unlinked, so it is safe.
+try {
+  const unlinked = db.prepare(`
+    SELECT id, address FROM deals
+    WHERE property_id IS NULL
+      AND address IS NOT NULL AND TRIM(address) != ''
+      AND (status IS NULL OR status = 'active')
+  `).all()
+
+  if (unlinked.length > 0) {
+    const findStmt = db.prepare(
+      `SELECT id FROM properties WHERE LOWER(TRIM(address)) = LOWER(TRIM(?))`
+    )
+    const linkStmt = db.prepare(`UPDATE deals SET property_id = ? WHERE id = ?`)
+    let matched = 0
+    for (const deal of unlinked) {
+      const prop = findStmt.get(deal.address)
+      if (prop) {
+        linkStmt.run(prop.id, deal.id)
+        matched++
+      }
+    }
+    console.log(`[db] Auto-link scan: ${unlinked.length} unlinked deal(s) checked, ${matched} matched to market properties`)
+  }
+} catch (e) {
+  console.warn('[db] Auto-link scan failed:', e.message)
+}
+
 // ── Handwrytten ───────────────────────────────────────────────────────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS handwrytten_campaigns (
