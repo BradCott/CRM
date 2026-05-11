@@ -7,6 +7,7 @@ import DealForm from './DealForm'
 import DealTable from './DealTable'
 import DroppedDeals from './DroppedDeals'
 import LOIDropZone from './LOIDropZone'
+import PropertyLinkModal from './PropertyLinkModal'
 import Modal from '../ui/Modal'
 import ConfirmDialog from '../ui/ConfirmDialog'
 import Button from '../ui/Button'
@@ -31,13 +32,14 @@ function saveView(v) {
 }
 
 export default function PipelinePage() {
-  const { deals, stages, addDeal, editDeal, removeDeal, moveDeal, closeDeal, dropDeal, loading } = useApp()
+  const { deals, stages, addDeal, editDeal, removeDeal, moveDeal, closeDeal, dropDeal, linkPropertyToDeal, loading } = useApp()
   const [view, setView]               = useState(loadView)
   const [showForm, setShowForm]       = useState(false)
   const [editTarget, setEditTarget]   = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [initialStage, setInitialStage] = useState('loi')
   const [loiPrefill, setLoiPrefill]   = useState(null)
+  const [linkTarget, setLinkTarget]   = useState(null) // deal being linked to a property
 
   const openDeals          = deals.filter(d => !['closed_won', 'closed_lost', 'money_hard'].includes(d.stage))
   const loiDeals           = deals.filter(d => d.stage === 'loi')
@@ -82,6 +84,18 @@ export default function PipelinePage() {
   }
 
   const dealsByStage = (key) => deals.filter(d => d.stage === key)
+
+  const handleLinkProperty = async (propertyId) => {
+    if (!linkTarget) return
+    await linkPropertyToDeal(linkTarget.id, propertyId)
+    setLinkTarget(null)
+  }
+
+  const handleUnlinkProperty = async () => {
+    if (!linkTarget) return
+    await linkPropertyToDeal(linkTarget.id, null)
+    setLinkTarget(null)
+  }
 
   const handleSave = async (data) => {
     if (editTarget) await editDeal(editTarget.id, data)
@@ -157,6 +171,7 @@ export default function PipelinePage() {
             onCellSave={handleCellSave}
             onCloseDeal={closeDeal}
             onDropDeal={dropDeal}
+            onLinkProperty={setLinkTarget}
           />
         )}
 
@@ -173,6 +188,7 @@ export default function PipelinePage() {
                   onAddDeal={handleAddDeal}
                   onEditDeal={deal => { setEditTarget(deal); setLoiPrefill(null); setShowForm(true) }}
                   onDeleteDeal={setDeleteTarget}
+                  onLinkDeal={setLinkTarget}
                 />
               ))}
             </div>
@@ -201,6 +217,16 @@ export default function PipelinePage() {
           />
         </FormErrorBoundary>
       </Modal>
+
+      {/* Property link modal */}
+      {linkTarget && (
+        <PropertyLinkModal
+          deal={linkTarget}
+          onLink={handleLinkProperty}
+          onUnlink={handleUnlinkProperty}
+          onClose={() => setLinkTarget(null)}
+        />
+      )}
 
       <ConfirmDialog
         isOpen={!!deleteTarget}

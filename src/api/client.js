@@ -55,7 +55,8 @@ export const patchDealStage = (id, s)  => req('PATCH',  `/deals/${id}/stage`, { 
 export const deleteDeal     = (id)     => req('DELETE', `/deals/${id}`)
 export const closeDealApi   = (id)     => req('POST',   `/deals/${id}/close`)
 export const dropDealApi    = (id)     => req('POST',   `/deals/${id}/drop`)
-export const restoreDealApi = (id)     => req('POST',   `/deals/${id}/restore`)
+export const restoreDealApi    = (id)           => req('POST',  `/deals/${id}/restore`)
+export const linkDealProperty  = (id, propId)   => req('PATCH', `/deals/${id}/link-property`, { property_id: propId })
 
 // Reports
 export const getReports       = (params = {}) => {

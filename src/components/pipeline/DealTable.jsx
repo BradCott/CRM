@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
-import { Settings2, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle, XCircle } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Settings2, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle, XCircle, Link2 } from 'lucide-react'
 import ColumnCustomizer, {
   buildPanelCols, loadSavedCols, detectPreset, saveColsToStorage,
 } from '../ui/ColumnCustomizer'
@@ -169,7 +170,8 @@ function InlineInput({ col, draft, onChange, onCommit, onCancel }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function DealTable({ deals, onDelete, onCellSave, onCloseDeal, onDropDeal }) {
+export default function DealTable({ deals, onDelete, onCellSave, onCloseDeal, onDropDeal, onLinkProperty }) {
+  const navigate = useNavigate()
   const [activeCols, setActiveCols] = useState(() => loadSavedCols(STORAGE_KEY, DEFAULT_COLS, COL_DEFS))
   const [panelCols, setPanelCols]   = useState(() => buildPanelCols(loadSavedCols(STORAGE_KEY, DEFAULT_COLS, COL_DEFS), ALL_COL_KEYS))
   const [activePreset, setActivePreset] = useState(() => detectPreset(loadSavedCols(STORAGE_KEY, DEFAULT_COLS, COL_DEFS), PRESETS))
@@ -345,8 +347,28 @@ export default function DealTable({ deals, onDelete, onCellSave, onCloseDeal, on
                 })}
 
                 {/* Actions cell */}
-                <td className="px-3 py-3 pr-6 border-b border-slate-100 whitespace-nowrap">
-                  <div className="flex items-center gap-1.5">
+                <td className="px-3 py-3 pr-6 border-b border-slate-100">
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* Linked property */}
+                    {deal.property_id && deal.property_address ? (
+                      <button
+                        onClick={e => { e.stopPropagation(); navigate('/properties') }}
+                        title="Go to linked market property"
+                        className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800 hover:underline max-w-[140px]"
+                      >
+                        <Link2 className="w-3 h-3 shrink-0" />
+                        <span className="truncate">{deal.property_address}</span>
+                      </button>
+                    ) : (
+                      <button
+                        onClick={e => { e.stopPropagation(); onLinkProperty?.(deal) }}
+                        title="Link to market property"
+                        className="flex items-center gap-1 text-xs text-slate-300 hover:text-blue-600 px-1.5 py-0.5 rounded hover:bg-blue-50 transition-colors"
+                      >
+                        <Link2 className="w-3 h-3" />
+                        <span>Link</span>
+                      </button>
+                    )}
                     {/* Close / Drop inline menu */}
                     {closeMenu?.dealId === deal.id ? (
                       closeMenu.step === 'menu' ? (

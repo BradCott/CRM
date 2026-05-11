@@ -101,6 +101,18 @@ router.put('/:id', (req, res) => {
   res.json(db.prepare(SELECT + ' WHERE d.id = ?').get(req.params.id))
 })
 
+router.patch('/:id/link-property', (req, res) => {
+  const { property_id } = req.body
+  db.prepare('UPDATE deals SET property_id = ? WHERE id = ?').run(property_id ?? null, req.params.id)
+  res.json(db.prepare(SELECT + ' WHERE d.id = ?').get(req.params.id))
+})
+
+router.patch('/:id/link-property', (req, res) => {
+  const { property_id } = req.body
+  db.prepare('UPDATE deals SET property_id = ? WHERE id = ?').run(property_id ?? null, req.params.id)
+  res.json(db.prepare(SELECT + ' WHERE d.id = ?').get(req.params.id))
+})
+
 router.patch('/:id/stage', (req, res) => {
   const { stage } = req.body
   if (!stage) return res.status(400).json({ error: 'stage is required' })

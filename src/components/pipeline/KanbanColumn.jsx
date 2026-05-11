@@ -4,7 +4,7 @@ import DealCard from './DealCard'
 import { formatCurrency } from '../../utils/formatters'
 import { STAGE_COLORS } from '../../utils/constants'
 
-export default function KanbanColumn({ stage, deals, onAddDeal, onEditDeal, onDeleteDeal }) {
+export default function KanbanColumn({ stage, deals, onAddDeal, onEditDeal, onDeleteDeal, onLinkDeal }) {
   const c = STAGE_COLORS[stage.color] || STAGE_COLORS.slate
   const totalValue = deals.reduce((sum, d) => sum + (d.value || 0), 0)
 
@@ -41,6 +41,7 @@ export default function KanbanColumn({ stage, deals, onAddDeal, onEditDeal, onDe
                 index={i}
                 onEdit={onEditDeal}
                 onDelete={onDeleteDeal}
+                onLink={onLinkDeal}
               />
             ))}
             {provided.placeholder}

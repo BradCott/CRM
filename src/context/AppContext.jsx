@@ -5,7 +5,7 @@ import {
   getAllProperties, getPropertyStates,
   createProperty, updateProperty, deleteProperty,
   getDeals, createDeal, updateDeal, patchDealStage, deleteDeal,
-  closeDealApi, dropDealApi, restoreDealApi,
+  closeDealApi, dropDealApi, restoreDealApi, linkDealProperty,
   getImportStats,
 } from '../api/client'
 import { DEFAULT_STAGES } from '../utils/constants'
@@ -166,6 +166,12 @@ export function AppProvider({ children }) {
     return row
   }, [notify])
 
+  const linkPropertyToDeal = useCallback(async (dealId, propertyId) => {
+    const row = await linkDealProperty(dealId, propertyId ?? null)
+    setDeals(prev => prev.map(x => x.id === dealId ? row : x))
+    notify(propertyId ? 'Property linked' : 'Property unlinked')
+  }, [notify])
+
   const moveDeal = useCallback(async (id, newStage) => {
     setDeals(prev => prev.map(d => d.id === id ? { ...d, stage: newStage } : d))
     try {
@@ -189,7 +195,7 @@ export function AppProvider({ children }) {
       allPeople, addPerson, editPerson, removePerson,
       allProperties, addProperty, editProperty, removeProperty,
       propertyStates,
-      deals, addDeal, editDeal, removeDeal, moveDeal, closeDeal, dropDeal, restoreDeal,
+      deals, addDeal, editDeal, removeDeal, moveDeal, closeDeal, dropDeal, restoreDeal, linkPropertyToDeal,
       stages,
       toast, notify,
       loading,

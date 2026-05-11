@@ -1,5 +1,6 @@
 import { Draggable } from '@hello-pangea/dnd'
-import { MapPin, Calendar, Pencil, Trash2, DollarSign } from 'lucide-react'
+import { MapPin, Calendar, Pencil, Trash2, DollarSign, Link2 } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { formatCurrency, formatDate } from '../../utils/formatters'
 
 function formatPrice(val) {
@@ -7,8 +8,9 @@ function formatPrice(val) {
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(val)
 }
 
-export default function DealCard({ deal, index, onEdit, onDelete }) {
-  const address = [deal.property_address, deal.city, deal.state].filter(Boolean).join(', ')
+export default function DealCard({ deal, index, onEdit, onDelete, onLink }) {
+  const navigate = useNavigate()
+  const address  = [deal.address, deal.city, deal.state].filter(Boolean).join(', ')
 
   return (
     <Draggable draggableId={String(deal.id)} index={index}>
@@ -29,6 +31,15 @@ export default function DealCard({ deal, index, onEdit, onDelete }) {
               {deal.tenant_brand_name || 'No tenant'}
             </span>
             <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                onClick={e => { e.stopPropagation(); onLink?.(deal) }}
+                title={deal.property_id ? 'Linked to market property' : 'Link to market property'}
+                className={`w-6 h-6 rounded flex items-center justify-center hover:bg-slate-100 ${
+                  deal.property_id ? 'text-blue-500 hover:text-blue-700' : 'text-slate-400 hover:text-slate-600'
+                }`}
+              >
+                <Link2 className="w-3 h-3" />
+              </button>
               <button onClick={e => { e.stopPropagation(); onEdit(deal) }} className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-slate-600 hover:bg-slate-100">
                 <Pencil className="w-3 h-3" />
               </button>
@@ -70,6 +81,19 @@ export default function DealCard({ deal, index, onEdit, onDelete }) {
               </div>
             )}
           </div>
+
+          {/* Linked market property */}
+          {deal.property_id && deal.property_address && (
+            <button
+              onClick={e => { e.stopPropagation(); navigate('/properties') }}
+              className="flex items-center gap-1.5 mt-2 pt-2 border-t border-slate-100 w-full text-left group/link"
+            >
+              <Link2 className="w-3 h-3 text-blue-400 shrink-0" />
+              <span className="text-xs text-blue-600 truncate group-hover/link:underline">
+                {deal.property_address}
+              </span>
+            </button>
+          )}
         </div>
       )}
     </Draggable>
