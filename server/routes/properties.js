@@ -36,7 +36,28 @@ const BASE_SELECT = `
   LEFT JOIN people o ON o.id = p.owner_id
 `
 
-// GET /api/properties?search=&tenant=&state=&limit=50&offset=0
+// Safe whitelist: column key → SQL expression for ORDER BY
+const SORT_MAP = {
+  address:        'p.address',
+  tenant:         't.name',
+  owner:          'o.name',
+  owner_address:  'o.address',
+  state:          'p.state',
+  city:           'p.city',
+  property_type:  'p.property_type',
+  lease_type:     'p.lease_type',
+  lease_start:    'p.lease_start',
+  lease_end:      'p.lease_end',
+  days_remaining: 'p.lease_end',
+  cap_rate:       'CAST(p.cap_rate AS REAL)',
+  noi:            'CAST(p.noi AS REAL)',
+  annual_rent:    'CAST(p.annual_rent AS REAL)',
+  list_price:     'CAST(p.list_price AS REAL)',
+  building_size:  'CAST(p.building_size AS REAL)',
+  year_built:     'CAST(p.year_built AS INTEGER)',
+}
+
+// GET /api/properties?search=&tenant=&state=&limit=50&offset=0&sortCol=address&sortDir=asc
 router.get('/', (req, res) => {
   const {
     search = '',
@@ -44,6 +65,8 @@ router.get('/', (req, res) => {
     state = '',
     limit = 50,
     offset = 0,
+    sortCol = 'address',
+    sortDir = 'asc',
   } = req.query
 
   const conditions = []
@@ -70,7 +93,13 @@ router.get('/', (req, res) => {
     ${where}
   `).get(...params).n
 
-  const rows = db.prepare(`${BASE_SELECT} ${where} ORDER BY p.address LIMIT ? OFFSET ?`).all(...params, parseInt(limit), parseInt(offset))
+  const sortExpr  = SORT_MAP[sortCol] || 'p.address'
+  const direction = sortDir === 'desc' ? 'DESC' : 'ASC'
+  // Put NULLs last for ascending, first for descending — keeps blank rows at the bottom
+  const nullFirst = direction === 'ASC' ? 1 : 0
+  const orderBy   = `ORDER BY CASE WHEN ${sortExpr} IS NULL THEN ${nullFirst} ELSE 0 END, ${sortExpr} ${direction}`
+
+  const rows = db.prepare(`${BASE_SELECT} ${where} ${orderBy} LIMIT ? OFFSET ?`).all(...params, parseInt(limit), parseInt(offset))
 
   res.json({ total, rows })
 })

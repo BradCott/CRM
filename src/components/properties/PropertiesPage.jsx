@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Building2, Plus, MoreHorizontal, Pencil, Trash2, Loader2,
-  ChevronLeft, ChevronRight, AlertCircle, Settings2, Upload, Mail,
+  ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown,
+  AlertCircle, Settings2, Upload, Mail,
 } from 'lucide-react'
 import { getProperties } from '../../api/client'
 import { useApp } from '../../context/AppContext'
@@ -225,13 +226,15 @@ export default function PropertiesPage() {
   const [panelCols, setPanelCols]           = useState(() => buildPanelCols(loadSavedCols(STORAGE_KEY, DEFAULT_COLS, COLUMN_DEFS), ALL_COLUMN_KEYS))
   const [activePreset, setActivePreset]     = useState(() => detectPreset(loadSavedCols(STORAGE_KEY, DEFAULT_COLS, COLUMN_DEFS), PRESET_VIEWS))
   const [savedIndicator, setSavedIndicator] = useState(false)
+  const [sortCol, setSortCol]               = useState('address')
+  const [sortDir, setSortDir]               = useState('asc')
 
   const searchTimer = useRef(null)
 
-  const load = useCallback(async (s, tenant, state, pg) => {
+  const load = useCallback(async (s, tenant, state, pg, col = 'address', dir = 'asc') => {
     setFetching(true)
     try {
-      const params = { portfolio: '0', limit: PAGE_SIZE, offset: pg * PAGE_SIZE }
+      const params = { portfolio: '0', limit: PAGE_SIZE, offset: pg * PAGE_SIZE, sortCol: col, sortDir: dir }
       if (s)      params.search = s
       if (tenant) params.tenant = tenant
       if (state)  params.state  = state
@@ -240,19 +243,26 @@ export default function PropertiesPage() {
     } finally { setFetching(false) }
   }, [])
 
-  useEffect(() => { load(search, tenantFilter, stateFilter, page) }, [page, tenantFilter, stateFilter]) // eslint-disable-line
+  useEffect(() => { load(search, tenantFilter, stateFilter, page, sortCol, sortDir) }, [page, tenantFilter, stateFilter]) // eslint-disable-line
+
+  const handleSort = (key) => {
+    const newDir = sortCol === key && sortDir === 'asc' ? 'desc' : 'asc'
+    const newCol = key
+    setSortCol(newCol); setSortDir(newDir); setPage(0)
+    load(search, tenantFilter, stateFilter, 0, newCol, newDir)
+  }
 
   const handleSearch = (val) => {
     setSearch(val); clearTimeout(searchTimer.current)
-    searchTimer.current = setTimeout(() => { setPage(0); load(val, tenantFilter, stateFilter, 0) }, 300)
+    searchTimer.current = setTimeout(() => { setPage(0); load(val, tenantFilter, stateFilter, 0, sortCol, sortDir) }, 300)
   }
   const handleSave = async (data) => {
     const marketData = { ...data, is_portfolio: 0 }
     if (editTarget) await editProperty(editTarget.id, marketData); else await addProperty(marketData)
-    load(search, tenantFilter, stateFilter, page)
+    load(search, tenantFilter, stateFilter, page, sortCol, sortDir)
   }
   const handleDelete = async () => {
-    await removeProperty(deleteTarget.id); load(search, tenantFilter, stateFilter, page)
+    await removeProperty(deleteTarget.id); load(search, tenantFilter, stateFilter, page, sortCol, sortDir)
   }
 
   // Column customizer
@@ -293,12 +303,12 @@ export default function PropertiesPage() {
         searchPlaceholder="Search address, city, owner…"
         actions={
           <div className="flex items-center gap-2">
-            <select value={tenantFilter} onChange={e => { setTenant(e.target.value); setPage(0); load(search, e.target.value, stateFilter, 0) }}
+            <select value={tenantFilter} onChange={e => { setTenant(e.target.value); setPage(0); load(search, e.target.value, stateFilter, 0, sortCol, sortDir) }}
               className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">All tenants</option>
               {tenantBrands.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
             </select>
-            <select value={stateFilter} onChange={e => { setState(e.target.value); setPage(0); load(search, tenantFilter, e.target.value, 0) }}
+            <select value={stateFilter} onChange={e => { setState(e.target.value); setPage(0); load(search, tenantFilter, e.target.value, 0, sortCol, sortDir) }}
               className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
               <option value="">All states</option>
               {propertyStates.map(s => <option key={s} value={s}>{s}</option>)}
@@ -342,11 +352,25 @@ export default function PropertiesPage() {
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    {activeCols.map(key => (
-                      <th key={key} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
-                        {COLUMN_DEFS[key].label}
-                      </th>
-                    ))}
+                    {activeCols.map(key => {
+                      const isActive = sortCol === key
+                      return (
+                        <th key={key}
+                          onClick={() => handleSort(key)}
+                          className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap cursor-pointer select-none hover:bg-slate-100 transition-colors group"
+                        >
+                          <div className="flex items-center gap-1">
+                            <span className={isActive ? 'text-blue-600' : ''}>{COLUMN_DEFS[key].label}</span>
+                            {isActive
+                              ? sortDir === 'asc'
+                                ? <ChevronUp className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                                : <ChevronDown className="w-3.5 h-3.5 text-blue-500 shrink-0" />
+                              : <ChevronsUpDown className="w-3.5 h-3.5 text-slate-300 group-hover:text-slate-400 shrink-0" />
+                            }
+                          </div>
+                        </th>
+                      )
+                    })}
                     <th className="w-12" />
                   </tr>
                 </thead>

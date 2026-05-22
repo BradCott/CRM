@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { X, Mail, Loader2, CheckCircle, AlertCircle, ChevronRight, Users, Search } from 'lucide-react'
 import {
   getHandwryttenCards,
@@ -39,6 +39,7 @@ function applyMerge(template, person, property) {
 function StateMultiSelect({ allStates, selected, onChange }) {
   const [query, setQuery] = useState('')
   const visible = allStates.filter(s => !query || s.toLowerCase().includes(query.toLowerCase()))
+  const allSelected = selected.length === 0  // empty = "All"
 
   function toggle(s) {
     onChange(
@@ -49,6 +50,17 @@ function StateMultiSelect({ allStates, selected, onChange }) {
   return (
     <div className="border border-slate-200 rounded-xl overflow-hidden">
       <div className="flex items-center gap-2 px-3 py-2 border-b border-slate-100 bg-slate-50">
+        {/* All toggle */}
+        <label className="flex items-center gap-1.5 shrink-0 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={allSelected}
+            onChange={() => onChange([])}
+            className="accent-blue-600 w-3.5 h-3.5"
+          />
+          <span className={`text-xs font-semibold ${allSelected ? 'text-blue-700' : 'text-slate-500'}`}>All</span>
+        </label>
+        <span className="text-slate-200 shrink-0">|</span>
         <Search className="w-3.5 h-3.5 text-slate-400 shrink-0" />
         <input
           type="text"
@@ -84,6 +96,89 @@ function StateMultiSelect({ allStates, selected, onChange }) {
           <p className="text-xs text-blue-700 font-medium">
             {selected.join(', ')}
           </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Tenant combobox (searchable dropdown) ─────────────────────────────────────
+function TenantCombobox({ tenantBrands, value, onChange }) {
+  const [open, setOpen]   = useState(false)
+  const [query, setQuery] = useState(value)
+  const ref = useRef(null)
+
+  // Close on outside click
+  useEffect(() => {
+    function handle(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', handle)
+    return () => document.removeEventListener('mousedown', handle)
+  }, [])
+
+  // Keep local query in sync if parent clears value
+  useEffect(() => { setQuery(value) }, [value])
+
+  const filtered = tenantBrands.filter(t =>
+    !query || t.name.toLowerCase().includes(query.toLowerCase())
+  )
+
+  function select(name) {
+    setQuery(name); onChange(name); setOpen(false)
+  }
+  function handleInput(e) {
+    setQuery(e.target.value); onChange(e.target.value); setOpen(true)
+  }
+  function clear() {
+    setQuery(''); onChange(''); setOpen(false)
+  }
+
+  return (
+    <div ref={ref} className="relative">
+      <div className="relative flex items-center">
+        <Search className="absolute left-3 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+        <input
+          type="text"
+          value={query}
+          onChange={handleInput}
+          onFocus={() => setOpen(true)}
+          placeholder="All tenants — type to search…"
+          className="w-full pl-9 pr-8 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        {query && (
+          <button
+            onClick={clear}
+            className="absolute right-2.5 text-slate-400 hover:text-slate-600"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="absolute z-20 mt-1 w-full bg-white border border-slate-200 rounded-xl shadow-lg max-h-52 overflow-y-auto">
+          {/* "All tenants" option */}
+          <button
+            onMouseDown={e => e.preventDefault()}
+            onClick={clear}
+            className={`flex items-center w-full px-3 py-2 text-sm text-left hover:bg-slate-50 ${!query ? 'font-semibold text-blue-700 bg-blue-50' : 'text-slate-500'}`}
+          >
+            All tenants
+          </button>
+          {filtered.length === 0 ? (
+            <p className="px-3 py-2 text-xs text-slate-400">No tenants match "{query}"</p>
+          ) : (
+            filtered.map(t => (
+              <button
+                key={t.id}
+                onMouseDown={e => e.preventDefault()}
+                onClick={() => select(t.name)}
+                className={`flex items-center w-full px-3 py-2 text-sm text-left hover:bg-blue-50 hover:text-blue-800 ${
+                  query === t.name ? 'bg-blue-50 text-blue-700 font-medium' : 'text-slate-700'
+                }`}
+              >
+                {t.name}
+              </button>
+            ))
+          )}
         </div>
       )}
     </div>
@@ -186,8 +281,8 @@ export default function BulkSendModal({ onClose, onDone }) {
   const buildRecipients = useCallback(async () => {
     setLoadingRec(true)
     try {
-      // Fetch all properties (up to 5000) — we filter client-side for flexibility
-      const { rows } = await getProperties({ limit: 5000, offset: 0 })
+      // Fetch all market properties (non-portfolio, up to 5000) — filter client-side
+      const { rows } = await getProperties({ portfolio: '0', limit: 5000, offset: 0 })
 
       let filtered = rows
 
@@ -336,19 +431,17 @@ export default function BulkSendModal({ onClose, onDone }) {
                 />
               </div>
 
-              {/* Tenant text search */}
+              {/* Tenant searchable dropdown */}
               <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">Tenant</label>
-                <div className="relative">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-                  <input
-                    type="text"
-                    value={filterTenant}
-                    onChange={e => setFilterTenant(e.target.value)}
-                    placeholder="e.g. McDonald's, Dollar General…"
-                    className="w-full pl-9 pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">
+                  Tenant
+                  {filterTenant && <span className="ml-1 text-blue-600 normal-case font-normal">({filterTenant})</span>}
+                </label>
+                <TenantCombobox
+                  tenantBrands={tenantBrands}
+                  value={filterTenant}
+                  onChange={setFilterTenant}
+                />
               </div>
 
               {/* Owner type checkboxes */}
