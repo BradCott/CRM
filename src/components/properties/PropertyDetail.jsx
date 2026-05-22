@@ -2,11 +2,12 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   X, Pencil, Building2, MapPin, Phone, Mail, FileText,
-  AlertCircle, CalendarDays, Wrench, User, TrendingUp, Landmark, CheckCircle2,
+  AlertCircle, CalendarDays, Wrench, User, TrendingUp, Landmark, CheckCircle2, ExternalLink,
 } from 'lucide-react'
 import { getProperty, togglePortfolio } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import Button from '../ui/Button'
+import SendLetterModal from '../handwrytten/SendLetterModal'
 
 const PIPELINE_STAGES = [
   { key: 'loi',             label: 'LOI' },
@@ -62,6 +63,8 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
   const navigate = useNavigate()
   const [data, setData] = useState(null)
   const [toggling, setToggling] = useState(false)
+
+  const [showLetterModal, setShowLetterModal] = useState(false)
 
   // Add-to-pipeline modal state
   const [showPipeline, setShowPipeline]   = useState(false)
@@ -321,7 +324,18 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
         {data.owner_name && (
           <Section icon={User} title="Owner">
             <div className="mb-3 flex items-center gap-2 flex-wrap">
-              <span className="font-semibold text-slate-900">{data.owner_name}</span>
+              {/* Clickable owner name → people page */}
+              {data.owner_id ? (
+                <button
+                  onClick={() => navigate(`/people?open=${data.owner_id}`)}
+                  className="font-semibold text-blue-700 hover:underline flex items-center gap-1"
+                >
+                  {data.owner_name}
+                  <ExternalLink className="w-3 h-3 opacity-60" />
+                </button>
+              ) : (
+                <span className="font-semibold text-slate-900">{data.owner_name}</span>
+              )}
               {data.owner_role && (
                 <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${ROLE_COLORS[data.owner_role] || 'bg-slate-100 text-slate-600'}`}>
                   {ROLE_LABELS[data.owner_role] || data.owner_role}
@@ -335,6 +349,15 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
                   <AlertCircle className="w-3 h-3" /> Do Not Contact
                 </span>
               ) : null}
+              {/* Send letter button */}
+              {data.owner_id && data.owner_address && !data.owner_do_not_contact && (
+                <button
+                  onClick={() => setShowLetterModal(true)}
+                  className="ml-auto flex items-center gap-1 text-xs font-medium text-blue-600 border border-blue-200 bg-blue-50 hover:bg-blue-100 px-2.5 py-1 rounded-lg transition-colors"
+                >
+                  <Mail className="w-3 h-3" /> Send Letter
+                </button>
+              )}
             </div>
 
             <div className="space-y-2.5">
@@ -380,6 +403,24 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
         {/* Bottom padding */}
         <div className="h-8" />
       </div>
+
+      {/* Send Letter modal */}
+      {showLetterModal && data.owner_id && (
+        <SendLetterModal
+          person={{
+            id:         data.owner_id,
+            name:       data.owner_name,
+            first_name: data.owner_first_name,
+            address:    data.owner_address,
+            city:       data.owner_city,
+            state:      data.owner_state,
+            zip:        data.owner_zip,
+          }}
+          property={data}
+          onClose={() => setShowLetterModal(false)}
+          onSent={() => setShowLetterModal(false)}
+        />
+      )}
 
       {/* Add-to-Pipeline mini-modal */}
       {showPipeline && (

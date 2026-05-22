@@ -268,11 +268,12 @@ export default function BulkSendModal({ onClose, onDone }) {
         setFonts(fontList)
         const defCard = cardList.find(c => (c.name || '').toLowerCase().includes('knox 1')) || cardList[0] || null
         const defFont = fontList.find(f =>
-          (f.name || '').toLowerCase().includes('jokester') ||
-          (f.name || '').toLowerCase().includes('jared')
+          (f.label || '').toLowerCase().includes('jokester') ||
+          (f.label || '').toLowerCase().includes('jarrod') ||
+          (f.label || '').toLowerCase().includes('jared')
         ) || fontList[0] || null
         setSelectedCard(defCard?.id ?? null)
-        setSelectedFont(defFont?.id ?? null)
+        setSelectedFont(defFont?.label ?? null)
       })
       .catch(() => {})
       .finally(() => setLoadingMeta(false))
@@ -679,12 +680,21 @@ export default function BulkSendModal({ onClose, onDone }) {
                         className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                       >
                         <option value="">— Select font —</option>
-                        {fonts.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                        {fonts.map(f => <option key={f.label ?? f.id} value={f.label}>{f.label}</option>)}
                       </select>
                     </div>
                   )}
                 </>
               )}
+
+              {/* Signature */}
+              <div>
+                <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5 block">Signature (from)</label>
+                <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700">
+                  Brad Cottam
+                </div>
+                <p className="text-xs text-slate-400 mt-1">This is the name that appears as the sender on every letter.</p>
+              </div>
 
               {sendError && (
                 <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 rounded-xl px-3 py-2.5">

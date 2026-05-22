@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Users, UserPlus, MoreHorizontal, Pencil, Trash2, Loader2,
   AlertCircle, ChevronLeft, ChevronRight, Settings2,
@@ -153,6 +154,7 @@ const PRESET_VIEWS = [
 // ── Main component ────────────────────────────────────────────────────────────
 export default function PeoplePage() {
   const { addPerson, editPerson, removePerson } = useApp()
+  const [searchParams] = useSearchParams()
 
   const [rows, setRows]         = useState([])
   const [total, setTotal]       = useState(0)
@@ -166,7 +168,10 @@ export default function PeoplePage() {
   const [showForm, setShowForm]         = useState(false)
   const [editTarget, setEditTarget]     = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
-  const [detailId, setDetailId]         = useState(null)
+  const [detailId, setDetailId]         = useState(() => {
+    const id = new URLSearchParams(window.location.search).get('open')
+    return id ? Number(id) : null
+  })
   const [openMenu, setOpenMenu]         = useState(null)
   const [showCustomizer, setShowCustomizer] = useState(false)
 
