@@ -282,23 +282,26 @@ export default function BulkSendModal({ onClose, onDone }) {
   const buildRecipients = useCallback(async () => {
     setLoadingRec(true)
     try {
-      // Fetch all market properties (non-portfolio, up to 5000) — filter client-side
-      const { rows } = await getProperties({ portfolio: '0', limit: 5000, offset: 0 })
+      // Fetch matching properties — paginate in batches to handle large datasets
+      const BATCH = 2000
+      const serverParams = { portfolio: '0', limit: BATCH, offset: 0 }
+      if (filterTenant.trim()) serverParams.tenant = filterTenant.trim()
 
-      let filtered = rows
+      const allRows = []
+      while (true) {
+        const { rows: batch, total } = await getProperties({ ...serverParams, offset: allRows.length })
+        allRows.push(...batch)
+        if (allRows.length >= total || batch.length === 0) break
+      }
 
-      // State filter — skip if none selected
+      let filtered = allRows
+
+      // State filter — client-side (multi-select not supported server-side)
       if (filterStates.length > 0) {
         filtered = filtered.filter(p => filterStates.includes(p.state))
       }
 
-      // Tenant filter — text search against tenant_brand_name
-      if (filterTenant.trim()) {
-        const q = filterTenant.trim().toLowerCase()
-        filtered = filtered.filter(p =>
-          (p.tenant_brand_name || '').toLowerCase().includes(q)
-        )
-      }
+      // Tenant was already filtered server-side above
 
       // Owner type filter — skip if none selected (show all)
       if (filterOwnerTypes.length > 0) {
