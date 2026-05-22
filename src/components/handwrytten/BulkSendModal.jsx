@@ -240,6 +240,7 @@ export default function BulkSendModal({ onClose, onDone }) {
   // ── Recipients state ───────────────────────────────────────────────────────
   const [recipients,    setRecipients]    = useState([])
   const [loadingRec,    setLoadingRec]    = useState(false)
+  const [breakdown,     setBreakdown]     = useState(null)   // diagnostic counts
 
   // ── Letter state ───────────────────────────────────────────────────────────
   const [message,       setMessage]       = useState(DEFAULT_TEMPLATE)
@@ -314,8 +315,24 @@ export default function BulkSendModal({ onClose, onDone }) {
         filtered = filtered.filter(p => p.lease_end && p.lease_end <= filterLeaseEnd)
       }
 
-      // Deduplicate by owner — one letter per unique owner (first property wins)
-      // A valid recipient must have: owner_id + owner_address + owner_city + owner_state
+      // ── Diagnostic breakdown ──────────────────────────────────────────────
+      const totalFiltered  = filtered.length
+      const noOwner        = filtered.filter(p => !p.owner_id).length
+      const withOwner      = filtered.filter(p => !!p.owner_id)
+
+      // Unique owners (dedup)
+      const ownerFirstProp = {}
+      for (const p of withOwner) {
+        if (!ownerFirstProp[p.owner_id]) ownerFirstProp[p.owner_id] = p
+      }
+      const uniqueOwners    = Object.values(ownerFirstProp)
+      const dedupRemoved    = withOwner.length - uniqueOwners.length
+      const noAddress       = uniqueOwners.filter(p => !p.owner_address || !p.owner_city || !p.owner_state).length
+      const readyToSend     = uniqueOwners.length - noAddress
+
+      setBreakdown({ totalFiltered, noOwner, dedupRemoved, noAddress, readyToSend })
+
+      // ── Build final list ──────────────────────────────────────────────────
       const seen = new Set()
       const list = []
       for (const p of filtered) {
@@ -506,6 +523,43 @@ export default function BulkSendModal({ onClose, onDone }) {
         {step === 'preview' && (
           <>
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+
+              {/* Diagnostic breakdown */}
+              {breakdown && (
+                <div className="rounded-xl border border-slate-200 overflow-hidden text-xs">
+                  <div className="bg-slate-50 px-3 py-2 font-semibold text-slate-600 uppercase tracking-wide">
+                    Recipient Breakdown
+                  </div>
+                  <div className="divide-y divide-slate-100">
+                    <div className="flex justify-between items-center px-3 py-2">
+                      <span className="text-slate-600">Properties matching filters</span>
+                      <span className="font-bold text-slate-800">{breakdown.totalFiltered.toLocaleString()}</span>
+                    </div>
+                    <div className="flex justify-between items-center px-3 py-2">
+                      <span className="text-slate-500">− No owner linked in database</span>
+                      <span className={`font-semibold ${breakdown.noOwner > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                        {breakdown.noOwner > 0 ? `−${breakdown.noOwner.toLocaleString()}` : '0'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center px-3 py-2">
+                      <span className="text-slate-500">− Same owner, multiple properties (deduped)</span>
+                      <span className="font-semibold text-slate-400">
+                        {breakdown.dedupRemoved > 0 ? `−${breakdown.dedupRemoved.toLocaleString()}` : '0'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center px-3 py-2">
+                      <span className="text-slate-500">− Owner missing mailing address</span>
+                      <span className={`font-semibold ${breakdown.noAddress > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                        {breakdown.noAddress > 0 ? `−${breakdown.noAddress.toLocaleString()}` : '0'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center px-3 py-2 bg-blue-50">
+                      <span className="font-semibold text-blue-800">= Letters ready to send</span>
+                      <span className="font-bold text-blue-700 text-sm">{breakdown.readyToSend.toLocaleString()}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Recipient list */}
               <div>
