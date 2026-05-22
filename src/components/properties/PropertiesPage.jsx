@@ -19,7 +19,7 @@ import ColumnCustomizer, {
 } from '../ui/ColumnCustomizer'
 
 const PAGE_SIZE   = 75
-const STORAGE_KEY = 'properties_columns_v1'
+const STORAGE_KEY = 'properties_columns_v2'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmt$(v) {
@@ -77,6 +77,24 @@ const COLUMN_DEFS = {
         <td key={k} className="px-4 py-3 max-w-[180px]">
           <p className="text-slate-700 truncate">{p.owner_name || <span className="text-slate-300">—</span>}</p>
           {p.owner_do_not_contact ? <span className="text-xs text-red-500 flex items-center gap-0.5 mt-0.5"><AlertCircle className="w-3 h-3"/>DNC</span> : null}
+        </td>
+      )
+    },
+  },
+  owner_address: {
+    label: 'Owner Address',
+    td(p, k) {
+      const line1 = p.owner_address
+      const line2 = [p.owner_city, p.owner_state, p.owner_zip].filter(Boolean).join(', ')
+      return (
+        <td key={k} className="px-4 py-3 max-w-[200px]">
+          {line1
+            ? <>
+                <p className="text-slate-700 truncate text-sm">{line1}</p>
+                {line2 && <p className="text-xs text-slate-400 truncate">{line2}</p>}
+              </>
+            : <span className="text-slate-300">—</span>
+          }
         </td>
       )
     },
@@ -170,11 +188,11 @@ const COLUMN_DEFS = {
 }
 
 const ALL_COLUMN_KEYS = Object.keys(COLUMN_DEFS)
-const DEFAULT_COLS    = ['address','tenant','owner','lease_type','cap_rate','noi','list_price','lease_end']
+const DEFAULT_COLS    = ['address','tenant','owner','owner_address','lease_type','cap_rate','list_price','lease_end']
 
 const PRESET_VIEWS = [
   { id: 'default',     label: 'Default',     cols: DEFAULT_COLS },
-  { id: 'prospecting', label: 'Prospecting', cols: ['address','tenant','state','lease_end','owner','list_price'] },
+  { id: 'prospecting', label: 'Prospecting', cols: ['address','tenant','state','owner','owner_address','lease_end','list_price'] },
   { id: 'financials',  label: 'Financials',  cols: ['address','tenant','cap_rate','noi','annual_rent','list_price'] },
   { id: 'research',    label: 'Research',    cols: ['address','tenant','property_type','year_built','building_size','state'] },
 ]
