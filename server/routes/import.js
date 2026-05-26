@@ -13,6 +13,53 @@ function parseXlsx(buffer) {
   return XLSX.utils.sheet_to_json(ws, { defval: '' })
 }
 
+// ── Address normalization helpers ─────────────────────────────────────────────
+
+/** Strip noise and lowercase — first pass normalization */
+function normalizeAddr(s) {
+  if (!s) return ''
+  return s
+    .toLowerCase()
+    .replace(/\s*\(.*?\)/g, '')                          // strip "(Part of a 7 Property Sale)"
+    .replace(/\b(ste|suite|unit|apt|#)\s*\.?\s*[\w-]*/gi, '') // strip unit numbers
+    .replace(/[.,;#]/g, '')                              // strip punctuation
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Expand common abbreviations to full words for fuzzy comparison */
+function expandAbbrevs(s) {
+  return s
+    // Street types
+    .replace(/\bst\b/g,   'street')
+    .replace(/\bave\b/g,  'avenue')
+    .replace(/\bblvd\b/g, 'boulevard')
+    .replace(/\brd\b/g,   'road')
+    .replace(/\bdr\b/g,   'drive')
+    .replace(/\bln\b/g,   'lane')
+    .replace(/\bct\b/g,   'court')
+    .replace(/\bpl\b/g,   'place')
+    .replace(/\bpkwy\b/g, 'parkway')
+    .replace(/\bhwy\b/g,  'highway')
+    .replace(/\bcir\b/g,  'circle')
+    .replace(/\bter\b/g,  'terrace')
+    .replace(/\btrl\b/g,  'trail')
+    .replace(/\bfwy\b/g,  'freeway')
+    .replace(/\bexpy\b/g, 'expressway')
+    // Compound directionals first (before single letters)
+    .replace(/\bne\b/g, 'northeast')
+    .replace(/\bnw\b/g, 'northwest')
+    .replace(/\bse\b/g, 'southeast')
+    .replace(/\bsw\b/g, 'southwest')
+    // Single-letter directionals
+    .replace(/\bn\b/g, 'north')
+    .replace(/\bs\b/g, 'south')
+    .replace(/\be\b/g, 'east')
+    .replace(/\bw\b/g, 'west')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } })
 
@@ -252,12 +299,42 @@ router.post('/recent-sales', upload.single('file'), (req, res) => {
     return res.status(400).json({ error: 'Could not find an Address column in the file' })
   }
 
-  const findStmt = db.prepare(
-    `SELECT id FROM properties WHERE LOWER(TRIM(address)) = LOWER(TRIM(?))`
-  )
+  // Build in-memory lookup maps from all properties
+  // (two maps: normalized-only, and normalized+expanded)
+  const allProps = db.prepare('SELECT id, address, city, state FROM properties').all()
+
+  const exactMap    = new Map()   // normalizeAddr(address) → [{id,city,state}]
+  const expandedMap = new Map()   // expandAbbrevs(normalize(address)) → [{id,city,state}]
+
+  for (const p of allProps) {
+    const norm = normalizeAddr(p.address || '')
+    const exp  = expandAbbrevs(norm)
+    if (norm) {
+      if (!exactMap.has(norm)) exactMap.set(norm, [])
+      exactMap.get(norm).push(p)
+    }
+    if (exp && exp !== norm) {
+      if (!expandedMap.has(exp)) expandedMap.set(exp, [])
+      expandedMap.get(exp).push(p)
+    }
+  }
+
   const flagStmt = db.prepare(
     `UPDATE properties SET needs_ownership_review = 1 WHERE id = ?`
   )
+
+  function bestMatch(candidates, city, state) {
+    if (!candidates || candidates.length === 0) return null
+    if (candidates.length === 1) return candidates[0]
+    // Use city+state to narrow down when multiple candidates share an address
+    const cityLow  = (city  || '').toLowerCase().trim()
+    const stateLow = (state || '').toLowerCase().trim()
+    const refined  = candidates.filter(c =>
+      (!cityLow  || (c.city  || '').toLowerCase() === cityLow) &&
+      (!stateLow || (c.state || '').toLowerCase() === stateLow)
+    )
+    return refined[0] || candidates[0]
+  }
 
   let matched = 0, unmatched = 0
   const unmatchedAddresses = []
@@ -268,17 +345,31 @@ router.post('/recent-sales', upload.single('file'), (req, res) => {
       const rawAddr = String(row[addrKey] || '').trim()
       if (!rawAddr) continue
 
-      // Strip parenthetical notes e.g. "(Part of a 7 Property Sale)"
-      const cleanAddr = rawAddr.replace(/\s*\(.*?\)\s*/g, '').trim()
-      if (!cleanAddr) continue
+      const city  = String(row['City']  || row['city']  || '').trim()
+      const state = String(row['State'] || row['state'] || '').trim()
 
-      const prop = findStmt.get(cleanAddr)
-      if (prop) {
-        flagStmt.run(prop.id)
+      const norm = normalizeAddr(rawAddr)
+      const exp  = expandAbbrevs(norm)
+
+      // Pass 1: exact normalized match
+      let match = bestMatch(exactMap.get(norm), city, state)
+
+      // Pass 2: abbreviation-expanded match
+      if (!match) {
+        match = bestMatch(expandedMap.get(exp), city, state)
+      }
+
+      // Pass 3: try expanding the DB side — look up expanded form of both
+      if (!match) {
+        match = bestMatch(exactMap.get(exp), city, state)
+      }
+
+      if (match) {
+        flagStmt.run(match.id)
         matched++
       } else {
         unmatched++
-        if (unmatchedAddresses.length < 20) unmatchedAddresses.push(cleanAddr)
+        if (unmatchedAddresses.length < 50) unmatchedAddresses.push(rawAddr)
       }
     }
     db.exec('COMMIT')
