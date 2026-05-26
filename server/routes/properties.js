@@ -57,13 +57,13 @@ const SORT_MAP = {
   year_built:     'CAST(p.year_built AS INTEGER)',
 }
 
-// GET /api/properties?search=&tenant=&state=&limit=50&offset=0&sortCol=address&sortDir=asc
+// GET /api/properties?search=&tenants=CVS,Walgreens&states=TN,GA&needsReview=1&limit=50&offset=0&sortCol=address&sortDir=asc
 router.get('/', (req, res) => {
   const {
     search = '',
-    tenant = '',
-    state = '',
-    limit = 50,
+    tenant = '',    // legacy single-value (kept for backward compat)
+    state  = '',    // legacy single-value
+    limit  = 50,
     offset = 0,
     sortCol = 'address',
     sortDir = 'asc',
@@ -77,8 +77,36 @@ router.get('/', (req, res) => {
     const q = `%${search}%`
     params.push(q, q, q, q)
   }
-  if (tenant)    { conditions.push(`t.name = ?`);          params.push(tenant) }
-  if (state)     { conditions.push(`p.state = ?`);         params.push(state) }
+
+  // Multi-value tenant filter (comma-separated) — falls back to legacy single param
+  const tenantsRaw = req.query.tenants || tenant
+  if (tenantsRaw) {
+    const list = tenantsRaw.split(',').map(s => s.trim()).filter(Boolean)
+    if (list.length === 1) {
+      conditions.push(`t.name = ?`); params.push(list[0])
+    } else if (list.length > 1) {
+      conditions.push(`t.name IN (${list.map(() => '?').join(',')})`)
+      params.push(...list)
+    }
+  }
+
+  // Multi-value state filter (comma-separated) — falls back to legacy single param
+  const statesRaw = req.query.states || state
+  if (statesRaw) {
+    const list = statesRaw.split(',').map(s => s.trim()).filter(Boolean)
+    if (list.length === 1) {
+      conditions.push(`p.state = ?`); params.push(list[0])
+    } else if (list.length > 1) {
+      conditions.push(`p.state IN (${list.map(() => '?').join(',')})`)
+      params.push(...list)
+    }
+  }
+
+  // Needs ownership review filter
+  if (req.query.needsReview === '1') {
+    conditions.push(`p.needs_ownership_review = 1`)
+  }
+
   if (req.query.portfolio !== undefined) {
     conditions.push(`p.is_portfolio = ?`)
     params.push(req.query.portfolio === '1' ? 1 : 0)

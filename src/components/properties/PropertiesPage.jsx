@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Building2, Plus, MoreHorizontal, Pencil, Trash2, Loader2,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown,
-  AlertCircle, Settings2, Upload, Mail,
+  AlertCircle, Settings2, Upload, Mail, ShieldAlert, Check,
 } from 'lucide-react'
 import { getProperties } from '../../api/client'
 import { useApp } from '../../context/AppContext'
@@ -188,6 +188,84 @@ const COLUMN_DEFS = {
   },
 }
 
+// ── Multi-Select Dropdown ─────────────────────────────────────────────────────
+function MultiSelectDropdown({ label, options, selected, onChange, placeholder = 'Search…' }) {
+  const [open, setOpen]     = useState(false)
+  const [query, setQuery]   = useState('')
+  const ref = useRef(null)
+
+  useEffect(() => {
+    function onClickOutside(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [])
+
+  const filtered = options.filter(o => o.toLowerCase().includes(query.toLowerCase()))
+  const allChecked = selected.length === 0
+
+  const toggle = (val) => {
+    if (selected.includes(val)) onChange(selected.filter(v => v !== val))
+    else onChange([...selected, val])
+  }
+
+  const btnLabel = selected.length === 0
+    ? `All ${label}`
+    : selected.length === 1
+      ? selected[0]
+      : `${selected.length} ${label}`
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`flex items-center gap-1.5 text-sm border rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors ${
+          selected.length > 0 ? 'border-blue-400 text-blue-700 bg-blue-50' : 'border-slate-200 text-slate-700'
+        }`}
+      >
+        <span>{btnLabel}</span>
+        <ChevronDown className="w-3.5 h-3.5 shrink-0 text-slate-400" />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-[calc(100%+4px)] z-50 bg-white border border-slate-200 rounded-xl shadow-lg w-52 py-2">
+          {options.length > 8 && (
+            <div className="px-2 pb-1.5">
+              <input
+                autoFocus
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder={placeholder}
+                className="w-full text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+          )}
+          <div className="max-h-60 overflow-y-auto">
+            <button
+              className={`flex items-center gap-2 w-full px-3 py-1.5 text-sm hover:bg-slate-50 ${allChecked ? 'text-blue-600 font-medium' : 'text-slate-600'}`}
+              onClick={() => { onChange([]); setQuery('') }}
+            >
+              {allChecked && <Check className="w-3.5 h-3.5 shrink-0" />}
+              {!allChecked && <span className="w-3.5 h-3.5 shrink-0" />}
+              All {label}
+            </button>
+            {filtered.map(opt => {
+              const checked = selected.includes(opt)
+              return (
+                <button key={opt}
+                  className={`flex items-center gap-2 w-full px-3 py-1.5 text-sm hover:bg-slate-50 ${checked ? 'text-blue-600' : 'text-slate-700'}`}
+                  onClick={() => toggle(opt)}
+                >
+                  {checked ? <Check className="w-3.5 h-3.5 shrink-0 text-blue-500" /> : <span className="w-3.5 h-3.5 shrink-0" />}
+                  <span className="truncate">{opt}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 const ALL_COLUMN_KEYS = Object.keys(COLUMN_DEFS)
 const DEFAULT_COLS    = ['address','tenant','owner','owner_address','lease_type','cap_rate','list_price','lease_end']
 
@@ -209,8 +287,9 @@ export default function PropertiesPage() {
   const [total, setTotal]               = useState(0)
   const [page, setPage]                 = useState(0)
   const [search, setSearch]             = useState('')
-  const [tenantFilter, setTenant]       = useState('')
-  const [stateFilter, setState]         = useState('')
+  const [tenantFilters, setTenantFilters] = useState([])
+  const [stateFilters, setStateFilters]   = useState([])
+  const [needsReviewFilter, setNeedsReviewFilter] = useState(false)
   const [fetching, setFetching]         = useState(false)
   const [showForm, setShowForm]         = useState(false)
   const [editTarget, setEditTarget]     = useState(null)
@@ -231,38 +310,39 @@ export default function PropertiesPage() {
 
   const searchTimer = useRef(null)
 
-  const load = useCallback(async (s, tenant, state, pg, col = 'address', dir = 'asc') => {
+  const load = useCallback(async (s, tenants, states, needsReview, pg, col = 'address', dir = 'asc') => {
     setFetching(true)
     try {
       const params = { portfolio: '0', limit: PAGE_SIZE, offset: pg * PAGE_SIZE, sortCol: col, sortDir: dir }
-      if (s)      params.search = s
-      if (tenant) params.tenant = tenant
-      if (state)  params.state  = state
+      if (s)                    params.search = s
+      if (tenants.length)       params.tenants = tenants.join(',')
+      if (states.length)        params.states  = states.join(',')
+      if (needsReview)          params.needsReview = '1'
       const res = await getProperties(params)
       setRows(res.rows); setTotal(res.total)
     } finally { setFetching(false) }
   }, [])
 
-  useEffect(() => { load(search, tenantFilter, stateFilter, page, sortCol, sortDir) }, [page, tenantFilter, stateFilter]) // eslint-disable-line
+  useEffect(() => { load(search, tenantFilters, stateFilters, needsReviewFilter, page, sortCol, sortDir) }, [page, tenantFilters, stateFilters, needsReviewFilter]) // eslint-disable-line
 
   const handleSort = (key) => {
     const newDir = sortCol === key && sortDir === 'asc' ? 'desc' : 'asc'
     const newCol = key
     setSortCol(newCol); setSortDir(newDir); setPage(0)
-    load(search, tenantFilter, stateFilter, 0, newCol, newDir)
+    load(search, tenantFilters, stateFilters, needsReviewFilter, 0, newCol, newDir)
   }
 
   const handleSearch = (val) => {
     setSearch(val); clearTimeout(searchTimer.current)
-    searchTimer.current = setTimeout(() => { setPage(0); load(val, tenantFilter, stateFilter, 0, sortCol, sortDir) }, 300)
+    searchTimer.current = setTimeout(() => { setPage(0); load(val, tenantFilters, stateFilters, needsReviewFilter, 0, sortCol, sortDir) }, 300)
   }
   const handleSave = async (data) => {
     const marketData = { ...data, is_portfolio: 0 }
     if (editTarget) await editProperty(editTarget.id, marketData); else await addProperty(marketData)
-    load(search, tenantFilter, stateFilter, page, sortCol, sortDir)
+    load(search, tenantFilters, stateFilters, needsReviewFilter, page, sortCol, sortDir)
   }
   const handleDelete = async () => {
-    await removeProperty(deleteTarget.id); load(search, tenantFilter, stateFilter, page, sortCol, sortDir)
+    await removeProperty(deleteTarget.id); load(search, tenantFilters, stateFilters, needsReviewFilter, page, sortCol, sortDir)
   }
 
   // Column customizer
@@ -303,16 +383,32 @@ export default function PropertiesPage() {
         searchPlaceholder="Search address, city, owner…"
         actions={
           <div className="flex items-center gap-2">
-            <select value={tenantFilter} onChange={e => { setTenant(e.target.value); setPage(0); load(search, e.target.value, stateFilter, 0, sortCol, sortDir) }}
-              className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="">All tenants</option>
-              {tenantBrands.map(t => <option key={t.id} value={t.name}>{t.name}</option>)}
-            </select>
-            <select value={stateFilter} onChange={e => { setState(e.target.value); setPage(0); load(search, tenantFilter, e.target.value, 0, sortCol, sortDir) }}
-              className="text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
-              <option value="">All states</option>
-              {propertyStates.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
+            <MultiSelectDropdown
+              label="tenants"
+              options={tenantBrands.map(t => t.name)}
+              selected={tenantFilters}
+              onChange={vals => { setTenantFilters(vals); setPage(0) }}
+              placeholder="Search tenants…"
+            />
+            <MultiSelectDropdown
+              label="states"
+              options={propertyStates}
+              selected={stateFilters}
+              onChange={vals => { setStateFilters(vals); setPage(0) }}
+              placeholder="Search states…"
+            />
+            <button
+              onClick={() => { setNeedsReviewFilter(v => !v); setPage(0) }}
+              className={`flex items-center gap-1.5 text-sm border rounded-lg px-3 py-2 transition-colors ${
+                needsReviewFilter
+                  ? 'bg-amber-50 border-amber-400 text-amber-700'
+                  : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'
+              }`}
+              title="Show only properties flagged for ownership review"
+            >
+              <ShieldAlert className="w-4 h-4" />
+              Needs Review
+            </button>
             <button
               onClick={() => setShowCustomizer(c => !c)}
               className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border rounded-lg transition-colors ${showCustomizer ? 'bg-blue-50 text-blue-700 border-blue-200' : 'text-slate-600 border-slate-200 hover:bg-slate-50'}`}
