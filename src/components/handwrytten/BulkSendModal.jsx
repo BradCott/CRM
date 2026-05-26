@@ -304,6 +304,10 @@ export default function BulkSendModal({ onClose, onDone }) {
 
       // Tenant was already filtered server-side above
 
+      // Exclude properties flagged for ownership review
+      const needsReviewCount = filtered.filter(p => p.needs_ownership_review).length
+      filtered = filtered.filter(p => !p.needs_ownership_review)
+
       // Owner type filter — skip if none selected (show all)
       if (filterOwnerTypes.length > 0) {
         filtered = filtered.filter(p =>
@@ -320,7 +324,7 @@ export default function BulkSendModal({ onClose, onDone }) {
       }
 
       // ── Diagnostic breakdown ──────────────────────────────────────────────
-      const totalFiltered  = filtered.length
+      const totalFiltered  = filtered.length + needsReviewCount
       const noOwner        = filtered.filter(p => !p.owner_id).length
       const withOwner      = filtered.filter(p => !!p.owner_id)
 
@@ -334,7 +338,7 @@ export default function BulkSendModal({ onClose, onDone }) {
       const noAddress       = uniqueOwners.filter(p => !p.owner_address || !p.owner_city || !p.owner_state).length
       const readyToSend     = uniqueOwners.length - noAddress
 
-      setBreakdown({ totalFiltered, noOwner, dedupRemoved, noAddress, readyToSend })
+      setBreakdown({ totalFiltered, needsReviewCount, noOwner, dedupRemoved, noAddress, readyToSend })
 
       // ── Build final list ──────────────────────────────────────────────────
       const seen = new Set()
@@ -539,6 +543,12 @@ export default function BulkSendModal({ onClose, onDone }) {
                       <span className="text-slate-600">Properties matching filters</span>
                       <span className="font-bold text-slate-800">{breakdown.totalFiltered.toLocaleString()}</span>
                     </div>
+                    {breakdown.needsReviewCount > 0 && (
+                      <div className="flex justify-between items-center px-3 py-2 bg-amber-50">
+                        <span className="text-amber-700">− Ownership needs review (recently sold)</span>
+                        <span className="font-semibold text-amber-600">−{breakdown.needsReviewCount.toLocaleString()}</span>
+                      </div>
+                    )}
                     <div className="flex justify-between items-center px-3 py-2">
                       <span className="text-slate-500">− No owner linked in database</span>
                       <span className={`font-semibold ${breakdown.noOwner > 0 ? 'text-amber-600' : 'text-slate-400'}`}>

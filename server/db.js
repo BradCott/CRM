@@ -250,6 +250,8 @@ const migrations = [
   // Property geocoordinates for portfolio map
   `ALTER TABLE properties ADD COLUMN lat REAL`,
   `ALTER TABLE properties ADD COLUMN lng REAL`,
+  // Ownership review flag — set by recent-sales upload
+  `ALTER TABLE properties ADD COLUMN needs_ownership_review INTEGER DEFAULT 0`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

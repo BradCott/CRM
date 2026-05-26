@@ -4,7 +4,7 @@ import {
   X, Pencil, Building2, MapPin, Phone, Mail, FileText,
   AlertCircle, CalendarDays, Wrench, User, TrendingUp, Landmark, CheckCircle2, ExternalLink,
 } from 'lucide-react'
-import { getProperty, togglePortfolio } from '../../api/client'
+import { getProperty, togglePortfolio, clearOwnershipReview } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import Button from '../ui/Button'
 import SendLetterModal from '../handwrytten/SendLetterModal'
@@ -127,11 +127,23 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
       <div className="px-6 pt-5 pb-4 border-b border-slate-100 shrink-0">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            {data.tenant_brand_name && (
-              <span className="inline-block text-xs font-semibold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full mb-2">
-                {data.tenant_brand_name}
-              </span>
-            )}
+            <div className="flex items-center gap-2 flex-wrap mb-2">
+              {data.tenant_brand_name && (
+                <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full">
+                  {data.tenant_brand_name}
+                </span>
+              )}
+              {data.needs_ownership_review ? (
+                <span className="flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
+                  <AlertCircle className="w-3 h-3" /> Ownership needs review
+                  <button
+                    onClick={async () => { await clearOwnershipReview(data.id); setData(d => ({ ...d, needs_ownership_review: 0 })) }}
+                    className="ml-1 text-amber-500 hover:text-amber-800 font-bold leading-none"
+                    title="Mark as reviewed"
+                  >✕</button>
+                </span>
+              ) : null}
+            </div>
             <h2 className="text-lg font-bold text-slate-900 leading-snug">{data.address}</h2>
             <p className="text-sm text-slate-500 mt-0.5">
               {[data.city, data.state, data.zip].filter(Boolean).join(', ')}

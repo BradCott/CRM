@@ -1,7 +1,17 @@
 import { Router } from 'express'
 import multer from 'multer'
 import { parse } from 'csv-parse/sync'
+import { createRequire } from 'node:module'
 import db from '../db.js'
+
+const require = createRequire(import.meta.url)
+
+function parseXlsx(buffer) {
+  const XLSX = require('xlsx')
+  const wb   = XLSX.read(buffer, { type: 'buffer' })
+  const ws   = wb.Sheets[wb.SheetNames[0]]
+  return XLSX.utils.sheet_to_json(ws, { defval: '' })
+}
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } })
@@ -204,6 +214,84 @@ router.get('/stats', (req, res) => {
     people:        db.prepare('SELECT COUNT(*) AS n FROM people').get().n,
     properties:    db.prepare('SELECT COUNT(*) AS n FROM properties').get().n,
     deals:         db.prepare('SELECT COUNT(*) AS n FROM deals').get().n,
+  })
+})
+
+// POST /api/import/recent-sales
+// Accepts a CoStar-style XLSX (or CSV) export of recent sales.
+// Matches on address (case-insensitive, parenthetical notes stripped),
+// then flags matched properties as needs_ownership_review = 1.
+router.post('/recent-sales', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+
+  let rows
+  const isXlsx = req.file.originalname?.toLowerCase().endsWith('.xlsx') ||
+                 req.file.originalname?.toLowerCase().endsWith('.xls')
+  try {
+    if (isXlsx) {
+      rows = parseXlsx(req.file.buffer)
+    } else {
+      rows = parse(req.file.buffer.toString('utf8'), {
+        columns: true, skip_empty_lines: true, trim: true, bom: true,
+      })
+    }
+  } catch (e) {
+    return res.status(400).json({ error: `File parse error: ${e.message}` })
+  }
+
+  if (!rows || rows.length === 0) {
+    return res.status(400).json({ error: 'No rows found in file' })
+  }
+
+  // Detect address column — CoStar uses "Address", also handle "Property Address"
+  const sample = rows[0]
+  const addrKey = Object.keys(sample).find(k =>
+    k.toLowerCase() === 'address' || k.toLowerCase() === 'property address'
+  )
+  if (!addrKey) {
+    return res.status(400).json({ error: 'Could not find an Address column in the file' })
+  }
+
+  const findStmt = db.prepare(
+    `SELECT id FROM properties WHERE LOWER(TRIM(address)) = LOWER(TRIM(?))`
+  )
+  const flagStmt = db.prepare(
+    `UPDATE properties SET needs_ownership_review = 1 WHERE id = ?`
+  )
+
+  let matched = 0, unmatched = 0
+  const unmatchedAddresses = []
+
+  db.exec('BEGIN')
+  try {
+    for (const row of rows) {
+      const rawAddr = String(row[addrKey] || '').trim()
+      if (!rawAddr) continue
+
+      // Strip parenthetical notes e.g. "(Part of a 7 Property Sale)"
+      const cleanAddr = rawAddr.replace(/\s*\(.*?\)\s*/g, '').trim()
+      if (!cleanAddr) continue
+
+      const prop = findStmt.get(cleanAddr)
+      if (prop) {
+        flagStmt.run(prop.id)
+        matched++
+      } else {
+        unmatched++
+        if (unmatchedAddresses.length < 20) unmatchedAddresses.push(cleanAddr)
+      }
+    }
+    db.exec('COMMIT')
+  } catch (e) {
+    db.exec('ROLLBACK')
+    return res.status(500).json({ error: e.message })
+  }
+
+  res.json({
+    total:    rows.length,
+    matched,
+    unmatched,
+    unmatched_sample: unmatchedAddresses,
   })
 })
 

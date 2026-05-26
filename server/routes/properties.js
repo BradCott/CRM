@@ -283,6 +283,15 @@ router.patch('/:id/portfolio', (req, res) => {
   res.json(row)
 })
 
+// PATCH /api/properties/:id/ownership-review — set or clear needs_ownership_review flag
+router.patch('/:id/ownership-review', (req, res) => {
+  const { needs_ownership_review } = req.body
+  db.prepare(`UPDATE properties SET needs_ownership_review = ? WHERE id = ?`)
+    .run(needs_ownership_review ? 1 : 0, req.params.id)
+  const row = db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id)
+  res.json(row)
+})
+
 router.delete('/:id', (req, res) => {
   db.prepare('DELETE FROM properties WHERE id = ?').run(req.params.id)
   res.status(204).end()

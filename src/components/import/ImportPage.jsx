@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { Upload, CheckCircle, AlertCircle, FileText, RefreshCw, Database, Landmark, Download, Loader2 } from 'lucide-react'
-import { importCsv, getImportStats } from '../../api/client'
+import { Upload, CheckCircle, AlertCircle, FileText, RefreshCw, Database, Landmark, Download, Loader2, ShieldAlert } from 'lucide-react'
+import { importCsv, getImportStats, importRecentSales } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import Button from '../ui/Button'
 import TopBar from '../layout/TopBar'
@@ -110,6 +110,122 @@ function PortfolioImportCard() {
 
         <p className="text-xs text-slate-400 text-center">
           Re-importing is safe — existing portfolio properties are updated by address, not duplicated.
+        </p>
+      </div>
+    </div>
+  )
+}
+
+function RecentSalesImportCard() {
+  const [file, setFile]     = useState(null)
+  const [loading, setLoad]  = useState(false)
+  const [result, setResult] = useState(null)
+  const [error, setError]   = useState(null)
+  const [dragging, setDrag] = useState(false)
+  const inputRef = useRef()
+
+  const handleFile = (f) => { if (f) { setFile(f); setResult(null); setError(null) } }
+
+  const handleImport = async () => {
+    if (!file) return
+    setLoad(true); setError(null)
+    try {
+      const res = await importRecentSales(file)
+      setResult(res)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoad(false)
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="px-6 py-5 border-b border-slate-100">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center">
+            <ShieldAlert className="w-5 h-5 text-amber-600" />
+          </div>
+          <div>
+            <h3 className="text-base font-semibold text-slate-900">Recent Sales — Ownership Review</h3>
+            <p className="text-sm text-slate-500">Upload a CoStar recent-sales export (.xlsx or .csv) to flag properties with potentially stale owner data</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="px-6 py-5 space-y-4">
+        <div
+          className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${
+            dragging ? 'border-amber-400 bg-amber-50' : file ? 'border-green-400 bg-green-50' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+          }`}
+          onDragOver={e => { e.preventDefault(); setDrag(true) }}
+          onDragLeave={() => setDrag(false)}
+          onDrop={e => { e.preventDefault(); setDrag(false); handleFile(e.dataTransfer.files[0]) }}
+          onClick={() => inputRef.current?.click()}
+        >
+          <input ref={inputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={e => handleFile(e.target.files[0])} />
+          {file ? (
+            <>
+              <FileText className="w-10 h-10 text-green-500 mx-auto mb-2" />
+              <p className="text-sm font-semibold text-green-700">{file.name}</p>
+              <p className="text-xs text-green-600 mt-0.5">{(file.size / 1024 / 1024).toFixed(1)} MB — click to change</p>
+            </>
+          ) : (
+            <>
+              <Upload className="w-10 h-10 text-slate-400 mx-auto mb-2" />
+              <p className="text-sm font-semibold text-slate-700">Drop your CoStar sales export here or click to browse</p>
+              <p className="text-xs text-slate-400 mt-1">Supports .xlsx and .csv — matches on address, flags properties as "Needs Ownership Review"</p>
+            </>
+          )}
+        </div>
+
+        {result && (
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-xl">
+            <div className="flex items-start gap-3">
+              <CheckCircle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-amber-800 mb-1">
+                  {result.matched} propert{result.matched === 1 ? 'y' : 'ies'} flagged for ownership review
+                </p>
+                <p className="text-sm text-amber-700">
+                  {result.total} rows in file · {result.matched} matched · {result.unmatched} unmatched
+                </p>
+                {result.unmatched_sample?.length > 0 && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-amber-600 cursor-pointer hover:text-amber-800">
+                      Show unmatched addresses ({result.unmatched})
+                    </summary>
+                    <ul className="mt-1 space-y-0.5">
+                      {result.unmatched_sample.map((a, i) => (
+                        <li key={i} className="text-xs text-amber-700 font-mono">{a}</li>
+                      ))}
+                      {result.unmatched > result.unmatched_sample.length && (
+                        <li className="text-xs text-amber-500">…and {result.unmatched - result.unmatched_sample.length} more</li>
+                      )}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
+            <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+        )}
+
+        <Button className="w-full justify-center" disabled={!file || loading} onClick={handleImport}>
+          {loading
+            ? <><Loader2 className="w-4 h-4 animate-spin" /> Matching addresses…</>
+            : 'Flag Properties for Ownership Review'
+          }
+        </Button>
+
+        <p className="text-xs text-slate-400 text-center">
+          Re-uploading is safe — already-flagged properties stay flagged, new matches are added. Flags are cleared individually from the property detail page.
         </p>
       </div>
     </div>
@@ -266,6 +382,9 @@ export default function ImportPage() {
 
           {/* Knox Portfolio import */}
           <PortfolioImportCard />
+
+          {/* Recent sales / ownership review */}
+          <RecentSalesImportCard />
 
           {/* Column mapping reference */}
           <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">

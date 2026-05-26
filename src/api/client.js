@@ -81,7 +81,9 @@ export async function importCsv(endpoint, file) {
   return req('POST', endpoint, fd)
 }
 
-export const getImportStats = () => req('GET', '/import/stats')
+export const getImportStats       = () => req('GET', '/import/stats')
+export const importRecentSales    = (file) => importCsv('/import/recent-sales', file)
+export const clearOwnershipReview = (id)   => req('PATCH', `/properties/${id}/ownership-review`, { needs_ownership_review: 0 })
 
 // Dashboard
 export const getDashboard           = () => req('GET', '/dashboard')
