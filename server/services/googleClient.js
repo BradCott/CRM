@@ -9,6 +9,10 @@ if (!CLIENT_ID || !CLIENT_SECRET) {
 }
 
 export function getRedirectUri() {
+  // Explicit override — set GOOGLE_REDIRECT_URI in Railway variables to lock this down
+  if (process.env.GOOGLE_REDIRECT_URI) {
+    return process.env.GOOGLE_REDIRECT_URI
+  }
   if (process.env.RAILWAY_PUBLIC_DOMAIN) {
     return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/api/auth/google/callback`
   }
