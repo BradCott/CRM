@@ -12,42 +12,51 @@ const $fmt = v =>
 
 // ── Journal entry builder ─────────────────────────────────────────────────────
 //
-// Structure (accountant's QuickBooks format):
+// Structure (QuickBooks journal entry format):
 //
 // DEBITS
-//   1. [Property Address]         — building asset  (totalCostBasis × buildingPct%)
-//   2. Land                       —                  (totalCostBasis × landPct%)
-//   3. Depreciation Expense       — only if non-zero
-//   4. [Property Address]         — checking acct, equity received (sum of investor contributions)
+//   1. [Property Name]  — building asset  (totalBasis × buildingPct%)
+//   2. Land             —                  (totalBasis × landPct%)
+//   3. [Property Name]  — EMD funded outside LLC (if applicable)
+//   4. [Property Name]  — checking acct, equity received (sum of investor contributions)
 //
 // CREDITS
-//   1. Rent Income                — prorated rent from settlement (if any)
-//   2. MTG [Lender] [Address]     — loan amount
-//   3. Accum Depreciation         — only if depreciation expense is non-zero
-//   4. Equity - [Investor Name]   — one line per investor (if investors exist)
-//   5. Tax / Proration Credits    — seller tax proration credit to buyer (if any)
-//   6. [Property Address]         — checking acct, cash to close + earnest money combined
+//   1. MTG [Lender]                        — loan amount
+//   2. Rental Income                       — prorated rent (if any)
+//   3. Taxes & licenses:Property taxes     — tax proration credit (if any)
+//   4. Insurance                           — insurance proration credit (if any)
+//   5. Repairs & maintenance               — CAM / maintenance credit (if any)
+//   6. Equity - [Investor Name]            — one line per investor (if any)
+//   7. [Equity Account]                    — EMD funded outside LLC (if applicable)
+//   8. [Property Name]                     — checking acct, cash out (ctc [+ em if inside LLC])
 //
-// Balance identity (settlement statement):
-//   totalCostBasis = loan + rent + taxCr + (ctc + em)
-//   → pp + closing = loan + rent + taxCr + ctc + em
-//   Depreciation and equity are symmetric (debit = credit) so they cancel.
+// Balance identity:
+//   totalBasis = loan + rent + taxCr + insuranceCr + camCr + bankCashOut
+//   where totalBasis = (pp - sellerCr) + closingCosts
+//   Equity and EMD-outside-LLC lines are symmetric (debit = credit).
 
-function buildJournal(f, buildingPct, landPct, investors = []) {
-  const pp      = Number(f.purchase_price)      || 0
-  const closing = Number(f.total_closing_costs) || 0
-  const loan    = Number(f.loan_amount)          || 0
-  const ctc     = Number(f.cash_to_close)        || 0
-  const em      = Number(f.earnest_money)        || 0
-  const rent    = Number(f.prorated_rent)        || 0
-  const taxCr   = Number(f.tax_credits)          || 0
-  const depr    = Number(f.depreciation_expense) || 0
-  const addr    = (f.property_address  || '').trim() || 'Property'
-  const lender  = (f.lender_name      || '').trim()
+function buildJournal(f, buildingPct, landPct, investors = [], emdOutsideLLC = false, emdEquityAccount = '', propertyName = '') {
+  const pp          = Number(f.purchase_price)        || 0
+  const sellerCr    = Number(f.seller_closing_credit) || 0
+  const closing     = Number(f.total_closing_costs)   || 0
+  const loan        = Number(f.loan_amount)           || 0
+  const ctc         = Number(f.cash_to_close)         || 0
+  const em          = Number(f.earnest_money)         || 0
+  const rent        = Number(f.prorated_rent)         || 0
+  const taxCr       = Number(f.tax_credits)           || 0
+  const insuranceCr = Number(f.insurance_credit)      || 0
+  const camCr       = Number(f.cam_credit)            || 0
+  const lender      = (f.lender_name || '').trim()
 
-  const totalCostBasis = pp + closing
-  const bPct = Math.max(0, Math.min(100, Number(buildingPct) || 75)) / 100
-  const lPct = Math.max(0, Math.min(100, Number(landPct)     || 25)) / 100
+  // Account name: CRM property name takes priority over PDF-extracted address
+  const addr = propertyName || (f.property_address || '').trim() || 'Property'
+
+  // Net purchase price = total consideration − seller closing credit
+  const netPP          = pp - sellerCr
+  const totalCostBasis = netPP + closing
+
+  const bPct = Math.max(0, Math.min(100, Number(buildingPct) || 90)) / 100
+  const lPct = Math.max(0, Math.min(100, Number(landPct)     || 10)) / 100
 
   const buildingValue = totalCostBasis * bPct
   const landValue     = totalCostBasis * lPct
@@ -55,40 +64,45 @@ function buildJournal(f, buildingPct, landPct, investors = []) {
   const activeInvestors = (investors || []).filter(inv => Number(inv.contribution) > 0)
   const totalEquity = activeInvestors.reduce((s, inv) => s + Number(inv.contribution), 0)
 
-  const mortgageAccount = lender ? `MTG ${lender} ${addr}` : `MTG ${addr}`
+  const mortgageAccount = lender ? `MTG ${lender}` : `MTG ${addr}`
 
-  // Cash to close + earnest money = total cash out by buyer (em was paid pre-closing)
-  const cashAndEM = ctc + em
+  // EMD: if funded outside the LLC, it was personal money — show as DEBIT Building + CREDIT equity
+  // If inside LLC, it was a normal cash outflow — include in the bank cash credit
+  const emdEquity   = emdOutsideLLC ? em  : 0
+  const bankCashOut = emdOutsideLLC ? ctc : (ctc + em)
+  const equityAcct  = (emdEquityAccount || '').trim() || 'Equity - Contributor'
 
-  // DEBITS — in spec order
+  // DEBITS
   const debits = [
-    buildingValue > 0 && { account: addr,                    amount: buildingValue, note: 'Building Asset' },
-    landValue > 0     && { account: 'Land',                  amount: landValue },
-    depr > 0          && { account: 'Depreciation Expense',  amount: depr },
-    totalEquity > 0   && { account: addr,                    amount: totalEquity,   note: 'Checking — Equity Received' },
+    buildingValue > 0 && { account: addr,  amount: buildingValue, note: 'Building Asset' },
+    landValue > 0     && { account: 'Land', amount: landValue },
+    emdEquity > 0     && { account: addr,  amount: emdEquity,    note: 'EMD (funded outside LLC)' },
+    totalEquity > 0   && { account: addr,  amount: totalEquity,  note: 'Checking — Equity Received' },
   ].filter(Boolean)
 
-  // CREDITS — in spec order
+  // CREDITS
   const credits = [
-    rent > 0      && { account: 'Rent Income',            amount: rent },
-    loan > 0      && { account: mortgageAccount,           amount: loan },
-    depr > 0      && { account: 'Accum Depreciation',     amount: depr },
+    loan > 0         && { account: mortgageAccount,                   amount: loan },
+    rent > 0         && { account: 'Rental Income',                   amount: rent },
+    taxCr > 0        && { account: 'Taxes & licenses:Property taxes', amount: taxCr },
+    insuranceCr > 0  && { account: 'Insurance',                       amount: insuranceCr },
+    camCr > 0        && { account: 'Repairs & maintenance',           amount: camCr },
     ...activeInvestors.map(inv => ({ account: `Equity - ${inv.name}`, amount: Number(inv.contribution) })),
-    taxCr > 0     && { account: 'Tax / Proration Credits', amount: taxCr },
-    cashAndEM > 0 && { account: addr,                      amount: cashAndEM, note: 'Checking — Cash to Close' },
+    emdEquity > 0    && { account: equityAcct,                        amount: emdEquity },
+    bankCashOut > 0  && { account: addr,                              amount: bankCashOut, note: 'Checking — Cash to Close' },
   ].filter(Boolean)
 
   const totalDebits  = debits.reduce((s, d) => s + d.amount, 0)
   const totalCredits = credits.reduce((s, c) => s + c.amount, 0)
   const diff = totalDebits - totalCredits
 
-  return { debits, credits, totalDebits, totalCredits, diff, totalCostBasis, buildingValue, landValue }
+  return { debits, credits, totalDebits, totalCredits, diff, totalCostBasis, netPP, buildingValue, landValue }
 }
 
 // ── Clipboard copy (QuickBooks-pasteable table) ───────────────────────────────
 
-function buildClipboardText(journal, fields, date) {
-  const addr = (fields.property_address || '').trim()
+function buildClipboardText(journal, fields, date, propertyName = '') {
+  const addr = propertyName || (fields.property_address || '').trim()
   const COL  = 50
   const NUM  = 16
   const fmt  = n => (n != null ? '$' + Math.round(n).toLocaleString() : '')
@@ -120,12 +134,15 @@ function buildClipboardText(journal, fields, date) {
 // ── Uncertain items — category map + helpers ──────────────────────────────────
 
 const FIELD_MAP = {
-  'Loan Amount':  'loan_amount',
-  'Cash to Close': 'cash_to_close',
-  'Earnest Money': 'earnest_money',
-  'Prorated Rent': 'prorated_rent',
-  'Tax Proration': 'tax_credits',
-  'Ignore':        null,
+  'Loan Amount':    'loan_amount',
+  'Cash to Close':  'cash_to_close',
+  'Earnest Money':  'earnest_money',
+  'Seller Credit':  'seller_closing_credit',
+  'Prorated Rent':  'prorated_rent',
+  'Tax Proration':  'tax_credits',
+  'Insurance Credit': 'insurance_credit',
+  'CAM Credit':     'cam_credit',
+  'Ignore':         null,
 }
 
 /** Returns true if the item description looks like a broker/agent commission. */
@@ -137,21 +154,21 @@ function isBrokerFee(description) {
 
 /** Map AI suggestion text to one of the FIELD_MAP keys. */
 function guessCategory(suggestion, description) {
-  // Broker/agent commissions are almost always a seller expense — suggest Ignore for buyers
   if (isBrokerFee(description)) return 'Ignore'
   if (!suggestion) return 'Ignore'
   const s = suggestion.toLowerCase()
   if (s.includes('loan') || s.includes('mortgage') || s.includes('principal')) return 'Loan Amount'
   if (s.includes('cash') && (s.includes('close') || s.includes('closing')))    return 'Cash to Close'
   if (s.includes('earnest'))                                                     return 'Earnest Money'
+  if (s.includes('seller') && s.includes('credit'))                            return 'Seller Credit'
   if (s.includes('rent'))                                                        return 'Prorated Rent'
-  if (s.includes('tax') || s.includes('proration'))                             return 'Tax Proration'
-  // Anything that used to suggest closing costs / cost basis defaults to Ignore —
-  // those totals come from the settlement statement total and shouldn't be adjusted here
+  if (s.includes('tax') || s.includes('proration'))                            return 'Tax Proration'
+  if (s.includes('insurance'))                                                   return 'Insurance Credit'
+  if (s.includes('cam') || s.includes('maintenance'))                          return 'CAM Credit'
   return 'Ignore'
 }
 
-/** A single uncertain-item row — owns its own dropdown selection state. */
+/** A single uncertain-item row. */
 function UncertainItem({ item, onAssign }) {
   const [selection, setSelection] = useState(() => guessCategory(item.suggestion, item.description))
   const brokerFee = isBrokerFee(item.description)
@@ -195,7 +212,6 @@ function UncertainItem({ item, onAssign }) {
             <p className="text-xs text-slate-500 max-w-xs text-right">
               <span className="font-medium text-slate-600">Note:</span>{' '}
               If you are the buyer this is typically a seller expense and can be ignored.
-              If you are the seller include this as a closing cost.
             </p>
           )}
         </div>
@@ -204,7 +220,7 @@ function UncertainItem({ item, onAssign }) {
   )
 }
 
-/** Yellow review panel shown when the AI flagged uncertain line items. */
+/** Yellow review panel for uncertain items. */
 function UncertainItemsPanel({ items, onAssign }) {
   if (!items || items.length === 0) return null
   return (
@@ -216,8 +232,7 @@ function UncertainItemsPanel({ items, onAssign }) {
             {items.length} item{items.length !== 1 ? 's' : ''} flagged for review
           </span>
           <p className="text-xs text-amber-700 mt-0.5">
-            These items need clarification. Assign each one to a credit field if applicable,
-            or ignore if it is a seller expense or already included in your totals.
+            Assign each item to a field, or ignore if it's a seller expense or already included in your totals.
           </p>
         </div>
       </div>
@@ -234,10 +249,13 @@ function UncertainItemsPanel({ items, onAssign }) {
 
 // ── Field components ──────────────────────────────────────────────────────────
 
-function Field({ label, value, onChange }) {
+function Field({ label, value, onChange, hint }) {
   return (
     <div className="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
-      <span className="text-xs text-slate-500 shrink-0 mr-3">{label}</span>
+      <div className="shrink-0 mr-3">
+        <span className="text-xs text-slate-500">{label}</span>
+        {hint && <p className="text-[10px] text-slate-400">{hint}</p>}
+      </div>
       <div className="flex items-center gap-1">
         <span className="text-xs text-slate-400">$</span>
         <input
@@ -252,10 +270,13 @@ function Field({ label, value, onChange }) {
   )
 }
 
-function TextField({ label, value, onChange }) {
+function TextField({ label, value, onChange, hint }) {
   return (
     <div className="flex items-center justify-between py-1.5 border-b border-slate-100 last:border-0">
-      <span className="text-xs text-slate-500 shrink-0 mr-3">{label}</span>
+      <div className="shrink-0 mr-3">
+        <span className="text-xs text-slate-500">{label}</span>
+        {hint && <p className="text-[10px] text-slate-400">{hint}</p>}
+      </div>
       <input
         type="text"
         value={value ?? ''}
@@ -269,21 +290,25 @@ function TextField({ label, value, onChange }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function SettlementUpload({ propertyId, onSaved, onClose }) {
+export default function SettlementUpload({ propertyId, property, onSaved, onClose }) {
   const inputRef = useRef()
   const [step, setStep]               = useState('upload')
   const [error, setError]             = useState(null)
   const [fields, setFields]           = useState(null)
-  const [buildingPct, setBuildingPct] = useState(75)
-  const [landPct, setLandPct]         = useState(25)
+  const [buildingPct, setBuildingPct] = useState(90)
+  const [landPct, setLandPct]         = useState(10)
   const [copied, setCopied]           = useState(false)
   const [dragOver, setDragOver]       = useState(false)
-  const [investors, setInvestors]       = useState([])
+  const [investors, setInvestors]     = useState([])
   const [uncertainItems, setUncertainItems] = useState([])
+  const [emdOutsideLLC, setEmdOutsideLLC]   = useState(false)
+  const [emdEquityAccount, setEmdEquityAccount] = useState('')
+
+  // CRM property name used as QuickBooks account name
+  const propertyName = property?.address || ''
 
   const setField = useCallback((key, val) => setFields(prev => ({ ...prev, [key]: val })), [])
 
-  /** Add the item's amount to the chosen field, then remove it from the panel. */
   function assignUncertainItem(idx, category, amount) {
     const fieldKey = FIELD_MAP[category]
     if (fieldKey) {
@@ -292,7 +317,6 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
     setUncertainItems(prev => prev.filter((_, i) => i !== idx))
   }
 
-  // Load investors so equity lines appear automatically when they've been uploaded
   useEffect(() => {
     getInvestors(propertyId)
       .then(data => setInvestors(Array.isArray(data) ? data : []))
@@ -305,7 +329,6 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
     setError(null)
     try {
       const data = await uploadSettlement(propertyId, file)
-      // Seed depreciation_expense = 0 (almost always zero at closing; user can edit)
       setFields({ ...data, depreciation_expense: 0 })
       setUncertainItems(Array.isArray(data.uncertain_items) ? data.uncertain_items : [])
       setStep('review')
@@ -315,12 +338,16 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
     }
   }
 
-  // Compute totalCostBasis for the left panel display
-  const totalCostBasis = fields
-    ? (Number(fields.purchase_price) || 0) + (Number(fields.total_closing_costs) || 0)
+  const sellerCr       = fields ? (Number(fields.seller_closing_credit) || 0) : 0
+  const pp             = fields ? (Number(fields.purchase_price)        || 0) : 0
+  const netPurchasePrice = pp - sellerCr
+  const totalCostBasis   = fields
+    ? netPurchasePrice + (Number(fields.total_closing_costs) || 0)
     : 0
 
-  const journal = fields ? buildJournal(fields, buildingPct, landPct, investors) : null
+  const journal = fields
+    ? buildJournal(fields, buildingPct, landPct, investors, emdOutsideLLC, emdEquityAccount, propertyName)
+    : null
 
   async function handleSave() {
     if (!fields) return
@@ -328,39 +355,39 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
     setError(null)
     try {
       const date    = fields.settlement_date || new Date().toISOString().slice(0, 10)
-      const pp      = Number(fields.purchase_price)      || 0
-      const closing = Number(fields.total_closing_costs) || 0
-      const cb      = pp + closing   // total cost basis
-      const bPct    = (Number(buildingPct) || 75) / 100
-      const lPct    = (Number(landPct)     || 25) / 100
+      const cb      = totalCostBasis
+      const bPct    = (Number(buildingPct) || 90) / 100
+      const lPct    = (Number(landPct)     || 10) / 100
 
-      // Ledger transactions — building/land now split from total cost basis
       const txs = [
-        cb > 0                        && { description: 'Building Value',               category: 'Purchase', amount: -(cb * bPct) },
-        cb > 0                        && { description: 'Land Value',                   category: 'Purchase', amount: -(cb * lPct) },
-        fields.loan_amount            && { description: 'Loan Proceeds',                category: 'Loan',     amount:  Number(fields.loan_amount) },
-        fields.earnest_money          && { description: 'Earnest Money Deposit',        category: 'Purchase', amount: -Number(fields.earnest_money) },
-        fields.cash_to_close          && { description: 'Cash to Close',                category: 'Purchase', amount: -Number(fields.cash_to_close) },
-        fields.loan_origination_fee   && { description: 'Loan Origination Fee',         category: 'Purchase', amount: -Number(fields.loan_origination_fee) },
-        fields.appraisal_fee          && { description: 'Appraisal Fee',                category: 'Purchase', amount: -Number(fields.appraisal_fee) },
-        fields.title_and_closing_fees && { description: 'Title and Closing Fees',       category: 'Purchase', amount: -Number(fields.title_and_closing_fees) },
-        fields.recording_fees         && { description: 'Recording Fees',               category: 'Purchase', amount: -Number(fields.recording_fees) },
-        fields.survey_fee             && { description: 'Survey Fee',                   category: 'Purchase', amount: -Number(fields.survey_fee) },
-        fields.environmental_fees     && { description: 'Environmental / Phase I Fees', category: 'Purchase', amount: -Number(fields.environmental_fees) },
-        fields.acquisition_fee        && { description: 'Knox Capital Acquisition Fee', category: 'Purchase', amount: -Number(fields.acquisition_fee) },
-        fields.buyer_taxes_paid       && { description: 'Property Taxes Paid at Closing', category: 'Purchase', amount: -Number(fields.buyer_taxes_paid) },
-        fields.prorated_rent          && { description: 'Prorated Rent Credit',         category: 'Rent',     amount:  Number(fields.prorated_rent) },
-        fields.tax_credits            && { description: 'Property Tax Proration',       category: 'Other',    amount:  Number(fields.tax_credits) },
+        cb > 0                           && { description: 'Building Value',               category: 'Purchase', amount: -(cb * bPct) },
+        cb > 0                           && { description: 'Land Value',                   category: 'Purchase', amount: -(cb * lPct) },
+        fields.loan_amount               && { description: 'Loan Proceeds',                category: 'Loan',     amount:  Number(fields.loan_amount) },
+        fields.earnest_money             && { description: 'Earnest Money Deposit',        category: 'Purchase', amount: -Number(fields.earnest_money) },
+        fields.cash_to_close             && { description: 'Cash to Close',                category: 'Purchase', amount: -Number(fields.cash_to_close) },
+        fields.loan_origination_fee      && { description: 'Loan Origination Fee',         category: 'Purchase', amount: -Number(fields.loan_origination_fee) },
+        fields.appraisal_fee             && { description: 'Appraisal Fee',                category: 'Purchase', amount: -Number(fields.appraisal_fee) },
+        fields.title_and_closing_fees    && { description: 'Title and Closing Fees',       category: 'Purchase', amount: -Number(fields.title_and_closing_fees) },
+        fields.endorsements_fee          && { description: 'Title Endorsements',           category: 'Purchase', amount: -Number(fields.endorsements_fee) },
+        fields.recording_fees            && { description: 'Recording Fees',               category: 'Purchase', amount: -Number(fields.recording_fees) },
+        fields.survey_fee                && { description: 'Survey Fee',                   category: 'Purchase', amount: -Number(fields.survey_fee) },
+        fields.environmental_fees        && { description: 'Environmental / Phase I Fees', category: 'Purchase', amount: -Number(fields.environmental_fees) },
+        fields.flood_determination_fee   && { description: 'Flood Determination Fee',      category: 'Purchase', amount: -Number(fields.flood_determination_fee) },
+        fields.acquisition_fee           && { description: 'Knox Capital Acquisition Fee', category: 'Purchase', amount: -Number(fields.acquisition_fee) },
+        fields.buyer_taxes_paid          && { description: 'Property Taxes Paid at Closing', category: 'Purchase', amount: -Number(fields.buyer_taxes_paid) },
+        fields.prorated_rent             && { description: 'Prorated Rent Credit',         category: 'Rent',     amount:  Number(fields.prorated_rent) },
+        fields.tax_credits               && { description: 'Property Tax Proration',       category: 'Other',    amount:  Number(fields.tax_credits) },
+        fields.insurance_credit          && { description: 'Insurance Proration Credit',   category: 'Other',    amount:  Number(fields.insurance_credit) },
+        fields.cam_credit                && { description: 'CAM / Maintenance Credit',     category: 'Other',    amount:  Number(fields.cam_credit) },
       ].filter(Boolean).map(t => ({ ...t, date, source: 'Settlement Statement' }))
 
       if (txs.length > 0) await createTransactions(propertyId, txs)
 
-      // Save journal entry (formatted for QuickBooks paste)
       await saveJournalEntry(propertyId, {
         entry_type: 'acquisition',
         entry_date: date,
-        label:      fields.property_address || 'Acquisition',
-        content:    buildClipboardText(journal, fields, date),
+        label:      propertyName || fields.property_address || 'Acquisition',
+        content:    buildClipboardText(journal, fields, date, propertyName),
       })
 
       onSaved()
@@ -373,7 +400,7 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
 
   function handleCopy() {
     if (!journal || !fields) return
-    navigator.clipboard.writeText(buildClipboardText(journal, fields, fields.settlement_date)).then(() => {
+    navigator.clipboard.writeText(buildClipboardText(journal, fields, fields.settlement_date, propertyName)).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })
@@ -383,7 +410,7 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl max-h-[92vh] flex flex-col">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 shrink-0">
@@ -453,10 +480,10 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
             <div className="space-y-5">
 
               {/* Property / date banner */}
-              {(fields.property_address || fields.settlement_date) && (
+              {(propertyName || fields.property_address || fields.settlement_date) && (
                 <div className="px-4 py-3 bg-slate-50 rounded-lg text-sm text-slate-600">
-                  {fields.property_address && (
-                    <span className="font-medium text-slate-800">{fields.property_address}</span>
+                  {(propertyName || fields.property_address) && (
+                    <span className="font-medium text-slate-800">{propertyName || fields.property_address}</span>
                   )}
                   {fields.settlement_date && (
                     <span className="ml-3 text-slate-400">
@@ -467,72 +494,85 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
               )}
 
               {/* Uncertain items review panel */}
-              <UncertainItemsPanel
-                items={uncertainItems}
-                onAssign={assignUncertainItem}
-              />
+              <UncertainItemsPanel items={uncertainItems} onAssign={assignUncertainItem} />
 
               <div className="grid grid-cols-2 gap-6">
 
                 {/* ── LEFT: Extracted Fields ── */}
                 <div className="space-y-4">
+
+                  {/* Purchase price & basis */}
                   <div>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Extracted Fields</h3>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Purchase & Cost Basis</h3>
                     <div className="bg-slate-50 rounded-xl px-4 py-2">
-                      <Field
-                        label="Purchase Price"
-                        value={fields.purchase_price}
-                        onChange={v => setField('purchase_price', v)}
-                      />
-                      <Field
-                        label="Total Closing Costs"
-                        value={fields.total_closing_costs}
-                        onChange={v => setField('total_closing_costs', v)}
-                      />
-                      {/* Total Cost Basis — computed, read-only */}
-                      <div className="flex items-center justify-between py-2 mt-1 border-t-2 border-slate-200">
+                      <Field label="Total Consideration" value={fields.purchase_price} onChange={v => setField('purchase_price', v)} />
+                      <Field label="Seller Closing Credit" value={fields.seller_closing_credit} onChange={v => setField('seller_closing_credit', v)} hint="reduces net purchase price" />
+                      {/* Net purchase price — computed */}
+                      <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
+                        <span className="text-xs text-slate-500">Net Purchase Price</span>
+                        <span className="text-sm font-medium text-slate-700 tabular-nums">{$fmt(netPurchasePrice)}</span>
+                      </div>
+                      <Field label="Total Closing Costs" value={fields.total_closing_costs} onChange={v => setField('total_closing_costs', v)} />
+                      {/* Total Cost Basis — computed */}
+                      <div className="flex items-center justify-between py-2 border-t-2 border-slate-200 mt-0.5">
                         <span className="text-xs font-semibold text-slate-700">Total Cost Basis</span>
                         <span className="text-sm font-bold text-slate-900 tabular-nums">{$fmt(totalCostBasis)}</span>
                       </div>
+                    </div>
+                  </div>
 
-                      {/* Separator */}
-                      <div className="border-t border-slate-100 mt-0.5 pt-1">
-                        <Field
-                          label="Loan Amount"
-                          value={fields.loan_amount}
-                          onChange={v => setField('loan_amount', v)}
-                        />
-                        <Field
-                          label="Cash to Close"
-                          value={fields.cash_to_close}
-                          onChange={v => setField('cash_to_close', v)}
-                        />
-                        <Field
-                          label="Earnest Money Deposit"
-                          value={fields.earnest_money}
-                          onChange={v => setField('earnest_money', v)}
-                        />
-                        <Field
-                          label="Tax Proration Credit"
-                          value={fields.tax_credits}
-                          onChange={v => setField('tax_credits', v)}
-                        />
-                        <Field
-                          label="Prorated Rent Credit"
-                          value={fields.prorated_rent}
-                          onChange={v => setField('prorated_rent', v)}
-                        />
-                        <TextField
-                          label="Lender Name"
-                          value={fields.lender_name}
-                          onChange={v => setField('lender_name', v)}
-                        />
-                        <Field
-                          label="Depreciation Expense"
-                          value={fields.depreciation_expense}
-                          onChange={v => setField('depreciation_expense', v)}
-                        />
-                      </div>
+                  {/* Financing & cash */}
+                  <div>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Financing & Cash</h3>
+                    <div className="bg-slate-50 rounded-xl px-4 py-2">
+                      <TextField label="Lender Name" value={fields.lender_name} onChange={v => setField('lender_name', v)} hint="QB liability account" />
+                      <Field label="Loan Amount" value={fields.loan_amount} onChange={v => setField('loan_amount', v)} />
+                      <Field label="Cash to Close" value={fields.cash_to_close} onChange={v => setField('cash_to_close', v)} />
+                      <Field label="Earnest Money Deposit" value={fields.earnest_money} onChange={v => setField('earnest_money', v)} />
+                    </div>
+                  </div>
+
+                  {/* EMD source */}
+                  <div>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">EMD Source</h3>
+                    <div className="bg-slate-50 rounded-xl px-4 py-3 space-y-2">
+                      <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                        <div
+                          onClick={() => setEmdOutsideLLC(v => !v)}
+                          className={`w-9 h-5 rounded-full transition-colors shrink-0 ${emdOutsideLLC ? 'bg-blue-500' : 'bg-slate-300'}`}
+                        >
+                          <div className={`w-4 h-4 bg-white rounded-full shadow mt-0.5 transition-transform ${emdOutsideLLC ? 'translate-x-4.5' : 'translate-x-0.5'}`} />
+                        </div>
+                        <span className="text-xs text-slate-700">EMD was funded outside the LLC</span>
+                      </label>
+                      {emdOutsideLLC && (
+                        <div className="pt-1">
+                          <p className="text-[10px] text-slate-500 mb-1.5">
+                            Adds DEBIT Building + CREDIT equity for the EMD amount — removes EMD from bank cash credit.
+                          </p>
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs text-slate-500 shrink-0 mr-3">Equity Account</span>
+                            <input
+                              type="text"
+                              value={emdEquityAccount}
+                              onChange={e => setEmdEquityAccount(e.target.value)}
+                              placeholder="e.g. Equity - Brad Cottam"
+                              className="flex-1 text-right text-xs border border-slate-200 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-300"
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Credits from seller */}
+                  <div>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Prorations & Credits</h3>
+                    <div className="bg-slate-50 rounded-xl px-4 py-2">
+                      <Field label="Tax Proration Credit" value={fields.tax_credits} onChange={v => setField('tax_credits', v)} />
+                      <Field label="Prorated Rent Credit" value={fields.prorated_rent} onChange={v => setField('prorated_rent', v)} />
+                      <Field label="Insurance Credit" value={fields.insurance_credit} onChange={v => setField('insurance_credit', v)} />
+                      <Field label="CAM / Maintenance Credit" value={fields.cam_credit} onChange={v => setField('cam_credit', v)} />
                     </div>
                   </div>
 
@@ -540,7 +580,6 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
                   <div>
                     <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Building / Land Split</h3>
                     <div className="bg-slate-50 rounded-xl px-4 py-2">
-                      {/* Building row */}
                       <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
                         <span className="text-xs text-slate-500">Building %</span>
                         <div className="flex items-center gap-2">
@@ -551,12 +590,9 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
                             className="w-16 text-right text-sm font-medium border border-slate-200 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-blue-300"
                           />
                           <span className="text-xs text-slate-400">%</span>
-                          <span className="text-xs font-medium text-slate-600 tabular-nums w-24 text-right">
-                            {$fmt(totalCostBasis * buildingPct / 100)}
-                          </span>
+                          <span className="text-xs font-medium text-slate-600 tabular-nums w-24 text-right">{$fmt(totalCostBasis * buildingPct / 100)}</span>
                         </div>
                       </div>
-                      {/* Land row */}
                       <div className="flex items-center justify-between py-1.5">
                         <span className="text-xs text-slate-500">Land %</span>
                         <div className="flex items-center gap-2">
@@ -567,9 +603,7 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
                             className="w-16 text-right text-sm font-medium border border-slate-200 rounded px-2 py-0.5 outline-none focus:ring-2 focus:ring-blue-300"
                           />
                           <span className="text-xs text-slate-400">%</span>
-                          <span className="text-xs font-medium text-slate-600 tabular-nums w-24 text-right">
-                            {$fmt(totalCostBasis * landPct / 100)}
-                          </span>
+                          <span className="text-xs font-medium text-slate-600 tabular-nums w-24 text-right">{$fmt(totalCostBasis * landPct / 100)}</span>
                         </div>
                       </div>
                       {(buildingPct + landPct) !== 100 && (
@@ -621,27 +655,21 @@ export default function SettlementUpload({ propertyId, onSaved, onClose }) {
                           </tr>
                         </thead>
                         <tbody>
-                          {/* Debits */}
                           {journal.debits.map((d, i) => (
                             <tr key={`d${i}`} className="border-b border-slate-100">
                               <td className="px-3 py-1.5">
                                 <span className="text-slate-800 font-medium">{d.account}</span>
-                                {d.note && (
-                                  <span className="ml-1.5 text-slate-400 text-[10px] font-normal">({d.note})</span>
-                                )}
+                                {d.note && <span className="ml-1.5 text-slate-400 text-[10px] font-normal">({d.note})</span>}
                               </td>
                               <td className="px-3 py-1.5 text-right text-slate-900 font-medium tabular-nums">{$fmt(d.amount)}</td>
                               <td className="px-3 py-1.5 text-right text-slate-300">—</td>
                             </tr>
                           ))}
-                          {/* Credits */}
                           {journal.credits.map((c, i) => (
                             <tr key={`c${i}`} className="border-b border-slate-100 bg-slate-50/50">
                               <td className="px-3 py-1.5 pl-5">
                                 <span className="text-slate-700">{c.account}</span>
-                                {c.note && (
-                                  <span className="ml-1.5 text-slate-400 text-[10px]">({c.note})</span>
-                                )}
+                                {c.note && <span className="ml-1.5 text-slate-400 text-[10px]">({c.note})</span>}
                               </td>
                               <td className="px-3 py-1.5 text-right text-slate-300">—</td>
                               <td className="px-3 py-1.5 text-right text-slate-900 font-medium tabular-nums">{$fmt(c.amount)}</td>

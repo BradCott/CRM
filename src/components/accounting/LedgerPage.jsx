@@ -453,6 +453,7 @@ export default function LedgerPage() {
       {showSettlement && (
         <SettlementUpload
           propertyId={propertyId}
+          property={property}
           onSaved={reload}
           onClose={() => setShowSettlement(false)}
         />

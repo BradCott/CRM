@@ -273,18 +273,23 @@ Return ONLY a valid JSON object in exactly this format — every field is requir
   "property_address": "street address or null",
   "lender_name": "string or null",
   "purchase_price": number or null,
+  "seller_closing_credit": number or null,
   "loan_amount": number or null,
   "earnest_money": number or null,
   "cash_to_close": number or null,
   "loan_origination_fee": number or null,
   "appraisal_fee": number or null,
   "title_and_closing_fees": number or null,
+  "endorsements_fee": number or null,
   "recording_fees": number or null,
   "survey_fee": number or null,
   "environmental_fees": number or null,
+  "flood_determination_fee": number or null,
   "acquisition_fee": number or null,
   "prorated_rent": number or null,
   "tax_credits": number or null,
+  "insurance_credit": number or null,
+  "cam_credit": number or null,
   "buyer_taxes_paid": number or null,
   "total_closing_costs": number or null,
   "uncertain_items": []
@@ -293,19 +298,24 @@ Return ONLY a valid JSON object in exactly this format — every field is requir
 Field extraction rules:
 - All amounts as POSITIVE numbers (the sign/direction is handled by the journal entry logic)
 - "lender_name": Full name of the lending institution / bank providing the mortgage. Look for "Lender:", "Bank:", or the institution name near the loan amount section. E.g. "Wells Fargo Bank", "Kendall Bank", "PNC Bank". Return just the name, no address.
-- "purchase_price": Contract sales price / purchase price line item
+- "purchase_price": Contract sales price / total consideration / purchase price line item
+- "seller_closing_credit": Any credit or concession given BY the seller TO the buyer (e.g. "Seller Closing Credit", "Seller Concession", "Seller Repair Credit"). Do NOT include prorated rent or tax prorations here — those go in their own fields.
 - "loan_amount": Principal amount of new mortgage/loan
-- "earnest_money": Earnest money deposit already paid
-- "cash_to_close": Net cash from borrower / cash to close / amount due from borrower
+- "earnest_money": Earnest money deposit already paid by the buyer prior to closing
+- "cash_to_close": Net cash from borrower / cash to close / amount due from borrower / balance due at closing
 - "loan_origination_fee": Loan origination fee, points, or lender fee
 - "appraisal_fee": Appraisal or property valuation fee
-- "title_and_closing_fees": Sum ALL title company charges — title insurance, escrow fee, settlement fee, closing fee, owner's policy, lender's policy, title search, title exam, notary fee, wire fee, document prep
+- "title_and_closing_fees": Sum of title company charges — title insurance, escrow fee, settlement fee, closing fee, owner's policy, lender's policy, title search, title exam, notary fee, wire fee, document prep. Do NOT include endorsements (extract those separately).
+- "endorsements_fee": Title endorsement fees (e.g. "Endorsement", "ALTA Endorsement", "Zoning Endorsement") — sum all endorsement line items
 - "recording_fees": County recording or filing fees
-- "survey_fee": Survey fee
+- "survey_fee": Survey fee or boundary survey
 - "environmental_fees": Phase I ESA, Phase II ESA, PCA (Property Condition Assessment), environmental report fees — sum all
+- "flood_determination_fee": Flood determination fee, flood certification fee, or flood zone determination
 - "acquisition_fee": Any fee paid to Knox Capital, acquisition fee, or advisory/consulting fee at closing
 - "prorated_rent": Prorated rent credited to buyer (positive = credit to buyer)
-- "tax_credits": Tax proration CREDITED to the buyer by the seller — i.e. seller's share of unpaid taxes given to buyer as a credit (HUD-1 lines 210-219, First American Buyer Credit column for taxes). Do NOT include taxes paid BY the buyer here.
+- "tax_credits": Tax proration CREDITED to the buyer by the seller — i.e. seller's share of unpaid taxes given to buyer as a credit (HUD-1 lines 210-219, First American Buyer Credit column for taxes). Combine ALL real estate tax credit lines. Do NOT include taxes paid BY the buyer here.
+- "insurance_credit": Insurance proration or escrow credit given to the buyer at closing (e.g. "Insurance Proration", "Hazard Insurance Credit", "Insurance Escrow Credit")
+- "cam_credit": CAM, maintenance, or property management escrow credit given to the buyer (e.g. "CAM Credit", "Maintenance Credit", "Reserve Credit")
 - "buyer_taxes_paid": Property taxes or back taxes PAID BY the buyer at closing — a cost to the buyer, not a credit (HUD-1 lines 1300-1399, e.g. line 1301 back taxes, delinquent taxes). If none, null.
 - "total_closing_costs": The single total of ALL settlement charges paid by the buyer — use HUD-1 line 103 "Settlement charges to borrower" exactly; for First American Title use the total of all Buyer Charge column entries (excluding purchase price and loan payoff). This is the authoritative total used for the journal entry — do not sum individual items yourself, find the printed total line.
 
@@ -319,7 +329,7 @@ Watch for and flag:
 - 1031 exchange proceeds, qualified intermediary deposits, or exchange funds
 - Holdback amounts or post-closing escrow holdbacks
 - A second mortgage, subordinate loan, or seller-carried note (beyond the primary loan_amount)
-- Seller concessions credited directly to the buyer
+- Seller concessions credited directly to the buyer (if you cannot confidently put it in seller_closing_credit)
 - Credits or adjustments where buyer vs. seller attribution is unclear
 - Unusual advisory, consulting, or management fees with no clear category
 - Any line item with a significant dollar amount you could not categorize with confidence
@@ -327,7 +337,7 @@ Watch for and flag:
 Each uncertain item must have:
 - "description": exact label text from the settlement statement
 - "amount": dollar amount as a positive number
-- "suggestion": plain-English best guess, e.g. "Closing Costs", "Cash to Close", "Loan Amount", "Tax Proration", "Prorated Rent", or "Ignore"
+- "suggestion": plain-English best guess, e.g. "Closing Costs", "Cash to Close", "Loan Amount", "Tax Proration", "Prorated Rent", "Seller Credit", or "Ignore"
 - "reason": one sentence explaining the ambiguity
 
 If no uncertain items exist, return: "uncertain_items": []
@@ -436,24 +446,29 @@ async function parseSettlementStatement(buffer, apiKey) {
   }
 
   return {
-    settlement_date:      cleanDate(raw.settlement_date),
-    property_address:     typeof raw.property_address === 'string' ? raw.property_address.trim() : null,
-    lender_name:          typeof raw.lender_name === 'string' && raw.lender_name.trim() ? raw.lender_name.trim() : null,
-    purchase_price:       cn(raw.purchase_price),
-    loan_amount:          cn(raw.loan_amount),
-    earnest_money:        cn(raw.earnest_money),
-    cash_to_close:        cn(raw.cash_to_close),
-    loan_origination_fee: cn(raw.loan_origination_fee),
-    appraisal_fee:        cn(raw.appraisal_fee),
+    settlement_date:        cleanDate(raw.settlement_date),
+    property_address:       typeof raw.property_address === 'string' ? raw.property_address.trim() : null,
+    lender_name:            typeof raw.lender_name === 'string' && raw.lender_name.trim() ? raw.lender_name.trim() : null,
+    purchase_price:         cn(raw.purchase_price),
+    seller_closing_credit:  cn(raw.seller_closing_credit),
+    loan_amount:            cn(raw.loan_amount),
+    earnest_money:          cn(raw.earnest_money),
+    cash_to_close:          cn(raw.cash_to_close),
+    loan_origination_fee:   cn(raw.loan_origination_fee),
+    appraisal_fee:          cn(raw.appraisal_fee),
     title_and_closing_fees: cn(raw.title_and_closing_fees),
-    recording_fees:       cn(raw.recording_fees),
-    survey_fee:           cn(raw.survey_fee),
-    environmental_fees:   cn(raw.environmental_fees),
-    acquisition_fee:      cn(raw.acquisition_fee),
-    prorated_rent:        cn(raw.prorated_rent),
-    tax_credits:          cn(raw.tax_credits),
-    buyer_taxes_paid:     cn(raw.buyer_taxes_paid),
-    total_closing_costs:  cn(raw.total_closing_costs),
+    endorsements_fee:       cn(raw.endorsements_fee),
+    recording_fees:         cn(raw.recording_fees),
+    survey_fee:             cn(raw.survey_fee),
+    environmental_fees:     cn(raw.environmental_fees),
+    flood_determination_fee: cn(raw.flood_determination_fee),
+    acquisition_fee:        cn(raw.acquisition_fee),
+    prorated_rent:          cn(raw.prorated_rent),
+    tax_credits:            cn(raw.tax_credits),
+    insurance_credit:       cn(raw.insurance_credit),
+    cam_credit:             cn(raw.cam_credit),
+    buyer_taxes_paid:       cn(raw.buyer_taxes_paid),
+    total_closing_costs:    cn(raw.total_closing_costs),
     uncertain_items: (() => {
       if (!Array.isArray(raw.uncertain_items)) return []
       return raw.uncertain_items
