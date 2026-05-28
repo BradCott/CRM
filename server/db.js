@@ -351,6 +351,21 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_dist_investor ON investor_distributions(investor_id);
   CREATE INDEX IF NOT EXISTS idx_dist_property ON investor_distributions(property_id);
   CREATE INDEX IF NOT EXISTS idx_dist_date     ON investor_distributions(distribution_date);
+
+  CREATE TABLE IF NOT EXISTS bank_connections (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id        INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    plaid_item_id      TEXT NOT NULL,
+    plaid_access_token TEXT NOT NULL,
+    plaid_account_id   TEXT NOT NULL DEFAULT '',
+    account_name       TEXT,
+    account_mask       TEXT,
+    institution_name   TEXT,
+    cursor             TEXT,
+    last_synced_at     TEXT,
+    created_at         TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_bank_conn_property ON bank_connections(property_id);
 `)
 for (const sql of migrations) {
   try { db.exec(sql) } catch (_) { /* column already exists — ignore */ }

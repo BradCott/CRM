@@ -173,6 +173,13 @@ export const bulkImportInvestors = (file) => {
 // Legacy alias kept for any existing code
 export const getInvestor = (id) => req('GET', `/investors/${id}`)
 
+// Plaid bank connections
+export const createPlaidLinkToken = ()        => req('POST',   '/plaid/link-token')
+export const exchangePlaidToken   = (data)    => req('POST',   '/plaid/exchange-token', data)
+export const getPlaidConnections  = (propId)  => req('GET',    `/plaid/${propId}/connections`)
+export const syncPlaidConnection  = (connId)  => req('POST',   `/plaid/connections/${connId}/sync`)
+export const disconnectPlaid      = (connId)  => req('DELETE', `/plaid/connections/${connId}`)
+
 // Property Management
 export const getManagementDashboard  = ()               => req('GET', '/management/dashboard')
 export const getAllManagementTasks   = (status = 'pending') =>

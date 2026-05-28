@@ -19,6 +19,7 @@ import authRouter           from './routes/auth.js'
 import emailsRouter         from './routes/emails.js'
 import loiImportRouter      from './routes/loiImport.js'
 import accountingRouter     from './routes/accounting.js'
+import plaidRouter          from './routes/plaid.js'
 import usersRouter          from './routes/users.js'
 import managementRouter     from './routes/management.js'
 import handwryttenRouter   from './routes/handwrytten.js'
@@ -54,6 +55,7 @@ app.use('/api/admin/users',      requireAuth, requireRole('admin'), usersRouter)
 
 // Admin + full_agent only
 app.use('/api/accounting',       requireAuth, requireRole('admin', 'full_agent'), requireWrite, accountingRouter)
+app.use('/api/plaid',            requireAuth, requireRole('admin', 'full_agent'), requireWrite, plaidRouter)
 app.use('/api/investors',        requireAuth, requireRole('admin', 'full_agent'), requireWrite, investorsRouter)
 
 // All authenticated users can read; only admin can write

@@ -31,9 +31,11 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^8.0.5",
     "pdf-lib": "^1.17.1",
+    "plaid": "^42.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-leaflet": "^4.2.1",
+    "react-plaid-link": "^4.1.1",
     "react-router-dom": "^6.26.2",
     "react-simple-maps": "^3.0.0",
     "xlsx": "^0.18.5"

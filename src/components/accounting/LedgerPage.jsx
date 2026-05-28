@@ -9,6 +9,7 @@ import BankStatementReview from './BankStatementReview'
 import InvestorUpload from './InvestorUpload'
 import BalanceSheet from './BalanceSheet'
 import ProfitLoss from './ProfitLoss'
+import PlaidConnect from './PlaidConnect'
 
 const CATEGORY_COLORS = {
   'Equity Contribution': 'bg-blue-100 text-blue-700',
@@ -409,6 +410,11 @@ export default function LedgerPage() {
             </tfoot>
           </table>
         </div>
+      )}
+
+      {/* Bank Connections — only in ledger view */}
+      {activeView === 'ledger' && (
+        <PlaidConnect propertyId={propertyId} onTransactionsImported={reload} />
       )}
 
       {/* Transaction Ledger — collapsible, only in ledger view */}
