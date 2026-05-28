@@ -111,6 +111,7 @@ export const deleteEmail  = (id)       => req('DELETE', `/emails/${id}`)
 
 // Accounting
 export const getAccountingSummary     = ()              => req('GET',    '/accounting/summary')
+export const getAccountingReports     = ()              => req('GET',    '/accounting/reports')
 export const getLedger                = (propertyId)    => req('GET',    `/accounting/${propertyId}/transactions`)
 export const createTransactions       = (propertyId, d) => req('POST',   `/accounting/${propertyId}/transactions`, d)
 export const deleteTransaction        = (id)            => req('DELETE', `/accounting/transactions/${id}`)

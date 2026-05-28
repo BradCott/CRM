@@ -10,6 +10,39 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 
 const CATEGORIES = ['Equity Contribution', 'Purchase', 'Loan', 'Rent', 'Mortgage', 'Repair', 'Sale', 'Other']
 const SOURCES    = ['Manual', 'Settlement Statement', 'Bank Statement', 'Excel Upload']
 
+// ── Portfolio Reports — all properties with full transaction + investor data ──
+
+router.get('/reports', (req, res) => {
+  const properties = db.prepare(`
+    SELECT p.id, p.address, COALESCE(p.city,'') AS city, COALESCE(p.state,'') AS state,
+           tb.name AS tenant
+    FROM properties p
+    LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
+    WHERE p.is_portfolio = 1
+    ORDER BY p.address ASC
+  `).all()
+
+  const txStmt  = db.prepare(`
+    SELECT id, date, description, category, amount, source
+    FROM accounting_transactions
+    WHERE property_id = ?
+    ORDER BY date ASC
+  `)
+  const invStmt = db.prepare(`
+    SELECT id, name, contribution
+    FROM property_investors
+    WHERE property_id = ?
+  `)
+
+  const result = properties.map(p => ({
+    ...p,
+    transactions: txStmt.all(p.id),
+    investors:    invStmt.all(p.id),
+  }))
+
+  res.json(result)
+})
+
 // ── Summary — all portfolio properties with computed stats ────────────────────
 
 router.get('/summary', (req, res) => {

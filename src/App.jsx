@@ -14,6 +14,7 @@ import DashboardPage    from './components/dashboard/DashboardPage'
 import SettingsPage     from './components/settings/SettingsPage'
 import AccountingPage   from './components/accounting/AccountingPage'
 import LedgerPage       from './components/accounting/LedgerPage'
+import AccountingReports from './components/accounting/AccountingReports'
 import LoginPage        from './components/auth/LoginPage'
 import SignupPage       from './components/auth/SignupPage'
 import AdminPage                 from './components/admin/AdminPage'
@@ -99,6 +100,7 @@ export default function App() {
               <Route path="/investors"     element={<RequireRole><InvestorsPage /></RequireRole>} />
               <Route path="/investors/:id" element={<RequireRole><InvestorProfilePage /></RequireRole>} />
               <Route path="/accounting" element={<RequireRole><AccountingPage /></RequireRole>} />
+              <Route path="/accounting/reports" element={<RequireRole><AccountingReports /></RequireRole>} />
               <Route path="/accounting/:propertyId" element={<RequireRole><LedgerPage /></RequireRole>} />
 
               {/* Admin + full_agent */}
