@@ -1,12 +1,14 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown } from 'lucide-react'
+import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale } from 'lucide-react'
 import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution } from '../../api/client'
 import Button from '../ui/Button'
 import AddTransactionModal from './AddTransactionModal'
 import SettlementUpload from './SettlementUpload'
 import BankStatementReview from './BankStatementReview'
 import InvestorUpload from './InvestorUpload'
+import BalanceSheet from './BalanceSheet'
+import ProfitLoss from './ProfitLoss'
 
 const CATEGORY_COLORS = {
   'Equity Contribution': 'bg-blue-100 text-blue-700',
@@ -57,6 +59,7 @@ export default function LedgerPage() {
   const [investors, setInvestors]           = useState([])
   const [deletingInv, setDeletingInv]       = useState(null)
   const [editingContrib, setEditingContrib] = useState(null) // { id, value }
+  const [activeView, setActiveView]         = useState('ledger') // 'ledger' | 'balance' | 'pl'
   const [ledgerOpen, setLedgerOpen]         = useState(false)
   const [sortState, setSortState]           = useState({ col: 'date', dir: 'desc' })
   const [invSort, setInvSort]               = useState({ col: 'contribution', dir: 'desc' })
@@ -174,6 +177,25 @@ export default function LedgerPage() {
     mortgage:  transactions.filter(t => t.category === 'Mortgage' && t.amount < 0).reduce((s, t) => s + Number(t.amount), 0),
   }
 
+  function exportCSV() {
+    const header = ['Date', 'Description', 'Category', 'Amount', 'Source']
+    const rows = transactions.map(t => [
+      t.date,
+      `"${(t.description || '').replace(/"/g, '""')}"`,
+      t.category,
+      t.amount,
+      t.source,
+    ])
+    const csv = [header, ...rows].map(r => r.join(',')).join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement('a')
+    a.href     = url
+    a.download = `${property?.address || 'ledger'} - Transactions.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   if (loading) return (
     <div className="flex-1 flex items-center justify-center">
       <Loader2 className="w-6 h-6 text-slate-400 animate-spin" />
@@ -225,6 +247,9 @@ export default function LedgerPage() {
             <Button variant="secondary" onClick={() => setShowInvestors(true)}>
               <Users className="w-4 h-4" /> Investor Contributions
             </Button>
+            <Button variant="secondary" onClick={exportCSV} title="Download all transactions as CSV">
+              <Download className="w-4 h-4" /> Export
+            </Button>
             <Button onClick={() => setShowAdd(true)}>
               <Plus className="w-4 h-4" /> Add Transaction
             </Button>
@@ -232,7 +257,7 @@ export default function LedgerPage() {
         </div>
 
         {/* Summary stats */}
-        <div className="flex items-center gap-6 pb-4 flex-wrap">
+        <div className="flex items-center gap-6 pb-3 flex-wrap">
           <Stat label="Current Balance" value={fmt$(totals.balance)}
             color={totals.balance >= 0 ? 'text-emerald-600' : 'text-red-600'} />
           <div className="w-px h-8 bg-slate-200" />
@@ -244,10 +269,45 @@ export default function LedgerPage() {
           <div className="w-px h-8 bg-slate-200" />
           <Stat label="Transactions"       value={transactions.length}    color="text-slate-700" />
         </div>
+
+        {/* Tab navigation */}
+        <div className="flex items-center gap-0 -mx-6 px-6 border-t border-slate-100">
+          {[
+            { key: 'ledger',  label: 'Ledger',        Icon: null },
+            { key: 'balance', label: 'Balance Sheet',  Icon: Scale },
+            { key: 'pl',      label: 'P&L',            Icon: BarChart2 },
+          ].map(({ key, label, Icon }) => (
+            <button
+              key={key}
+              onClick={() => setActiveView(key)}
+              className={[
+                'flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap',
+                activeView === key
+                  ? 'border-blue-500 text-blue-600'
+                  : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300',
+              ].join(' ')}
+            >
+              {Icon && <Icon className="w-3.5 h-3.5" />}
+              {label}
+            </button>
+          ))}
+        </div>
       </header>
 
-      {/* Investors section */}
-      {investors.length > 0 && (
+      {/* Balance Sheet / P&L views */}
+      {activeView === 'balance' && (
+        <div className="flex-1 overflow-y-auto">
+          <BalanceSheet transactions={transactions} investors={investors} />
+        </div>
+      )}
+      {activeView === 'pl' && (
+        <div className="flex-1 overflow-y-auto">
+          <ProfitLoss transactions={transactions} />
+        </div>
+      )}
+
+      {/* Investors section — only in ledger view */}
+      {activeView === 'ledger' && investors.length > 0 && (
         <div className="shrink-0 bg-slate-50 border-b border-slate-200">
           <div className="px-6 pt-3 pb-1">
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
@@ -351,8 +411,8 @@ export default function LedgerPage() {
         </div>
       )}
 
-      {/* Transaction Ledger — collapsible */}
-      <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
+      {/* Transaction Ledger — collapsible, only in ledger view */}
+      {activeView === 'ledger' && <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
         {/* Section header / toggle */}
         <button
           onClick={() => setLedgerOpen(o => !o)}
@@ -439,7 +499,7 @@ export default function LedgerPage() {
             )}
           </div>
         )}
-      </div>
+      </div>}
 
       {/* Modals */}
       {showAdd && (
