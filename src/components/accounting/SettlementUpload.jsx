@@ -31,7 +31,7 @@ const $fmt = v =>
 //   8. [Property Name]                     — checking acct, cash out (ctc [+ em if inside LLC])
 //
 // Balance identity:
-//   totalBasis = loan + rent + taxCr + insuranceCr + camCr + bankCashOut
+//   totalBasis = loan + exchange + rent + taxCr + insuranceCr + camCr + bankCashOut
 //   where totalBasis = (pp - sellerCr) + closingCosts
 //   Equity and EMD-outside-LLC lines are symmetric (debit = credit).
 
@@ -46,6 +46,7 @@ function buildJournal(f, buildingPct, landPct, investors = [], emdOutsideLLC = f
   const taxCr       = Number(f.tax_credits)           || 0
   const insuranceCr = Number(f.insurance_credit)      || 0
   const camCr       = Number(f.cam_credit)            || 0
+  const exchange    = Number(f.exchange_proceeds)     || 0
   const lender      = (f.lender_name || '').trim()
 
   // Account name: CRM property name takes priority over PDF-extracted address
@@ -83,6 +84,7 @@ function buildJournal(f, buildingPct, landPct, investors = [], emdOutsideLLC = f
   // CREDITS
   const credits = [
     loan > 0         && { account: mortgageAccount,                   amount: loan },
+    exchange > 0     && { account: '1031 Exchange Proceeds',          amount: exchange },
     rent > 0         && { account: 'Rental Income',                   amount: rent },
     taxCr > 0        && { account: 'Taxes & licenses:Property taxes', amount: taxCr },
     insuranceCr > 0  && { account: 'Insurance',                       amount: insuranceCr },
@@ -134,15 +136,16 @@ function buildClipboardText(journal, fields, date, propertyName = '') {
 // ── Uncertain items — category map + helpers ──────────────────────────────────
 
 const FIELD_MAP = {
-  'Loan Amount':    'loan_amount',
-  'Cash to Close':  'cash_to_close',
-  'Earnest Money':  'earnest_money',
-  'Seller Credit':  'seller_closing_credit',
-  'Prorated Rent':  'prorated_rent',
-  'Tax Proration':  'tax_credits',
-  'Insurance Credit': 'insurance_credit',
-  'CAM Credit':     'cam_credit',
-  'Ignore':         null,
+  'Loan Amount':       'loan_amount',
+  '1031 Exchange':     'exchange_proceeds',
+  'Cash to Close':     'cash_to_close',
+  'Earnest Money':     'earnest_money',
+  'Seller Credit':     'seller_closing_credit',
+  'Prorated Rent':     'prorated_rent',
+  'Tax Proration':     'tax_credits',
+  'Insurance Credit':  'insurance_credit',
+  'CAM Credit':        'cam_credit',
+  'Ignore':            null,
 }
 
 /** Returns true if the item description looks like a broker/agent commission. */
@@ -157,6 +160,7 @@ function guessCategory(suggestion, description) {
   if (isBrokerFee(description)) return 'Ignore'
   if (!suggestion) return 'Ignore'
   const s = suggestion.toLowerCase()
+  if (s.includes('1031') || s.includes('exchange') || s.includes('intermediary') || s.includes('qi deposit')) return '1031 Exchange'
   if (s.includes('loan') || s.includes('mortgage') || s.includes('principal')) return 'Loan Amount'
   if (s.includes('cash') && (s.includes('close') || s.includes('closing')))    return 'Cash to Close'
   if (s.includes('earnest'))                                                     return 'Earnest Money'
@@ -379,6 +383,7 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
         fields.tax_credits               && { description: 'Property Tax Proration',       category: 'Other',    amount:  Number(fields.tax_credits) },
         fields.insurance_credit          && { description: 'Insurance Proration Credit',   category: 'Other',    amount:  Number(fields.insurance_credit) },
         fields.cam_credit                && { description: 'CAM / Maintenance Credit',     category: 'Other',    amount:  Number(fields.cam_credit) },
+        fields.exchange_proceeds         && { description: '1031 Exchange Proceeds',       category: 'Loan',     amount:  Number(fields.exchange_proceeds) },
       ].filter(Boolean).map(t => ({ ...t, date, source: 'Settlement Statement' }))
 
       if (txs.length > 0) await createTransactions(propertyId, txs)
@@ -569,6 +574,7 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
                   <div>
                     <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Prorations & Credits</h3>
                     <div className="bg-slate-50 rounded-xl px-4 py-2">
+                      <Field label="1031 Exchange Proceeds" value={fields.exchange_proceeds} onChange={v => setField('exchange_proceeds', v)} hint="QI deposit applied to purchase" />
                       <Field label="Tax Proration Credit" value={fields.tax_credits} onChange={v => setField('tax_credits', v)} />
                       <Field label="Prorated Rent Credit" value={fields.prorated_rent} onChange={v => setField('prorated_rent', v)} />
                       <Field label="Insurance Credit" value={fields.insurance_credit} onChange={v => setField('insurance_credit', v)} />
