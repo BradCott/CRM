@@ -221,6 +221,23 @@ router.post('/:propertyId/journal-entries', (req, res) => {
   res.status(201).json({ id: r.lastInsertRowid, property_id: Number(propertyId), entry_type, entry_date, label, content })
 })
 
+// ── Parse-only settlement — no property ID needed (used when creating a new portfolio property) ──
+
+router.post('/parse-settlement', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set' })
+  const { originalname, buffer } = req.file
+  console.log(`[accounting] Parse-only settlement: ${originalname} (${buffer.length} bytes)`)
+  try {
+    const result = await parseSettlementStatement(buffer, apiKey)
+    res.json({ ok: true, ...result })
+  } catch (err) {
+    console.error('[accounting] Parse error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ── Settlement Statement AI parse ─────────────────────────────────────────────
 
 router.post('/:propertyId/settlement', upload.single('file'), async (req, res) => {
@@ -270,7 +287,10 @@ const SETTLEMENT_PROMPT = `You are extracting financial data from a real estate 
 Return ONLY a valid JSON object in exactly this format — every field is required (use null if not found):
 {
   "settlement_date": "YYYY-MM-DD or null",
-  "property_address": "street address or null",
+  "property_address": "street address only (no city/state/zip) or null",
+  "property_city": "city name or null",
+  "property_state": "2-letter state abbreviation or null",
+  "property_zip": "zip code as a string or null",
   "lender_name": "string or null",
   "purchase_price": number or null,
   "seller_closing_credit": number or null,
@@ -297,6 +317,10 @@ Return ONLY a valid JSON object in exactly this format — every field is requir
 
 Field extraction rules:
 - All amounts as POSITIVE numbers (the sign/direction is handled by the journal entry logic)
+- "property_address": street address only — do NOT include city, state, or zip here
+- "property_city": city name from the property address section
+- "property_state": 2-letter state abbreviation (e.g. "TN", "GA", "FL")
+- "property_zip": zip or postal code as a string
 - "lender_name": Full name of the lending institution / bank providing the mortgage. Look for "Lender:", "Bank:", or the institution name near the loan amount section. E.g. "Wells Fargo Bank", "Kendall Bank", "PNC Bank". Return just the name, no address.
 - "purchase_price": Contract sales price / total consideration / purchase price line item
 - "seller_closing_credit": Any credit or concession given BY the seller TO the buyer (e.g. "Seller Closing Credit", "Seller Concession", "Seller Repair Credit"). Do NOT include prorated rent or tax prorations here — those go in their own fields.
@@ -445,10 +469,15 @@ async function parseSettlementStatement(buffer, apiKey) {
     return (n !== null && isFinite(n) && n > 0) ? n : null
   }
 
+  const cleanStr = v => (typeof v === 'string' && v.trim()) ? v.trim() : null
+
   return {
     settlement_date:        cleanDate(raw.settlement_date),
-    property_address:       typeof raw.property_address === 'string' ? raw.property_address.trim() : null,
-    lender_name:            typeof raw.lender_name === 'string' && raw.lender_name.trim() ? raw.lender_name.trim() : null,
+    property_address:       cleanStr(raw.property_address),
+    property_city:          cleanStr(raw.property_city),
+    property_state:         cleanStr(raw.property_state),
+    property_zip:           cleanStr(raw.property_zip),
+    lender_name:            cleanStr(raw.lender_name),
     purchase_price:         cn(raw.purchase_price),
     seller_closing_credit:  cn(raw.seller_closing_credit),
     loan_amount:            cn(raw.loan_amount),

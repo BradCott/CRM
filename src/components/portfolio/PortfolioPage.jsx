@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Landmark, Plus, MoreHorizontal, Pencil, Trash2, Loader2,
-  ChevronLeft, ChevronRight, AlertCircle, Upload, Download, X, CheckCircle2, Settings2,
+  ChevronLeft, ChevronRight, AlertCircle, Upload, Download, X, CheckCircle2, Settings2, FileText,
 } from 'lucide-react'
 import { getProperties, getPropertyFeeSummary } from '../../api/client'
 import { useApp } from '../../context/AppContext'
@@ -11,6 +11,7 @@ import Modal from '../ui/Modal'
 import ConfirmDialog from '../ui/ConfirmDialog'
 import PropertyForm from '../properties/PropertyForm'
 import PropertyDetail from '../properties/PropertyDetail'
+import AddViaSettlementModal from './AddViaSettlementModal'
 import ColumnCustomizer, {
   buildPanelCols, loadSavedCols, detectPreset, saveColsToStorage,
 } from '../ui/ColumnCustomizer'
@@ -113,7 +114,8 @@ export default function PortfolioPage() {
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [detailId, setDetailId]         = useState(null)
   const [openMenu, setOpenMenu]         = useState(null)
-  const [showImport, setShowImport]     = useState(false)
+  const [showImport, setShowImport]         = useState(false)
+  const [showAddSettlement, setShowAddSettlement] = useState(false)
   const [feeSummary, setFeeSummary]     = useState(null)
   const [showCustomizer, setShowCustomizer] = useState(false)
 
@@ -213,6 +215,9 @@ export default function PortfolioPage() {
             <button onClick={() => setShowImport(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">
               <Upload className="w-4 h-4" /> Import CSV
             </button>
+            <button onClick={() => setShowAddSettlement(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">
+              <FileText className="w-4 h-4" /> Add via Settlement
+            </button>
             <Button onClick={() => { setEditTarget(null); setShowForm(true) }}>
               <Plus className="w-4 h-4" /> Add property
             </Button>
@@ -304,6 +309,12 @@ export default function PortfolioPage() {
       {showImport && (
         <PortfolioImportModal onClose={() => setShowImport(false)}
           onImported={() => { setShowImport(false); load(search, tenantFilter, stateFilter, page); refreshFeeSummary() }} />
+      )}
+      {showAddSettlement && (
+        <AddViaSettlementModal
+          onSave={handleSave}
+          onClose={() => setShowAddSettlement(false)}
+        />
       )}
     </div>
   )
