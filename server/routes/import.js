@@ -356,126 +356,258 @@ router.post('/salesforce', upload.single('file'), (req, res) => {
   })
 })
 
-// GET /api/import/prospect-template — download Excel template
-router.get('/prospect-template', (req, res) => {
-  const XLSX = require('xlsx')
+// Column definitions for property import
+// [header, required, example1, example2, description]
+const PROP_COLUMNS = [
+  ['address',        true,  '1234 Main St',               '789 Oak Ave',           'Street address (no unit/suite needed)'],
+  ['city',           true,  'Birmingham',                  'Huntsville',            'City where the property is located'],
+  ['state',          true,  'AL',                          'AL',                    'Two-letter state abbreviation (e.g. AL, GA, TN)'],
+  ['tenant_brand',   true,  'Joe Hudson Collision',        'Caliber Collision',     'Tenant name — created automatically if new'],
+  ['zip',            false, '35203',                       '35801',                 '5-digit ZIP code'],
+  ['property_type',  false, 'Auto',                        'Auto',                  'Retail / Net Lease / Industrial / Office / Medical / Restaurant / Auto / Other'],
+  ['lease_type',     false, 'NNN',                         'NN',                    'NNN / NN / N / Gross / Modified Gross / Ground Lease'],
+  ['annual_rent',    false, '120000',                      '95000',                 'Annual rent in dollars (numbers only, no $ or commas)'],
+  ['noi',            false, '118000',                      '93000',                 'Net operating income in dollars'],
+  ['cap_rate',       false, '5.75',                        '6.10',                  'Cap rate as a percentage (e.g. 5.75 for 5.75%)'],
+  ['building_size',  false, '8500',                        '6200',                  'Building square footage'],
+  ['land_area',      false, '1.25',                        '0.95',                  'Land area in acres (e.g. 1.25)'],
+  ['year_built',     false, '2018',                        '2020',                  '4-digit year the building was constructed'],
+  ['owner_name',     false, 'Smith Properties LLC',        'Oak Holdings Inc',      'Owner or company name — matched by name+city to avoid duplicates'],
+  ['owner_phone',    false, '(205) 555-1234',              '(256) 555-9876',        'Owner phone number'],
+  ['owner_email',    false, 'john@smithprop.com',          'info@oakhold.com',      'Owner email address'],
+  ['owner_address',  false, '100 Commerce St',             '200 Clinton Ave',       'Owner mailing street address'],
+  ['owner_city',     false, 'Birmingham',                  'Huntsville',            'Owner mailing city'],
+  ['owner_state',    false, 'AL',                          'AL',                    'Owner mailing state (2-letter abbreviation)'],
+  ['owner_zip',      false, '35203',                       '35801',                 'Owner mailing ZIP code'],
+  ['notes',          false, 'Off-market, owner motivated', '',                      'Free-form notes about the property or deal'],
+]
 
-  const COLUMNS = [
-    // [header, mandatory, example1, example2]
-    ['address',        true,  '1234 Main St',          '789 Oak Ave'],
-    ['city',           true,  'Birmingham',             'Huntsville'],
-    ['state',          true,  'AL',                     'AL'],
-    ['zip',            false, '35203',                  '35801'],
-    ['tenant_brand',   false, 'Joe Hudson Collision',   'Caliber Collision'],
-    ['property_type',  false, 'Auto',                   'Auto'],
-    ['lease_type',     false, 'NNN',                    'NN'],
-    ['lease_start',    false, '2018-01-01',              '2020-06-01'],
-    ['lease_end',      false, '2033-01-01',              '2035-06-01'],
-    ['annual_rent',    false, '120000',                 '95000'],
-    ['noi',            false, '118000',                 '93000'],
-    ['cap_rate',       false, '5.75',                   '6.10'],
-    ['list_price',     false, '2050000',                '1525000'],
-    ['building_size',  false, '8500',                   '6200'],
-    ['land_area',      false, '1.25',                   '0.95'],
-    ['year_built',     false, '2018',                   '2020'],
-    ['owner_name',     false, 'Smith Properties LLC',   'Oak Holdings Inc'],
-    ['owner_phone',    false, '(205) 555-1234',         '(256) 555-9876'],
-    ['owner_email',    false, 'john@smithprop.com',     'info@oakhold.com'],
-    ['owner_address',  false, '100 Commerce St',        '200 Clinton Ave'],
-    ['owner_city',     false, 'Birmingham',             'Huntsville'],
-    ['owner_state',    false, 'AL',                     'AL'],
-    ['owner_zip',      false, '35203',                  '35801'],
-    ['notes',          false, 'Off-market, owner motivated', ''],
+// GET /api/import/prospect-template — download Excel template with proper highlighting
+router.get('/prospect-template', async (req, res) => {
+  const ExcelJS = (await import('exceljs')).default
+
+  const wb = new ExcelJS.Workbook()
+  wb.creator = 'Knox Capital CRM'
+
+  // ── Data sheet ───────────────────────────────────────────────────────────────
+  const ws = wb.addWorksheet('Properties', { views: [{ state: 'frozen', ySplit: 1 }] })
+
+  ws.columns = PROP_COLUMNS.map(([key, , , , desc]) => ({
+    header: key,
+    key,
+    width: Math.max(key.length + 4, 20),
+  }))
+
+  // Style header row
+  ws.getRow(1).eachCell((cell, colNum) => {
+    const [, required] = PROP_COLUMNS[colNum - 1]
+    cell.font      = { bold: true, color: { argb: required ? 'FF7D4F00' : 'FF4A4A4A' } }
+    cell.fill      = { type: 'pattern', pattern: 'solid', fgColor: { argb: required ? 'FFFFF3CD' : 'FFF0F0F0' } }
+    cell.alignment = { horizontal: 'center', vertical: 'middle', wrapText: false }
+    cell.border    = { bottom: { style: 'medium', color: { argb: required ? 'FFD4A017' : 'FFCCCCCC' } } }
+  })
+  ws.getRow(1).height = 22
+
+  // Example rows
+  const examples = [
+    Object.fromEntries(PROP_COLUMNS.map(([key, , ex1]) => [key, ex1])),
+    Object.fromEntries(PROP_COLUMNS.map(([key, , , ex2]) => [key, ex2])),
   ]
+  examples.forEach((row, i) => {
+    const wsRow = ws.addRow(row)
+    wsRow.eachCell(cell => {
+      cell.font = { italic: true, color: { argb: 'FF666666' } }
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: i === 0 ? 'FFFAFAFA' : 'FFF5F5F5' } }
+    })
+  })
 
-  const wb = XLSX.utils.book_new()
-
-  // ── Main sheet ──────────────────────────────────────────────────────────────
-  const wsData = [
-    COLUMNS.map(([h]) => h),
-    COLUMNS.map(([,, ex1]) => ex1),
-    COLUMNS.map(([,,, ex2]) => ex2),
+  // ── Column Guide sheet ───────────────────────────────────────────────────────
+  const guide = wb.addWorksheet('Column Guide')
+  guide.columns = [
+    { header: 'Column',     key: 'col',  width: 20 },
+    { header: 'Required?',  key: 'req',  width: 14 },
+    { header: 'Description', key: 'desc', width: 60 },
   ]
-  const ws = XLSX.utils.aoa_to_sheet(wsData)
-
-  // Column widths
-  ws['!cols'] = COLUMNS.map(([h]) => ({ wch: Math.max(h.length + 2, 18) }))
-
-  // Style header row: mandatory = yellow bold, optional = light grey bold
-  COLUMNS.forEach(([, mandatory], ci) => {
-    const cellAddr = XLSX.utils.encode_cell({ r: 0, c: ci })
-    if (!ws[cellAddr]) return
-    ws[cellAddr].s = {
-      font:      { bold: true, color: { rgb: mandatory ? '7D4F00' : '4A4A4A' } },
-      fill:      { fgColor: { rgb: mandatory ? 'FFF3CD' : 'F0F0F0' } },
-      alignment: { horizontal: 'center' },
-      border:    { bottom: { style: 'medium', color: { rgb: mandatory ? 'D4A017' : 'CCCCCC' } } },
+  guide.getRow(1).eachCell(cell => {
+    cell.font = { bold: true }
+    cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE8EEF5' } }
+  })
+  PROP_COLUMNS.forEach(([col, required, , , desc]) => {
+    const r = guide.addRow({ col, req: required ? '★ Required' : 'Optional', desc })
+    if (required) {
+      r.getCell('req').font = { bold: true, color: { argb: 'FF7D4F00' } }
+      r.getCell('req').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3CD' } }
     }
   })
 
-  // Style example rows
-  for (let r = 1; r <= 2; r++) {
-    COLUMNS.forEach((_, ci) => {
-      const cellAddr = XLSX.utils.encode_cell({ r, c: ci })
-      if (!ws[cellAddr]) return
-      ws[cellAddr].s = {
-        font: { color: { rgb: '555555' }, italic: true },
-        fill: { fgColor: { rgb: r === 1 ? 'FAFAFA' : 'F5F5F5' } },
-      }
-    })
-  }
-
-  XLSX.utils.book_append_sheet(wb, ws, 'Prospects')
-
-  // ── Legend sheet ────────────────────────────────────────────────────────────
-  const legendData = [
-    ['Column', 'Required?', 'Description'],
-    ...COLUMNS.map(([h, mandatory]) => [
-      h,
-      mandatory ? '✓ Required' : 'Optional',
-      COLUMN_NOTES[h] || '',
-    ]),
-  ]
-  const wsLegend = XLSX.utils.aoa_to_sheet(legendData)
-  wsLegend['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 55 }]
-  // Header row styling
-  ;['A1','B1','C1'].forEach(addr => {
-    if (wsLegend[addr]) wsLegend[addr].s = { font: { bold: true }, fill: { fgColor: { rgb: 'E8EEF5' } } }
-  })
-  XLSX.utils.book_append_sheet(wb, wsLegend, 'Column Guide')
-
-  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', cellStyles: true })
-  res.setHeader('Content-Disposition', 'attachment; filename="Knox Prospect Import Template.xlsx"')
+  res.setHeader('Content-Disposition', 'attachment; filename="Knox Property Import Template.xlsx"')
   res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-  res.send(buf)
+  await wb.xlsx.write(res)
+  res.end()
 })
 
-const COLUMN_NOTES = {
-  address:       'Street address of the property (e.g. 1234 Main St). No unit/suite needed.',
-  city:          'City where the property is located.',
-  state:         'Two-letter state abbreviation (e.g. AL, GA, TN).',
-  zip:           '5-digit ZIP code.',
-  tenant_brand:  'Tenant name (e.g. Joe Hudson Collision). Will be created if new.',
-  property_type: 'Retail / Net Lease / Industrial / Office / Medical / Restaurant / Auto / Other',
-  lease_type:    'NNN / NN / N / Gross / Modified Gross / Ground Lease',
-  lease_start:   'Lease start date in YYYY-MM-DD format.',
-  lease_end:     'Lease expiration date in YYYY-MM-DD format.',
-  annual_rent:   'Annual rent in dollars (numbers only, no $ or commas).',
-  noi:           'Net operating income in dollars.',
-  cap_rate:      'Cap rate as a percentage (e.g. 5.75 for 5.75%).',
-  list_price:    'Asking price in dollars.',
-  building_size: 'Building square footage (number only).',
-  land_area:     'Land area in acres (e.g. 1.25).',
-  year_built:    '4-digit year the building was constructed.',
-  owner_name:    'Owner or company name. Used for duplicate matching by name + city.',
-  owner_phone:   'Owner phone number.',
-  owner_email:   'Owner email address.',
-  owner_address: 'Owner mailing street address.',
-  owner_city:    'Owner mailing city.',
-  owner_state:   'Owner mailing state (2-letter abbreviation).',
-  owner_zip:     'Owner mailing ZIP code.',
-  notes:         'Any free-form notes about the property or deal.',
-}
+// POST /api/import/prospects — import properties from the Knox template (CSV or XLSX)
+// Deduplicates both properties (by addr_key) and people (by name_key + city/state)
+router.post('/prospects', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+
+  const ext = req.file.originalname.split('.').pop().toLowerCase()
+  let rows = []
+  try {
+    if (ext === 'csv') {
+      const raw = parse(req.file.buffer.toString('utf8'), {
+        columns: true, skip_empty_lines: true, trim: true, bom: true,
+      })
+      rows = raw
+    } else {
+      const XLSX = require('xlsx')
+      const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+      rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' })
+    }
+  } catch (e) {
+    return res.status(400).json({ error: `File parse error: ${e.message}` })
+  }
+
+  const results = { created: 0, updated: 0, skipped: 0, people_created: 0, people_linked: 0, errors: [] }
+
+  db.exec('BEGIN')
+  try {
+    for (const row of rows) {
+      const addr        = (row.address        || '').trim()
+      const city        = (row.city           || '').trim()
+      const state       = (row.state          || '').trim()
+      const tenantBrand = (row.tenant_brand   || '').trim()
+
+      if (!addr || !city || !state || !tenantBrand) {
+        results.skipped++
+        results.errors.push(`Skipped row — missing required field(s): ${[!addr&&'address',!city&&'city',!state&&'state',!tenantBrand&&'tenant_brand'].filter(Boolean).join(', ')} (row: ${addr||'?'})`)
+        continue
+      }
+
+      // ── Tenant brand ──────────────────────────────────────────────────────
+      db.prepare(`INSERT INTO tenant_brands (name) VALUES (?) ON CONFLICT(name) DO NOTHING`).run(tenantBrand)
+      const brandId = db.prepare(`SELECT id FROM tenant_brands WHERE name = ?`).get(tenantBrand)?.id || null
+
+      // ── Owner / person ────────────────────────────────────────────────────
+      let ownerId = null
+      const ownerName = (row.owner_name || '').trim()
+      if (ownerName) {
+        const nameKey   = normalizeName(ownerName)
+        const ownerCity = (row.owner_city  || '').trim()
+        const ownerSt   = (row.owner_state || '').trim()
+
+        // Check for existing person by name_key + city/state
+        const candidates = db.prepare(`SELECT id, name, city, state, address FROM people WHERE name_key = ?`).all(nameKey)
+        const match = candidates.length ? matchPerson(nameKey, ownerCity, ownerSt, row.owner_address || '', candidates) : { confidence: 'none' }
+
+        if (match.confidence === 'confident' || match.confidence === 'review' && candidates.length === 1) {
+          // Link to existing person, fill any empty fields
+          const existing = match.matched
+          db.prepare(`
+            UPDATE people SET
+              phone  = CASE WHEN phone  IS NULL OR phone  = '' THEN ? ELSE phone  END,
+              email  = CASE WHEN email  IS NULL OR email  = '' THEN ? ELSE email  END,
+              address= CASE WHEN address IS NULL OR address = '' THEN ? ELSE address END,
+              city   = CASE WHEN city   IS NULL OR city   = '' THEN ? ELSE city   END,
+              state  = CASE WHEN state  IS NULL OR state  = '' THEN ? ELSE state  END,
+              zip    = CASE WHEN zip    IS NULL OR zip    = '' THEN ? ELSE zip    END
+            WHERE id = ?
+          `).run(
+            row.owner_phone   || null, row.owner_email   || null,
+            row.owner_address || null, ownerCity || null,
+            ownerSt           || null, row.owner_zip     || null,
+            existing.id
+          )
+          ownerId = existing.id
+          results.people_linked++
+        } else {
+          // Create new person
+          const ins = db.prepare(`
+            INSERT INTO people (name, role, owner_type, phone, email, address, city, state, zip, name_key)
+            VALUES (?, 'owner', 'LLC', ?, ?, ?, ?, ?, ?, ?)
+          `).run(
+            ownerName,
+            row.owner_phone   || null, row.owner_email   || null,
+            row.owner_address || null, ownerCity || null,
+            ownerSt           || null, row.owner_zip     || null,
+            nameKey
+          )
+          ownerId = Number(ins.lastInsertRowid)
+          results.people_created++
+        }
+      }
+
+      // ── Property ──────────────────────────────────────────────────────────
+      const addrKey = normalizeAddrKey(addr, city, state, row.zip || '')
+      const existing = addrKey ? db.prepare(`SELECT id FROM properties WHERE addr_key = ?`).get(addrKey) : null
+
+      if (existing) {
+        // Update — fill empty fields only
+        db.prepare(`
+          UPDATE properties SET
+            tenant_brand_id = COALESCE(tenant_brand_id, ?),
+            owner_id        = COALESCE(owner_id, ?),
+            property_type   = CASE WHEN property_type IS NULL OR property_type = '' THEN ? ELSE property_type END,
+            lease_type      = CASE WHEN lease_type    IS NULL OR lease_type    = '' THEN ? ELSE lease_type    END,
+            annual_rent     = COALESCE(annual_rent, ?),
+            noi             = COALESCE(noi, ?),
+            cap_rate        = COALESCE(cap_rate, ?),
+            building_size   = COALESCE(building_size, ?),
+            land_area       = COALESCE(land_area, ?),
+            year_built      = COALESCE(year_built, ?),
+            notes           = CASE WHEN notes IS NULL OR notes = '' THEN ? ELSE notes END
+          WHERE id = ?
+        `).run(
+          brandId, ownerId,
+          row.property_type || null, row.lease_type   || null,
+          row.annual_rent   ? parseFloat(row.annual_rent)   : null,
+          row.noi           ? parseFloat(row.noi)           : null,
+          row.cap_rate      ? parseFloat(row.cap_rate)      : null,
+          row.building_size ? parseFloat(row.building_size) : null,
+          row.land_area     ? parseFloat(row.land_area)     : null,
+          row.year_built    ? parseInt(row.year_built)      : null,
+          row.notes         || null,
+          existing.id
+        )
+        results.updated++
+      } else {
+        db.prepare(`
+          INSERT INTO properties
+            (address, city, state, zip, tenant_brand_id, owner_id, property_type, lease_type,
+             annual_rent, noi, cap_rate, building_size, land_area, year_built, notes, addr_key)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `).run(
+          addr, city, state, row.zip || null,
+          brandId, ownerId,
+          row.property_type || null, row.lease_type || null,
+          row.annual_rent   ? parseFloat(row.annual_rent)   : null,
+          row.noi           ? parseFloat(row.noi)           : null,
+          row.cap_rate      ? parseFloat(row.cap_rate)      : null,
+          row.building_size ? parseFloat(row.building_size) : null,
+          row.land_area     ? parseFloat(row.land_area)     : null,
+          row.year_built    ? parseInt(row.year_built)      : null,
+          row.notes         || null,
+          addrKey || null
+        )
+        results.created++
+      }
+    }
+    db.exec('COMMIT')
+  } catch (e) {
+    db.exec('ROLLBACK')
+    return res.status(500).json({ error: e.message })
+  }
+
+  res.json({
+    ...results,
+    total: rows.length,
+    stats: {
+      tenant_brands: db.prepare('SELECT COUNT(*) AS n FROM tenant_brands').get().n,
+      people:        db.prepare('SELECT COUNT(*) AS n FROM people').get().n,
+      properties:    db.prepare('SELECT COUNT(*) AS n FROM properties').get().n,
+    },
+  })
+})
 
 // Stats endpoint
 router.get('/stats', (req, res) => {

@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { Upload, CheckCircle, AlertCircle, FileText, RefreshCw, Database, Landmark, Download, Loader2, ShieldAlert, ChevronDown, ChevronRight } from 'lucide-react'
-import { importCsv, getImportStats, importRecentSales, previewImport, commitImport } from '../../api/client'
+import { Upload, CheckCircle, AlertCircle, FileText, Landmark, Download, Loader2, ShieldAlert, Building2 } from 'lucide-react'
+import { importCsv, getImportStats, importRecentSales } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import Button from '../ui/Button'
 import TopBar from '../layout/TopBar'
@@ -247,30 +247,6 @@ function StatBadge({ label, value, color = 'slate' }) {
   )
 }
 
-function BucketSection({ label, color, items, expanded, onToggle, renderItem }) {
-  const colors = {
-    emerald: { header: 'bg-emerald-50 text-emerald-800 border-emerald-200', chevron: 'text-emerald-500' },
-    blue:    { header: 'bg-blue-50 text-blue-800 border-blue-200',         chevron: 'text-blue-500' },
-  }
-  const c = colors[color]
-  return (
-    <div className={`rounded-xl border overflow-hidden ${c.header.split(' ').find(x => x.startsWith('border'))}`}>
-      <button onClick={onToggle} className={`w-full flex items-center justify-between px-4 py-2.5 ${c.header.split(' ').filter(x => !x.startsWith('border')).join(' ')} text-left`}>
-        <span className="text-sm font-medium">{label}</span>
-        {expanded ? <ChevronDown className={`w-4 h-4 ${c.chevron}`} /> : <ChevronRight className={`w-4 h-4 ${c.chevron}`} />}
-      </button>
-      {expanded && items.length > 0 && (
-        <ul className="divide-y divide-slate-100 max-h-48 overflow-y-auto">
-          {items.map((item, i) => (
-            <li key={i} className="px-4 py-2 bg-white">
-              {renderItem(item)}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  )
-}
 
 export default function ImportPage() {
   const { reloadAll, notify } = useApp()
@@ -280,9 +256,6 @@ export default function ImportPage() {
   const [result, setResult]     = useState(null)
   const [error, setError]       = useState(null)
   const [stats, setStats]       = useState(null)
-  const [preview, setPreview]   = useState(null)   // preview result from server
-  const [decisions, setDecisions] = useState({})   // rowIndex → { person_action, person_id }
-  const [expanded, setExpanded] = useState({})
   const inputRef = useRef()
 
   useEffect(() => {
@@ -291,32 +264,22 @@ export default function ImportPage() {
 
   const handleFile = (f) => {
     if (!f) return
-    setFile(f); setResult(null); setError(null); setPreview(null); setDecisions({})
+    setFile(f); setResult(null); setError(null)
   }
 
-  const handlePreview = async () => {
-    if (!file) return
-    setLoading(true); setError(null); setPreview(null)
-    try {
-      const res = await previewImport(file)
-      setPreview(res)
-    } catch (e) {
-      setError(e.message)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const handleCommit = async () => {
+  const handleImport = async () => {
     if (!file) return
     setLoading(true); setError(null)
     try {
-      const res = await commitImport(file, decisions)
-      setResult(res)
-      setPreview(null)
-      const fresh = await reloadAll()
-      setStats(fresh)
-      notify(`Import complete — ${res.imported.toLocaleString()} properties loaded`)
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/import/prospects', { method: 'POST', body: fd, credentials: 'include' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Import failed')
+      setResult(data)
+      await reloadAll()
+      setStats(await getImportStats())
+      notify(`Import complete — ${data.created} new, ${data.updated} updated`)
     } catch (e) {
       setError(e.message)
     } finally {
@@ -343,185 +306,78 @@ export default function ImportPage() {
             </div>
           )}
 
-          {/* Prospect Import card */}
+          {/* Property Import card */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="px-6 py-5 border-b border-slate-100">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-xl bg-violet-50 flex items-center justify-center">
-                  <FileText className="w-5 h-5 text-violet-600" />
+                  <Building2 className="w-5 h-5 text-violet-600" />
                 </div>
                 <div className="flex-1">
-                  <h3 className="text-base font-semibold text-slate-900">Prospect Import</h3>
-                  <p className="text-sm text-slate-500">Import properties from Clarity First, Reonomy, or any source</p>
+                  <h3 className="text-base font-semibold text-slate-900">Property Import</h3>
+                  <p className="text-sm text-slate-500">Import properties from Clarity First, Reonomy, or any source (.csv or .xlsx)</p>
                 </div>
                 <a
                   href="/api/import/prospect-template"
                   download
                   className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-violet-700 bg-violet-50 border border-violet-200 rounded-lg hover:bg-violet-100 shrink-0"
                 >
-                  <Download className="w-3.5 h-3.5" /> Download Template
+                  <Download className="w-3.5 h-3.5" /> Template
                 </a>
-              </div>
-            </div>
-            <div className="px-6 py-4">
-              <div className="rounded-xl bg-violet-50 border border-violet-100 px-4 py-3 text-sm text-violet-800 space-y-1">
-                <p className="font-medium">How to use</p>
-                <ol className="list-decimal list-inside space-y-0.5 text-xs text-violet-700">
-                  <li>Download the template above — it shows every column with mandatory ones highlighted in yellow</li>
-                  <li>Fill it in from Clarity First, Reonomy, or any other source</li>
-                  <li>Upload it here — the importer checks for duplicates by address before creating anything new</li>
-                </ol>
-              </div>
-              <p className="text-xs text-slate-400 mt-3 text-center">Prospect import coming soon — template is ready to use today</p>
-            </div>
-          </div>
-
-          {/* Upload card */}
-          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-            <div className="px-6 py-5 border-b border-slate-100">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
-                  <Database className="w-5 h-5 text-blue-600" />
-                </div>
-                <div>
-                  <h3 className="text-base font-semibold text-slate-900">Salesforce Report Import</h3>
-                  <p className="text-sm text-slate-500">Imports properties, people, and tenant brands in one pass</p>
-                </div>
               </div>
             </div>
 
             <div className="px-6 py-5 space-y-4">
-              {/* Drop zone */}
               <div
                 className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${
-                  dragging ? 'border-blue-400 bg-blue-50' : file ? 'border-green-400 bg-green-50' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                  dragging ? 'border-violet-400 bg-violet-50' : file ? 'border-green-400 bg-green-50' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
                 }`}
                 onDragOver={e => { e.preventDefault(); setDragging(true) }}
                 onDragLeave={() => setDragging(false)}
                 onDrop={e => { e.preventDefault(); setDragging(false); handleFile(e.dataTransfer.files[0]) }}
                 onClick={() => inputRef.current?.click()}
               >
-                <input ref={inputRef} type="file" accept=".csv" className="hidden" onChange={e => handleFile(e.target.files[0])} />
+                <input ref={inputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={e => handleFile(e.target.files[0])} />
                 {file ? (
                   <>
                     <FileText className="w-10 h-10 text-green-500 mx-auto mb-2" />
                     <p className="text-sm font-semibold text-green-700">{file.name}</p>
-                    <p className="text-xs text-green-600 mt-0.5">{(file.size/1024/1024).toFixed(1)} MB — click to change</p>
+                    <p className="text-xs text-green-600 mt-0.5">{(file.size / 1024 / 1024).toFixed(1)} MB — click to change</p>
                   </>
                 ) : (
                   <>
                     <Upload className="w-10 h-10 text-slate-400 mx-auto mb-2" />
-                    <p className="text-sm font-semibold text-slate-700">Drop your CSV here or click to browse</p>
-                    <p className="text-xs text-slate-400 mt-1">Salesforce report export — all columns will be mapped automatically</p>
+                    <p className="text-sm font-semibold text-slate-700">Drop your file here or click to browse</p>
+                    <p className="text-xs text-slate-400 mt-1">Supports .csv and .xlsx — duplicate properties and people are detected automatically</p>
                   </>
                 )}
               </div>
 
-              {/* Preview buckets */}
-              {preview && (
-                <div className="space-y-3">
-                  <p className="text-sm font-semibold text-slate-700">Preview — {preview.total.toLocaleString()} rows</p>
-
-                  {/* Will create */}
-                  <BucketSection
-                    label={`Will create (${preview.counts.will_create})`}
-                    color="emerald"
-                    items={preview.buckets.will_create}
-                    expanded={expanded.create}
-                    onToggle={() => setExpanded(e => ({ ...e, create: !e.create }))}
-                    renderItem={item => (
-                      <span className="text-xs text-slate-600">
-                        {item.tenantBrand && <span className="font-medium text-blue-700">{item.tenantBrand} · </span>}
-                        {item.address}{item.name ? ` · ${item.name}` : ''}
-                      </span>
-                    )}
-                  />
-
-                  {/* Will update */}
-                  <BucketSection
-                    label={`Will update / link (${preview.counts.will_update})`}
-                    color="blue"
-                    items={preview.buckets.will_update}
-                    expanded={expanded.update}
-                    onToggle={() => setExpanded(e => ({ ...e, update: !e.update }))}
-                    renderItem={item => (
-                      <span className="text-xs text-slate-600">
-                        {item.tenantBrand && <span className="font-medium text-blue-700">{item.tenantBrand} · </span>}
-                        {item.address}
-                      </span>
-                    )}
-                  />
-
-                  {/* Needs decision */}
-                  {preview.counts.needs_review > 0 && (
-                    <div className="rounded-xl border border-amber-200 overflow-hidden">
-                      <button
-                        onClick={() => setExpanded(e => ({ ...e, review: !e.review }))}
-                        className="w-full flex items-center justify-between px-4 py-2.5 bg-amber-50 text-left"
-                      >
-                        <span className="text-sm font-medium text-amber-800">
-                          Needs your decision ({preview.counts.needs_review})
-                        </span>
-                        {expanded.review ? <ChevronDown className="w-4 h-4 text-amber-500" /> : <ChevronRight className="w-4 h-4 text-amber-500" />}
-                      </button>
-                      {expanded.review && (
-                        <div className="divide-y divide-amber-100">
-                          {preview.buckets.needs_review.map(item => {
-                            const dec = decisions[item.index] || {}
-                            return (
-                              <div key={item.index} className="px-4 py-3 bg-white">
-                                <p className="text-xs font-medium text-slate-800 mb-1">
-                                  {item.name} · {item.address}
-                                </p>
-                                <p className="text-xs text-slate-500 mb-2">Similar names found — choose how to handle:</p>
-                                <div className="flex flex-wrap gap-2">
-                                  <button
-                                    onClick={() => setDecisions(d => ({ ...d, [item.index]: { person_action: 'create' } }))}
-                                    className={`px-2.5 py-1 rounded text-xs border transition-colors ${
-                                      dec.person_action === 'create'
-                                        ? 'bg-slate-800 text-white border-slate-800'
-                                        : 'bg-white text-slate-600 border-slate-300 hover:border-slate-400'
-                                    }`}
-                                  >
-                                    Create new person
-                                  </button>
-                                  {(item.candidates || []).map(c => (
-                                    <button
-                                      key={c.id}
-                                      onClick={() => setDecisions(d => ({ ...d, [item.index]: { person_action: 'merge', person_id: c.id } }))}
-                                      className={`px-2.5 py-1 rounded text-xs border transition-colors ${
-                                        dec.person_id === c.id
-                                          ? 'bg-blue-600 text-white border-blue-600'
-                                          : 'bg-white text-slate-600 border-slate-300 hover:border-blue-300'
-                                      }`}
-                                    >
-                                      Merge → {c.name}{c.city ? ` (${c.city})` : ''}
-                                    </button>
-                                  ))}
-                                </div>
-                              </div>
-                            )
-                          })}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Commit result */}
               {result && (
                 <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
                   <div className="flex items-start gap-3">
                     <CheckCircle className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />
                     <div className="flex-1">
                       <p className="text-sm font-semibold text-green-800 mb-1">Import complete</p>
-                      <div className="flex gap-4 text-sm text-green-700">
-                        <span><strong>{result.imported.toLocaleString()}</strong> properties</span>
-                        <span><strong>{result.stats?.people?.toLocaleString()}</strong> people</span>
-                        <span><strong>{result.stats?.tenant_brands}</strong> tenant brands</span>
-                        {result.needs_review > 0 && <span className="text-amber-700"><strong>{result.needs_review}</strong> skipped (needs review)</span>}
+                      <div className="flex flex-wrap gap-4 text-sm text-green-700">
+                        <span><strong>{result.created}</strong> new properties</span>
+                        <span><strong>{result.updated}</strong> updated</span>
+                        <span><strong>{result.people_created}</strong> new people</span>
+                        <span><strong>{result.people_linked}</strong> people linked</span>
+                        {result.skipped > 0 && <span className="text-amber-700"><strong>{result.skipped}</strong> skipped</span>}
                       </div>
+                      {result.errors?.length > 0 && (
+                        <details className="mt-2">
+                          <summary className="text-xs text-green-600 cursor-pointer hover:text-green-800">
+                            {result.errors.length} row error{result.errors.length > 1 ? 's' : ''}
+                          </summary>
+                          <ul className="mt-1 space-y-0.5">
+                            {result.errors.slice(0, 10).map((e, i) => (
+                              <li key={i} className="text-xs text-red-600 font-mono">{e}</li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -534,29 +390,15 @@ export default function ImportPage() {
                 </div>
               )}
 
-              {!preview ? (
-                <Button className="w-full justify-center" disabled={!file || loading} onClick={handlePreview}>
-                  {loading
-                    ? <><RefreshCw className="w-4 h-4 animate-spin" /> Analyzing…</>
-                    : 'Preview Import'
-                  }
-                </Button>
-              ) : (
-                <div className="flex gap-2">
-                  <Button variant="secondary" className="flex-1 justify-center" onClick={() => { setPreview(null); setDecisions({}) }}>
-                    Back
-                  </Button>
-                  <Button className="flex-1 justify-center" disabled={loading} onClick={handleCommit}>
-                    {loading
-                      ? <><RefreshCw className="w-4 h-4 animate-spin" /> Importing…</>
-                      : `Confirm Import (${(preview.counts.will_create + preview.counts.will_update).toLocaleString()} records)`
-                    }
-                  </Button>
-                </div>
-              )}
+              <Button className="w-full justify-center" disabled={!file || loading} onClick={handleImport}>
+                {loading
+                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Importing…</>
+                  : 'Import Properties'
+                }
+              </Button>
 
               <p className="text-xs text-slate-400 text-center">
-                Re-importing is safe — existing records are matched by address and Salesforce ID, never duplicated.
+                Re-importing is safe — existing properties matched by address are updated, not duplicated. Existing people matched by name + city are linked, not recreated.
               </p>
             </div>
           </div>
@@ -567,21 +409,26 @@ export default function ImportPage() {
           {/* Recent sales / ownership review */}
           <RecentSalesImportCard />
 
-          {/* Column mapping reference */}
+          {/* Column guide */}
           <div className="p-4 bg-slate-50 rounded-xl border border-slate-200">
-            <p className="text-sm font-semibold text-slate-700 mb-3">What gets imported</p>
-            <div className="grid grid-cols-3 gap-3 text-xs text-slate-600">
+            <p className="text-sm font-semibold text-slate-700 mb-3">Required columns</p>
+            <div className="grid grid-cols-2 gap-3 text-xs text-slate-600">
               <div>
-                <p className="font-semibold text-slate-800 mb-1">Tenant Brands</p>
-                <p>Deduplicated by name from the "Tenant" column</p>
+                <p className="font-semibold text-slate-800 mb-1">Mandatory (highlighted yellow in template)</p>
+                <ul className="space-y-0.5">
+                  <li><code className="bg-slate-200 px-1 rounded">address</code> — street address</li>
+                  <li><code className="bg-slate-200 px-1 rounded">city</code></li>
+                  <li><code className="bg-slate-200 px-1 rounded">state</code> — 2-letter abbreviation</li>
+                  <li><code className="bg-slate-200 px-1 rounded">tenant_brand</code> — e.g. "Joe Hudson Collision"</li>
+                </ul>
               </div>
               <div>
-                <p className="font-semibold text-slate-800 mb-1">People / Owners</p>
-                <p>Person Accounts → Individual owner<br />Business Accounts → Owner company</p>
-              </div>
-              <div>
-                <p className="font-semibold text-slate-800 mb-1">Properties</p>
-                <p>Address, city, state, zip linked to tenant brand + owner</p>
+                <p className="font-semibold text-slate-800 mb-1">De-duplication</p>
+                <ul className="space-y-0.5">
+                  <li>Properties matched by normalized address — never duplicated</li>
+                  <li>People matched by name + city — existing records linked, not recreated</li>
+                  <li>Re-importing fills in empty fields on existing records</li>
+                </ul>
               </div>
             </div>
           </div>
