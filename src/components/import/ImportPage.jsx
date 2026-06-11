@@ -343,6 +343,39 @@ export default function ImportPage() {
             </div>
           )}
 
+          {/* Prospect Import card */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="px-6 py-5 border-b border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-violet-50 flex items-center justify-center">
+                  <FileText className="w-5 h-5 text-violet-600" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-base font-semibold text-slate-900">Prospect Import</h3>
+                  <p className="text-sm text-slate-500">Import properties from Clarity First, Reonomy, or any source</p>
+                </div>
+                <a
+                  href="/api/import/prospect-template"
+                  download
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-violet-700 bg-violet-50 border border-violet-200 rounded-lg hover:bg-violet-100 shrink-0"
+                >
+                  <Download className="w-3.5 h-3.5" /> Download Template
+                </a>
+              </div>
+            </div>
+            <div className="px-6 py-4">
+              <div className="rounded-xl bg-violet-50 border border-violet-100 px-4 py-3 text-sm text-violet-800 space-y-1">
+                <p className="font-medium">How to use</p>
+                <ol className="list-decimal list-inside space-y-0.5 text-xs text-violet-700">
+                  <li>Download the template above — it shows every column with mandatory ones highlighted in yellow</li>
+                  <li>Fill it in from Clarity First, Reonomy, or any other source</li>
+                  <li>Upload it here — the importer checks for duplicates by address before creating anything new</li>
+                </ol>
+              </div>
+              <p className="text-xs text-slate-400 mt-3 text-center">Prospect import coming soon — template is ready to use today</p>
+            </div>
+          </div>
+
           {/* Upload card */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="px-6 py-5 border-b border-slate-100">

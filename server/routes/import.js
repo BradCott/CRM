@@ -356,6 +356,127 @@ router.post('/salesforce', upload.single('file'), (req, res) => {
   })
 })
 
+// GET /api/import/prospect-template — download Excel template
+router.get('/prospect-template', (req, res) => {
+  const XLSX = require('xlsx')
+
+  const COLUMNS = [
+    // [header, mandatory, example1, example2]
+    ['address',        true,  '1234 Main St',          '789 Oak Ave'],
+    ['city',           true,  'Birmingham',             'Huntsville'],
+    ['state',          true,  'AL',                     'AL'],
+    ['zip',            false, '35203',                  '35801'],
+    ['tenant_brand',   false, 'Joe Hudson Collision',   'Caliber Collision'],
+    ['property_type',  false, 'Auto',                   'Auto'],
+    ['lease_type',     false, 'NNN',                    'NN'],
+    ['lease_start',    false, '2018-01-01',              '2020-06-01'],
+    ['lease_end',      false, '2033-01-01',              '2035-06-01'],
+    ['annual_rent',    false, '120000',                 '95000'],
+    ['noi',            false, '118000',                 '93000'],
+    ['cap_rate',       false, '5.75',                   '6.10'],
+    ['list_price',     false, '2050000',                '1525000'],
+    ['building_size',  false, '8500',                   '6200'],
+    ['land_area',      false, '1.25',                   '0.95'],
+    ['year_built',     false, '2018',                   '2020'],
+    ['owner_name',     false, 'Smith Properties LLC',   'Oak Holdings Inc'],
+    ['owner_phone',    false, '(205) 555-1234',         '(256) 555-9876'],
+    ['owner_email',    false, 'john@smithprop.com',     'info@oakhold.com'],
+    ['owner_address',  false, '100 Commerce St',        '200 Clinton Ave'],
+    ['owner_city',     false, 'Birmingham',             'Huntsville'],
+    ['owner_state',    false, 'AL',                     'AL'],
+    ['owner_zip',      false, '35203',                  '35801'],
+    ['notes',          false, 'Off-market, owner motivated', ''],
+  ]
+
+  const wb = XLSX.utils.book_new()
+
+  // ── Main sheet ──────────────────────────────────────────────────────────────
+  const wsData = [
+    COLUMNS.map(([h]) => h),
+    COLUMNS.map(([,, ex1]) => ex1),
+    COLUMNS.map(([,,, ex2]) => ex2),
+  ]
+  const ws = XLSX.utils.aoa_to_sheet(wsData)
+
+  // Column widths
+  ws['!cols'] = COLUMNS.map(([h]) => ({ wch: Math.max(h.length + 2, 18) }))
+
+  // Style header row: mandatory = yellow bold, optional = light grey bold
+  COLUMNS.forEach(([, mandatory], ci) => {
+    const cellAddr = XLSX.utils.encode_cell({ r: 0, c: ci })
+    if (!ws[cellAddr]) return
+    ws[cellAddr].s = {
+      font:      { bold: true, color: { rgb: mandatory ? '7D4F00' : '4A4A4A' } },
+      fill:      { fgColor: { rgb: mandatory ? 'FFF3CD' : 'F0F0F0' } },
+      alignment: { horizontal: 'center' },
+      border:    { bottom: { style: 'medium', color: { rgb: mandatory ? 'D4A017' : 'CCCCCC' } } },
+    }
+  })
+
+  // Style example rows
+  for (let r = 1; r <= 2; r++) {
+    COLUMNS.forEach((_, ci) => {
+      const cellAddr = XLSX.utils.encode_cell({ r, c: ci })
+      if (!ws[cellAddr]) return
+      ws[cellAddr].s = {
+        font: { color: { rgb: '555555' }, italic: true },
+        fill: { fgColor: { rgb: r === 1 ? 'FAFAFA' : 'F5F5F5' } },
+      }
+    })
+  }
+
+  XLSX.utils.book_append_sheet(wb, ws, 'Prospects')
+
+  // ── Legend sheet ────────────────────────────────────────────────────────────
+  const legendData = [
+    ['Column', 'Required?', 'Description'],
+    ...COLUMNS.map(([h, mandatory]) => [
+      h,
+      mandatory ? '✓ Required' : 'Optional',
+      COLUMN_NOTES[h] || '',
+    ]),
+  ]
+  const wsLegend = XLSX.utils.aoa_to_sheet(legendData)
+  wsLegend['!cols'] = [{ wch: 20 }, { wch: 12 }, { wch: 55 }]
+  // Header row styling
+  ;['A1','B1','C1'].forEach(addr => {
+    if (wsLegend[addr]) wsLegend[addr].s = { font: { bold: true }, fill: { fgColor: { rgb: 'E8EEF5' } } }
+  })
+  XLSX.utils.book_append_sheet(wb, wsLegend, 'Column Guide')
+
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx', cellStyles: true })
+  res.setHeader('Content-Disposition', 'attachment; filename="Knox Prospect Import Template.xlsx"')
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  res.send(buf)
+})
+
+const COLUMN_NOTES = {
+  address:       'Street address of the property (e.g. 1234 Main St). No unit/suite needed.',
+  city:          'City where the property is located.',
+  state:         'Two-letter state abbreviation (e.g. AL, GA, TN).',
+  zip:           '5-digit ZIP code.',
+  tenant_brand:  'Tenant name (e.g. Joe Hudson Collision). Will be created if new.',
+  property_type: 'Retail / Net Lease / Industrial / Office / Medical / Restaurant / Auto / Other',
+  lease_type:    'NNN / NN / N / Gross / Modified Gross / Ground Lease',
+  lease_start:   'Lease start date in YYYY-MM-DD format.',
+  lease_end:     'Lease expiration date in YYYY-MM-DD format.',
+  annual_rent:   'Annual rent in dollars (numbers only, no $ or commas).',
+  noi:           'Net operating income in dollars.',
+  cap_rate:      'Cap rate as a percentage (e.g. 5.75 for 5.75%).',
+  list_price:    'Asking price in dollars.',
+  building_size: 'Building square footage (number only).',
+  land_area:     'Land area in acres (e.g. 1.25).',
+  year_built:    '4-digit year the building was constructed.',
+  owner_name:    'Owner or company name. Used for duplicate matching by name + city.',
+  owner_phone:   'Owner phone number.',
+  owner_email:   'Owner email address.',
+  owner_address: 'Owner mailing street address.',
+  owner_city:    'Owner mailing city.',
+  owner_state:   'Owner mailing state (2-letter abbreviation).',
+  owner_zip:     'Owner mailing ZIP code.',
+  notes:         'Any free-form notes about the property or deal.',
+}
+
 // Stats endpoint
 router.get('/stats', (req, res) => {
   res.json({
