@@ -238,7 +238,7 @@ export default function PlaidConnect({ propertyId, onSaved }) {
       })
       await loadConnections()
     } catch (e) {
-      setError(e.message)
+      setError(e.message || 'Failed to connect bank account — check Railway logs for details')
     }
   }
 
@@ -287,7 +287,11 @@ export default function PlaidConnect({ propertyId, onSaved }) {
         <PlaidLinkButton
           linkToken={linkToken}
           onSuccess={handlePlaidSuccess}
-          onExit={() => { setLinkToken(null); setFetchingToken(false) }}
+          onExit={(err, metadata) => {
+            setLinkToken(null)
+            setFetchingToken(false)
+            if (err) setError(`Plaid error: ${err.error_message || err.display_message || err.error_code || JSON.stringify(err)}`)
+          }}
         />
       )}
 
