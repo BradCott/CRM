@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { X, Pencil, Phone, Mail, MapPin, FileText, Building2, AlertCircle, User, TrendingUp, Send, ChevronDown, ChevronUp, Trash2, PenLine, CheckCircle } from 'lucide-react'
 import { getPerson, getEmails, createEmail, deleteEmail, getHandwryttenContactSends } from '../../api/client'
 import Button from '../ui/Button'
@@ -25,6 +26,7 @@ function fmt$(v) {
 }
 
 export default function PersonDetail({ personId, onClose, onEdit }) {
+  const navigate = useNavigate()
   const [data, setData]         = useState(null)
   const [emails, setEmails]     = useState([])
   const [expandedEmail, setExpandedEmail] = useState(null)
@@ -217,7 +219,11 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
           <Section icon={Building2} title={`Properties (${data.properties.length})`}>
             <div className="space-y-2">
               {data.properties.map(p => (
-                <div key={p.id} className="flex items-start justify-between gap-2 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <button
+                  key={p.id}
+                  onClick={() => navigate(`/properties/${p.id}`)}
+                  className="w-full flex items-start justify-between gap-2 p-3 bg-slate-50 rounded-xl border border-slate-100 hover:bg-blue-50 hover:border-blue-200 transition-colors text-left"
+                >
                   <div className="min-w-0">
                     {p.tenant_brand_name && (
                       <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">
@@ -233,7 +239,7 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
                     {p.cap_rate && <p className="text-sm font-bold text-emerald-700">{p.cap_rate}% cap</p>}
                     {p.list_price && <p className="text-xs text-slate-500">{fmt$(p.list_price)}</p>}
                   </div>
-                </div>
+                </button>
               ))}
             </div>
           </Section>

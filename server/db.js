@@ -252,6 +252,11 @@ const migrations = [
   `ALTER TABLE properties ADD COLUMN lng REAL`,
   // Ownership review flag — set by recent-sales upload
   `ALTER TABLE properties ADD COLUMN needs_ownership_review INTEGER DEFAULT 0`,
+  // Name/address match keys for duplicate detection
+  `ALTER TABLE people     ADD COLUMN name_key TEXT`,
+  `ALTER TABLE properties ADD COLUMN addr_key TEXT`,
+  `CREATE INDEX IF NOT EXISTS idx_people_name_key ON people(name_key)`,
+  `CREATE INDEX IF NOT EXISTS idx_prop_addr_key   ON properties(addr_key)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

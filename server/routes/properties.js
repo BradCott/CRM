@@ -2,6 +2,7 @@ import { Router } from 'express'
 import db from '../db.js'
 import { requireRole } from '../middleware/auth.js'
 import { seedDefaultTasks } from './management.js'
+import { normalizeAddr } from '../utils/normalize.js'
 
 const router = Router()
 
@@ -172,6 +173,17 @@ router.get('/states', (req, res) => {
   res.json(db.prepare(`SELECT DISTINCT state FROM properties WHERE state IS NOT NULL ORDER BY state`).all().map(r => r.state))
 })
 
+// GET /api/properties/check-duplicate?address=&city=&state=&zip=
+router.get('/check-duplicate', (req, res) => {
+  const { address = '', city = '', state = '', zip = '' } = req.query
+  const addrKey = normalizeAddr(address, city, state, zip)
+  if (!addrKey) return res.json({ exists: false })
+  const row = db.prepare(
+    `SELECT id, address, city, state FROM properties WHERE addr_key = ? LIMIT 1`
+  ).get(addrKey)
+  res.json(row ? { exists: true, property: row } : { exists: false })
+})
+
 router.get('/:id', (req, res) => {
   const row = db.prepare(`
     SELECT p.*,
@@ -218,8 +230,8 @@ router.post('/', (req, res) => {
          year_built,property_type,construction_type,lease_type,lease_start,lease_end,
          annual_rent,rent_bumps,renewal_options,noi,cap_rate,list_price,taxes,insurance,
          roof_year,hvac_year,parking_lot,notes,sf_id,fee_pct,listing_status,fee_amount,
-         purchase_price,dd_end_date,close_date,is_portfolio)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         purchase_price,dd_end_date,close_date,is_portfolio,addr_key)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       f.address, f.city||null, f.state||null, f.zip||null,
       f.tenant_brand_id||null, resolveOwner(f),
@@ -235,7 +247,8 @@ router.post('/', (req, res) => {
       f.listing_status||null,
       f.fee_amount != null ? f.fee_amount : null,
       f.purchase_price||null, f.dd_end_date||null, f.close_date||null,
-      f.is_portfolio ? 1 : 0
+      f.is_portfolio ? 1 : 0,
+      normalizeAddr(f.address, f.city, f.state, f.zip) || null
     )
     console.log('[POST /api/properties] inserted rowid:', r.lastInsertRowid)
     // Seed default management tasks for portfolio properties

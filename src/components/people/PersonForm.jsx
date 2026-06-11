@@ -1,7 +1,10 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { AlertTriangle } from 'lucide-react'
 import { Input, Textarea, Select } from '../ui/Input'
 import Button from '../ui/Button'
 import { useApp } from '../../context/AppContext'
+import { checkPersonDuplicate } from '../../api/client'
 
 const EMPTY = {
   name: '', first_name: '', last_name: '',
@@ -22,6 +25,7 @@ const ROLES = [
 ]
 
 export default function PersonForm({ person, onSave, onClose }) {
+  const navigate = useNavigate()
   const { allPeople } = useApp()
   const [form, setForm]   = useState(person ? {
     ...EMPTY, ...person,
@@ -30,11 +34,28 @@ export default function PersonForm({ person, onSave, onClose }) {
     owner_type: person.owner_type || 'Individual',
     do_not_contact: !!person.do_not_contact,
   } : { ...EMPTY })
-  const [saving, setSaving] = useState(false)
-  const [errors, setErrors] = useState({})
+  const [saving, setSaving]         = useState(false)
+  const [errors, setErrors]         = useState({})
+  const [dupCheck, setDupCheck]     = useState(null) // null | { confidence, matched, candidates }
+  const dupTimer                    = useRef(null)
 
   const set = (f) => (e) => setForm(p => ({ ...p, [f]: e.target.value }))
   const setBool = (f) => (e) => setForm(p => ({ ...p, [f]: e.target.checked }))
+
+  // Debounced duplicate check — only for new records
+  useEffect(() => {
+    if (person) return // skip for edits
+    clearTimeout(dupTimer.current)
+    const name = form.name.trim()
+    if (!name) { setDupCheck(null); return }
+    dupTimer.current = setTimeout(async () => {
+      try {
+        const result = await checkPersonDuplicate({ name, city: form.city, state: form.state, address: form.address })
+        setDupCheck(result.confidence === 'none' ? null : result)
+      } catch { /* ignore */ }
+    }, 400)
+    return () => clearTimeout(dupTimer.current)
+  }, [form.name, form.city, form.state, form.address, person])
 
   // Auto-fill name from first+last for person roles
   const handleFirstLast = (field) => (e) => {
@@ -121,6 +142,51 @@ export default function PersonForm({ person, onSave, onClose }) {
       </div>
 
       <Textarea label="Notes" value={form.notes} onChange={set('notes')} placeholder="Any relevant context…" />
+
+      {/* Duplicate warning */}
+      {dupCheck && (
+        <div className={`rounded-lg border px-4 py-3 text-sm flex gap-3 ${
+          dupCheck.confidence === 'confident'
+            ? 'bg-amber-50 border-amber-200 text-amber-800'
+            : 'bg-blue-50 border-blue-200 text-blue-800'
+        }`}>
+          <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            {dupCheck.confidence === 'confident' ? (
+              <>
+                <p className="font-medium">Likely duplicate</p>
+                <p className="text-xs mt-0.5">
+                  <button
+                    type="button"
+                    onClick={() => { onClose(); navigate(`/people?highlight=${dupCheck.matched.id}`) }}
+                    className="underline hover:no-underline font-medium"
+                  >
+                    {dupCheck.matched.name}
+                  </button>
+                  {dupCheck.matched.city ? ` · ${[dupCheck.matched.city, dupCheck.matched.state].filter(Boolean).join(', ')}` : ''}
+                  {' '}already exists.
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="font-medium">Similar names found</p>
+                <ul className="text-xs mt-0.5 space-y-0.5">
+                  {(dupCheck.candidates || [dupCheck.matched]).slice(0, 3).map(c => (
+                    <li key={c.id}>
+                      <button
+                        type="button"
+                        onClick={() => { onClose(); navigate(`/people?highlight=${c.id}`) }}
+                        className="underline hover:no-underline"
+                      >{c.name}</button>
+                      {c.city ? ` · ${[c.city, c.state].filter(Boolean).join(', ')}` : ''}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Do not contact */}
       <label className="flex items-center gap-3 cursor-pointer select-none">

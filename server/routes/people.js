@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import db from '../db.js'
+import { normalizeName, matchPerson } from '../utils/normalize.js'
 
 const router = Router()
 
@@ -48,6 +49,22 @@ router.get('/', (req, res) => {
   res.json({ total, rows })
 })
 
+// GET /api/people/check-duplicate?name=&city=&state=&address=
+router.get('/check-duplicate', (req, res) => {
+  const { name = '', city = '', state = '', address = '' } = req.query
+  const nameKey = normalizeName(name)
+  if (!nameKey) return res.json({ confidence: 'none', matched: null, candidates: [] })
+
+  const candidates = db.prepare(
+    `SELECT id, name, city, state, address FROM people WHERE name_key = ?`
+  ).all(nameKey)
+
+  if (!candidates.length) return res.json({ confidence: 'none', matched: null, candidates: [] })
+
+  const result = matchPerson(nameKey, city, state, address, candidates)
+  res.json(result)
+})
+
 // GET /api/people/all — lightweight list for dropdowns (id + name + role only)
 router.get('/all', (req, res) => {
   res.json(db.prepare(`SELECT id, name, role, company_id FROM people ORDER BY name`).all())
@@ -84,8 +101,8 @@ router.post('/', (req, res) => {
     INSERT INTO people
       (name,first_name,last_name,role,sub_label,company_id,phone,phone2,mobile,
        email,email2,address,city,state,zip,address2,city2,state2,zip2,
-       do_not_contact,notes,sf_id,owner_type)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       do_not_contact,notes,sf_id,owner_type,name_key)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     f.name, f.first_name||null, f.last_name||null,
     f.role||'owner', f.sub_label||null, f.company_id||null,
@@ -94,7 +111,8 @@ router.post('/', (req, res) => {
     f.address||null, f.city||null, f.state||null, f.zip||null,
     f.address2||null, f.city2||null, f.state2||null, f.zip2||null,
     f.do_not_contact ? 1 : 0, f.notes||null, f.sf_id||null,
-    f.owner_type||'Individual'
+    f.owner_type||'Individual',
+    normalizeName(f.name)
   )
   res.status(201).json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(r.lastInsertRowid))
 })
@@ -108,7 +126,7 @@ router.put('/:id', (req, res) => {
       phone=?,phone2=?,mobile=?,email=?,email2=?,
       address=?,city=?,state=?,zip=?,
       address2=?,city2=?,state2=?,zip2=?,
-      do_not_contact=?,notes=?,sf_id=?,owner_type=?
+      do_not_contact=?,notes=?,sf_id=?,owner_type=?,name_key=?
     WHERE id=?
   `).run(
     f.name, f.first_name||null, f.last_name||null,
@@ -119,6 +137,7 @@ router.put('/:id', (req, res) => {
     f.address2||null, f.city2||null, f.state2||null, f.zip2||null,
     f.do_not_contact ? 1 : 0, f.notes||null, f.sf_id||null,
     f.owner_type||'Individual',
+    normalizeName(f.name),
     req.params.id
   )
   res.json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id))

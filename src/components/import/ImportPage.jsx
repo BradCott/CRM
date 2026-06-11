@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
-import { Upload, CheckCircle, AlertCircle, FileText, RefreshCw, Database, Landmark, Download, Loader2, ShieldAlert } from 'lucide-react'
-import { importCsv, getImportStats, importRecentSales } from '../../api/client'
+import { Upload, CheckCircle, AlertCircle, FileText, RefreshCw, Database, Landmark, Download, Loader2, ShieldAlert, ChevronDown, ChevronRight } from 'lucide-react'
+import { importCsv, getImportStats, importRecentSales, previewImport, commitImport } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import Button from '../ui/Button'
 import TopBar from '../layout/TopBar'
@@ -247,6 +247,31 @@ function StatBadge({ label, value, color = 'slate' }) {
   )
 }
 
+function BucketSection({ label, color, items, expanded, onToggle, renderItem }) {
+  const colors = {
+    emerald: { header: 'bg-emerald-50 text-emerald-800 border-emerald-200', chevron: 'text-emerald-500' },
+    blue:    { header: 'bg-blue-50 text-blue-800 border-blue-200',         chevron: 'text-blue-500' },
+  }
+  const c = colors[color]
+  return (
+    <div className={`rounded-xl border overflow-hidden ${c.header.split(' ').find(x => x.startsWith('border'))}`}>
+      <button onClick={onToggle} className={`w-full flex items-center justify-between px-4 py-2.5 ${c.header.split(' ').filter(x => !x.startsWith('border')).join(' ')} text-left`}>
+        <span className="text-sm font-medium">{label}</span>
+        {expanded ? <ChevronDown className={`w-4 h-4 ${c.chevron}`} /> : <ChevronRight className={`w-4 h-4 ${c.chevron}`} />}
+      </button>
+      {expanded && items.length > 0 && (
+        <ul className="divide-y divide-slate-100 max-h-48 overflow-y-auto">
+          {items.map((item, i) => (
+            <li key={i} className="px-4 py-2 bg-white">
+              {renderItem(item)}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )
+}
+
 export default function ImportPage() {
   const { reloadAll, notify } = useApp()
   const [file, setFile]         = useState(null)
@@ -255,6 +280,9 @@ export default function ImportPage() {
   const [result, setResult]     = useState(null)
   const [error, setError]       = useState(null)
   const [stats, setStats]       = useState(null)
+  const [preview, setPreview]   = useState(null)   // preview result from server
+  const [decisions, setDecisions] = useState({})   // rowIndex → { person_action, person_id }
+  const [expanded, setExpanded] = useState({})
   const inputRef = useRef()
 
   useEffect(() => {
@@ -263,15 +291,29 @@ export default function ImportPage() {
 
   const handleFile = (f) => {
     if (!f) return
-    setFile(f); setResult(null); setError(null)
+    setFile(f); setResult(null); setError(null); setPreview(null); setDecisions({})
   }
 
-  const handleImport = async () => {
+  const handlePreview = async () => {
+    if (!file) return
+    setLoading(true); setError(null); setPreview(null)
+    try {
+      const res = await previewImport(file)
+      setPreview(res)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleCommit = async () => {
     if (!file) return
     setLoading(true); setError(null)
     try {
-      const res = await importCsv('/import/salesforce', file)
+      const res = await commitImport(file, decisions)
       setResult(res)
+      setPreview(null)
       const fresh = await reloadAll()
       setStats(fresh)
       notify(`Import complete — ${res.imported.toLocaleString()} properties loaded`)
@@ -342,7 +384,99 @@ export default function ImportPage() {
                 )}
               </div>
 
-              {/* Result */}
+              {/* Preview buckets */}
+              {preview && (
+                <div className="space-y-3">
+                  <p className="text-sm font-semibold text-slate-700">Preview — {preview.total.toLocaleString()} rows</p>
+
+                  {/* Will create */}
+                  <BucketSection
+                    label={`Will create (${preview.counts.will_create})`}
+                    color="emerald"
+                    items={preview.buckets.will_create}
+                    expanded={expanded.create}
+                    onToggle={() => setExpanded(e => ({ ...e, create: !e.create }))}
+                    renderItem={item => (
+                      <span className="text-xs text-slate-600">
+                        {item.tenantBrand && <span className="font-medium text-blue-700">{item.tenantBrand} · </span>}
+                        {item.address}{item.name ? ` · ${item.name}` : ''}
+                      </span>
+                    )}
+                  />
+
+                  {/* Will update */}
+                  <BucketSection
+                    label={`Will update / link (${preview.counts.will_update})`}
+                    color="blue"
+                    items={preview.buckets.will_update}
+                    expanded={expanded.update}
+                    onToggle={() => setExpanded(e => ({ ...e, update: !e.update }))}
+                    renderItem={item => (
+                      <span className="text-xs text-slate-600">
+                        {item.tenantBrand && <span className="font-medium text-blue-700">{item.tenantBrand} · </span>}
+                        {item.address}
+                      </span>
+                    )}
+                  />
+
+                  {/* Needs decision */}
+                  {preview.counts.needs_review > 0 && (
+                    <div className="rounded-xl border border-amber-200 overflow-hidden">
+                      <button
+                        onClick={() => setExpanded(e => ({ ...e, review: !e.review }))}
+                        className="w-full flex items-center justify-between px-4 py-2.5 bg-amber-50 text-left"
+                      >
+                        <span className="text-sm font-medium text-amber-800">
+                          Needs your decision ({preview.counts.needs_review})
+                        </span>
+                        {expanded.review ? <ChevronDown className="w-4 h-4 text-amber-500" /> : <ChevronRight className="w-4 h-4 text-amber-500" />}
+                      </button>
+                      {expanded.review && (
+                        <div className="divide-y divide-amber-100">
+                          {preview.buckets.needs_review.map(item => {
+                            const dec = decisions[item.index] || {}
+                            return (
+                              <div key={item.index} className="px-4 py-3 bg-white">
+                                <p className="text-xs font-medium text-slate-800 mb-1">
+                                  {item.name} · {item.address}
+                                </p>
+                                <p className="text-xs text-slate-500 mb-2">Similar names found — choose how to handle:</p>
+                                <div className="flex flex-wrap gap-2">
+                                  <button
+                                    onClick={() => setDecisions(d => ({ ...d, [item.index]: { person_action: 'create' } }))}
+                                    className={`px-2.5 py-1 rounded text-xs border transition-colors ${
+                                      dec.person_action === 'create'
+                                        ? 'bg-slate-800 text-white border-slate-800'
+                                        : 'bg-white text-slate-600 border-slate-300 hover:border-slate-400'
+                                    }`}
+                                  >
+                                    Create new person
+                                  </button>
+                                  {(item.candidates || []).map(c => (
+                                    <button
+                                      key={c.id}
+                                      onClick={() => setDecisions(d => ({ ...d, [item.index]: { person_action: 'merge', person_id: c.id } }))}
+                                      className={`px-2.5 py-1 rounded text-xs border transition-colors ${
+                                        dec.person_id === c.id
+                                          ? 'bg-blue-600 text-white border-blue-600'
+                                          : 'bg-white text-slate-600 border-slate-300 hover:border-blue-300'
+                                      }`}
+                                    >
+                                      Merge → {c.name}{c.city ? ` (${c.city})` : ''}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Commit result */}
               {result && (
                 <div className="p-4 bg-green-50 border border-green-200 rounded-xl">
                   <div className="flex items-start gap-3">
@@ -353,7 +487,7 @@ export default function ImportPage() {
                         <span><strong>{result.imported.toLocaleString()}</strong> properties</span>
                         <span><strong>{result.stats?.people?.toLocaleString()}</strong> people</span>
                         <span><strong>{result.stats?.tenant_brands}</strong> tenant brands</span>
-                        <span><strong>{result.skipped}</strong> skipped</span>
+                        {result.needs_review > 0 && <span className="text-amber-700"><strong>{result.needs_review}</strong> skipped (needs review)</span>}
                       </div>
                     </div>
                   </div>
@@ -367,15 +501,29 @@ export default function ImportPage() {
                 </div>
               )}
 
-              <Button className="w-full justify-center" disabled={!file || loading} onClick={handleImport}>
-                {loading
-                  ? <><RefreshCw className="w-4 h-4 animate-spin" /> Importing — this may take 30–60 seconds…</>
-                  : 'Import from Salesforce CSV'
-                }
-              </Button>
+              {!preview ? (
+                <Button className="w-full justify-center" disabled={!file || loading} onClick={handlePreview}>
+                  {loading
+                    ? <><RefreshCw className="w-4 h-4 animate-spin" /> Analyzing…</>
+                    : 'Preview Import'
+                  }
+                </Button>
+              ) : (
+                <div className="flex gap-2">
+                  <Button variant="secondary" className="flex-1 justify-center" onClick={() => { setPreview(null); setDecisions({}) }}>
+                    Back
+                  </Button>
+                  <Button className="flex-1 justify-center" disabled={loading} onClick={handleCommit}>
+                    {loading
+                      ? <><RefreshCw className="w-4 h-4 animate-spin" /> Importing…</>
+                      : `Confirm Import (${(preview.counts.will_create + preview.counts.will_update).toLocaleString()} records)`
+                    }
+                  </Button>
+                </div>
+              )}
 
               <p className="text-xs text-slate-400 text-center">
-                Re-importing is safe — existing records are updated by Salesforce ID, not duplicated.
+                Re-importing is safe — existing records are matched by address and Salesforce ID, never duplicated.
               </p>
             </div>
           </div>

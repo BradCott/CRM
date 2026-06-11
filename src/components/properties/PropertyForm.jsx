@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Input, Textarea, Select } from '../ui/Input'
 import Button from '../ui/Button'
 import { useApp } from '../../context/AppContext'
+import { Plus } from 'lucide-react'
 
 const EMPTY = {
   address: '', city: '', state: '', zip: '',
@@ -41,11 +42,14 @@ function validate(data) {
 }
 
 export default function PropertyForm({ property, onSave, onClose }) {
-  const { tenantBrands, allPeople: owners } = useApp()
+  const { tenantBrands, addTenantBrand, allPeople: owners } = useApp()
   const [form, setForm]   = useState(property ? sanitize({ ...EMPTY, ...property }) : { ...EMPTY })
   const [errors, setErrors] = useState({})
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
+  const [newTenant, setNewTenant]   = useState('')
+  const [addingTenant, setAddingTenant] = useState(false)
+  const [showTenantInput, setShowTenantInput] = useState(false)
 
   // fee_amount = null → auto mode; string value → manual override
   const [feeOverride, setFeeOverride] = useState(property?.fee_amount != null)
@@ -105,6 +109,20 @@ export default function PropertyForm({ property, onSave, onClose }) {
     }
   }
 
+  const handleAddTenant = async () => {
+    const name = newTenant.trim()
+    if (!name) return
+    setAddingTenant(true)
+    try {
+      const brand = await addTenantBrand({ name })
+      setForm(f => ({ ...f, tenant_brand_id: String(brand.id) }))
+      setNewTenant('')
+      setShowTenantInput(false)
+    } finally {
+      setAddingTenant(false)
+    }
+  }
+
   const Section = ({ title }) => (
     <p className="text-xs font-semibold text-slate-500 uppercase tracking-widest pt-4 pb-1 border-t border-slate-100">{title}</p>
   )
@@ -139,12 +157,45 @@ export default function PropertyForm({ property, onSave, onClose }) {
 
       <Section title="Tenant & Ownership" />
       <div className="grid grid-cols-2 gap-3">
-        <Select label="Tenant brand" value={form.tenant_brand_id} onChange={set('tenant_brand_id')}>
-          <option value="">— None —</option>
-          {[...tenantBrands].sort((a,b)=>a.name.localeCompare(b.name)).map(t => (
-            <option key={t.id} value={t.id}>{t.name}</option>
-          ))}
-        </Select>
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-sm font-medium text-slate-700">Tenant brand</label>
+            <button
+              type="button"
+              onClick={() => setShowTenantInput(t => !t)}
+              className="flex items-center gap-0.5 text-xs text-blue-600 hover:text-blue-700"
+            >
+              <Plus className="w-3 h-3" /> New
+            </button>
+          </div>
+          {showTenantInput ? (
+            <div className="flex gap-1.5">
+              <input
+                autoFocus
+                type="text"
+                value={newTenant}
+                onChange={e => setNewTenant(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddTenant() } if (e.key === 'Escape') setShowTenantInput(false) }}
+                placeholder="e.g. Joe Hudson Collision"
+                className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <Button type="button" onClick={handleAddTenant} disabled={addingTenant || !newTenant.trim()}>
+                {addingTenant ? '…' : 'Add'}
+              </Button>
+            </div>
+          ) : (
+            <select
+              value={form.tenant_brand_id}
+              onChange={set('tenant_brand_id')}
+              className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white"
+            >
+              <option value="">— None —</option>
+              {[...tenantBrands].sort((a,b)=>a.name.localeCompare(b.name)).map(t => (
+                <option key={t.id} value={t.id}>{t.name}</option>
+              ))}
+            </select>
+          )}
+        </div>
         <div className="flex flex-col gap-1">
           <label className="text-sm font-medium text-slate-700">Owner</label>
           <input

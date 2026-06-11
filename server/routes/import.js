@@ -3,6 +3,7 @@ import multer from 'multer'
 import { parse } from 'csv-parse/sync'
 import { createRequire } from 'node:module'
 import db from '../db.js'
+import { normalizeName, normalizeAddr as normalizeAddrKey, matchPerson } from '../utils/normalize.js'
 
 const require = createRequire(import.meta.url)
 
@@ -111,9 +112,176 @@ function mapSubLabel(acctType) {
   return null
 }
 
-// POST /api/import/salesforce — main full import
+// Shared logic: classify one parsed row against the DB.
+// Returns { personResult, propResult } where each has a `bucket` field:
+//   'create' | 'update' | 'review'
+// In preview mode this is all that happens; in commit mode we also write.
+function classifyRow(r, decisions, rowIdx, preview) {
+  const tenantBrand = (r[COL.TENANT_BRAND] || '').trim()
+  const acctSfId    = (r[COL.ACCT_SF_ID]   || '').trim()
+  const propSfId    = (r[COL.TENANT_SF_ID]  || '').trim()
+  const recordType  = (r[COL.RECORD_TYPE]   || '').trim()
+  const acctType    = (r[COL.ACCT_TYPE]     || '').trim()
+  const firstName   = (r[COL.FIRST_NAME]    || '').trim()
+  const lastName    = (r[COL.LAST_NAME]     || '').trim()
+  const acctName    = (r[COL.ACCT_NAME]     || '').trim()
+  const isPerson    = recordType === 'Person Account'
+  const name        = isPerson ? ([firstName, lastName].filter(Boolean).join(' ') || acctName) : acctName
+
+  const addr  = (r[COL.PROP_ADDR]  || '').trim()
+  const city  = (r[COL.PROP_CITY]  || '').trim()
+  const state = (r[COL.PROP_STATE] || '').trim()
+  const zip   = (r[COL.PROP_ZIP]   || '').trim()
+  const notes = (r[COL.PROP_NOTES] || '').trim()
+
+  // ── Tenant brand ──────────────────────────────────────────────────────────
+  let brandId = null
+  if (tenantBrand && !preview) {
+    db.prepare(`INSERT INTO tenant_brands (name) VALUES (?) ON CONFLICT(name) DO NOTHING`).run(tenantBrand)
+    brandId = db.prepare(`SELECT id FROM tenant_brands WHERE name = ?`).get(tenantBrand)?.id || null
+  } else if (tenantBrand && preview) {
+    brandId = db.prepare(`SELECT id FROM tenant_brands WHERE name = ?`).get(tenantBrand)?.id || null
+  }
+
+  // ── Person ────────────────────────────────────────────────────────────────
+  let personResult = null
+  let ownerId = null
+
+  if (name) {
+    const nameKey   = normalizeName(name)
+    const primCity  = (r[COL.PRIM_CITY]  || '').trim()
+    const primState = (r[COL.PRIM_STATE] || '').trim()
+    const primStreet = (r[COL.PRIM_STREET] || '').trim()
+
+    // Check by sf_id first, then by name_key
+    let existingPerson = acctSfId
+      ? db.prepare(`SELECT id FROM people WHERE sf_id = ?`).get(acctSfId)
+      : null
+
+    if (!existingPerson && nameKey) {
+      const candidates = db.prepare(`SELECT id, name, city, state, address FROM people WHERE name_key = ?`).all(nameKey)
+      if (candidates.length) {
+        const match = matchPerson(nameKey, primCity, primState, primStreet, candidates)
+        if (match.confidence === 'confident') {
+          existingPerson = match.matched
+          personResult = { bucket: 'update', existing: match.matched, name }
+        } else {
+          personResult = { bucket: 'review', candidates: match.candidates || candidates, name, primCity, primState }
+        }
+      }
+    }
+
+    if (!personResult) {
+      personResult = existingPerson
+        ? { bucket: 'update', existing: existingPerson, name }
+        : { bucket: 'create', name }
+    }
+
+    // Apply decision for needs-review rows
+    const decision = decisions?.[rowIdx]
+    if (personResult.bucket === 'review' && decision) {
+      if (decision.person_action === 'merge' && decision.person_id) {
+        existingPerson = { id: decision.person_id }
+        personResult = { bucket: 'update', existing: existingPerson, name, decided: true }
+      } else if (decision.person_action === 'create') {
+        existingPerson = null
+        personResult = { bucket: 'create', name, decided: true }
+      }
+    }
+
+    if (!preview) {
+      if (existingPerson && personResult.bucket !== 'review') {
+        // Update — only fill empty fields; always sync sf_id and name_key
+        db.prepare(`
+          UPDATE people SET
+            sf_id    = COALESCE(sf_id, ?),
+            name_key = COALESCE(name_key, ?),
+            phone    = CASE WHEN phone    IS NULL OR phone    = '' THEN ? ELSE phone    END,
+            email    = CASE WHEN email    IS NULL OR email    = '' THEN ? ELSE email    END,
+            mobile   = CASE WHEN mobile   IS NULL OR mobile   = '' THEN ? ELSE mobile   END,
+            address  = CASE WHEN address  IS NULL OR address  = '' THEN ? ELSE address  END,
+            city     = CASE WHEN city     IS NULL OR city     = '' THEN ? ELSE city     END,
+            state    = CASE WHEN state    IS NULL OR state    = '' THEN ? ELSE state    END,
+            zip      = CASE WHEN zip      IS NULL OR zip      = '' THEN ? ELSE zip      END
+          WHERE id = ?
+        `).run(
+          acctSfId || null, nameKey,
+          r[COL.PHONE]  || null,
+          r[COL.EMAIL]  || null,
+          r[COL.MOBILE] || null,
+          primStreet || null, primCity || null, primState || null,
+          r[COL.PRIM_ZIP] || null,
+          existingPerson.id
+        )
+        ownerId = existingPerson.id
+      } else if (personResult.bucket === 'create') {
+        const ins = db.prepare(`
+          INSERT INTO people
+            (name,first_name,last_name,role,sub_label,phone,phone2,mobile,
+             email,email2,address,city,state,zip,address2,city2,state2,zip2,
+             do_not_contact,notes,sf_id,name_key)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `).run(
+          name, firstName || null, lastName || null,
+          mapRole(recordType, acctType), mapSubLabel(acctType),
+          r[COL.PHONE]  || null, r[COL.PHONE2] || null, r[COL.MOBILE] || null,
+          r[COL.EMAIL]  || null, r[COL.EMAIL2] || null,
+          primStreet || null, primCity || null, primState || null, r[COL.PRIM_ZIP] || null,
+          r[COL.SEC_STREET] || null, r[COL.SEC_CITY] || null,
+          r[COL.SEC_STATE]  || null, r[COL.SEC_ZIP]  || null,
+          r[COL.DO_NOT_MAIL] === '1' ? 1 : 0,
+          r[COL.ACCT_NOTES] || null,
+          acctSfId || null,
+          nameKey
+        )
+        ownerId = Number(ins.lastInsertRowid)
+      }
+      // If still 'review' (no decision), leave ownerId null — property will be ownerless
+    }
+  }
+
+  // ── Property ──────────────────────────────────────────────────────────────
+  let propResult = null
+
+  if (addr) {
+    const addrKey = normalizeAddrKey(addr, city, state, zip)
+    const existingByAddr  = addrKey ? db.prepare(`SELECT id, sf_id, owner_id FROM properties WHERE addr_key = ?`).get(addrKey) : null
+    const existingBySfId  = propSfId ? db.prepare(`SELECT id FROM properties WHERE sf_id = ?`).get(propSfId) : null
+    const existingProp    = existingByAddr || existingBySfId
+
+    propResult = existingProp
+      ? { bucket: 'update', existing: existingProp, address: addr, city, state }
+      : { bucket: 'create', address: addr, city, state }
+
+    if (!preview) {
+      if (existingProp) {
+        db.prepare(`
+          UPDATE properties SET
+            sf_id           = COALESCE(sf_id, ?),
+            addr_key        = COALESCE(addr_key, ?),
+            tenant_brand_id = COALESCE(tenant_brand_id, ?),
+            owner_id        = COALESCE(owner_id, ?),
+            notes           = CASE WHEN notes IS NULL OR notes = '' THEN ? ELSE notes END
+          WHERE id = ?
+        `).run(propSfId || null, addrKey || null, brandId, ownerId, notes || null, existingProp.id)
+      } else {
+        db.prepare(`
+          INSERT INTO properties (address,city,state,zip,tenant_brand_id,owner_id,notes,sf_id,addr_key)
+          VALUES (?,?,?,?,?,?,?,?,?)
+        `).run(addr, city || null, state || null, zip || null, brandId, ownerId, notes || null, propSfId || null, addrKey || null)
+      }
+    }
+  }
+
+  return { personResult, propResult, name, address: addr, tenantBrand }
+}
+
+// POST /api/import/salesforce — main full import (add ?preview=1 to classify without committing)
 router.post('/salesforce', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+
+  const preview   = req.query.preview === '1'
+  const decisions = req.body.decisions ? JSON.parse(req.body.decisions) : {}
 
   let records
   try {
@@ -122,130 +290,64 @@ router.post('/salesforce', upload.single('file'), (req, res) => {
       skip_empty_lines: true,
       trim: true,
       bom: true,
-      from_line: 2, // skip header row
+      from_line: 2,
       relax_column_count: true,
     })
   } catch (e) {
     return res.status(400).json({ error: `CSV parse error: ${e.message}` })
   }
 
-  // Prepared statements
-  const upsertBrand = db.prepare(`
-    INSERT INTO tenant_brands (name) VALUES (?)
-    ON CONFLICT(name) DO NOTHING
-  `)
-  const getBrand = db.prepare(`SELECT id FROM tenant_brands WHERE name = ?`)
+  const buckets = { will_create: [], will_update: [], needs_review: [] }
+  let imported = 0, skipped = 0
 
-  const upsertPerson = db.prepare(`
-    INSERT INTO people
-      (name,first_name,last_name,role,sub_label,phone,phone2,mobile,
-       email,email2,address,city,state,zip,address2,city2,state2,zip2,
-       do_not_contact,notes,sf_id)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-    ON CONFLICT(sf_id) DO UPDATE SET
-      name=excluded.name, first_name=excluded.first_name, last_name=excluded.last_name,
-      role=excluded.role, sub_label=excluded.sub_label,
-      phone=excluded.phone, phone2=excluded.phone2, mobile=excluded.mobile,
-      email=excluded.email, email2=excluded.email2,
-      address=excluded.address, city=excluded.city, state=excluded.state, zip=excluded.zip,
-      address2=excluded.address2, city2=excluded.city2, state2=excluded.state2, zip2=excluded.zip2,
-      do_not_contact=excluded.do_not_contact, notes=excluded.notes
-  `)
-  const getPerson = db.prepare(`SELECT id FROM people WHERE sf_id = ?`)
-
-  const upsertProp = db.prepare(`
-    INSERT INTO properties (address,city,state,zip,tenant_brand_id,owner_id,notes,sf_id)
-    VALUES (?,?,?,?,?,?,?,?)
-    ON CONFLICT(sf_id) DO UPDATE SET
-      address=excluded.address, city=excluded.city, state=excluded.state, zip=excluded.zip,
-      tenant_brand_id=excluded.tenant_brand_id, owner_id=excluded.owner_id,
-      notes=CASE WHEN excluded.notes IS NOT NULL AND excluded.notes != '' THEN excluded.notes ELSE properties.notes END
-  `)
-
-  let imported = 0, skipped = 0, errors = []
-
-  // Wrap everything in a single transaction — critical for 28k rows
-  db.exec('BEGIN')
+  if (!preview) db.exec('BEGIN')
   try {
-    for (const r of records) {
-      if (!r[COL.TENANT_SF_ID]) { skipped++; continue }
+    for (let i = 0; i < records.length; i++) {
+      const r = records[i]
+      const addr = (r[COL.PROP_ADDR] || '').trim()
+      // Skip rows with neither a property SF ID nor an address
+      if (!r[COL.TENANT_SF_ID] && !addr) { skipped++; continue }
 
-      const tenantBrand = (r[COL.TENANT_BRAND] || '').trim()
-      const acctSfId    = (r[COL.ACCT_SF_ID] || '').trim()
-      const propSfId    = (r[COL.TENANT_SF_ID] || '').trim()
-      const recordType  = (r[COL.RECORD_TYPE] || '').trim()
-      const acctType    = (r[COL.ACCT_TYPE] || '').trim()
-      const firstName   = (r[COL.FIRST_NAME] || '').trim()
-      const lastName    = (r[COL.LAST_NAME] || '').trim()
-      const acctName    = (r[COL.ACCT_NAME] || '').trim()
+      const result = classifyRow(r, decisions, i, preview)
 
-      // Derive name
-      const isPerson = recordType === 'Person Account'
-      const name = isPerson
-        ? [firstName, lastName].filter(Boolean).join(' ') || acctName
-        : acctName
-
-      if (!name) { skipped++; continue }
-
-      // 1. Upsert tenant brand
-      let brandId = null
-      if (tenantBrand) {
-        upsertBrand.run(tenantBrand)
-        brandId = getBrand.get(tenantBrand)?.id || null
-      }
-
-      // 2. Upsert person/company
-      let ownerId = null
-      if (acctSfId) {
-        upsertPerson.run(
-          name, firstName || null, lastName || null,
-          mapRole(recordType, acctType),
-          mapSubLabel(acctType),
-          r[COL.PHONE]  || null,
-          r[COL.PHONE2] || null,
-          r[COL.MOBILE] || null,
-          r[COL.EMAIL]  || null,
-          r[COL.EMAIL2] || null,
-          r[COL.PRIM_STREET] || null,
-          r[COL.PRIM_CITY]   || null,
-          r[COL.PRIM_STATE]  || null,
-          r[COL.PRIM_ZIP]    || null,
-          r[COL.SEC_STREET]  || null,
-          r[COL.SEC_CITY]    || null,
-          r[COL.SEC_STATE]   || null,
-          r[COL.SEC_ZIP]     || null,
-          r[COL.DO_NOT_MAIL] === '1' ? 1 : 0,
-          r[COL.ACCT_NOTES]  || null,
-          acctSfId
-        )
-        ownerId = getPerson.get(acctSfId)?.id || null
-      }
-
-      // 3. Upsert property
-      const addr  = (r[COL.PROP_ADDR]  || '').trim()
-      const city  = (r[COL.PROP_CITY]  || '').trim()
-      const state = (r[COL.PROP_STATE] || '').trim()
-      const zip   = (r[COL.PROP_ZIP]   || '').trim()
-      const notes = (r[COL.PROP_NOTES] || '').trim()
-
-      if (addr) {
-        upsertProp.run(addr, city || null, state || null, zip || null, brandId, ownerId, notes || null, propSfId)
-        imported++
+      if (result.propResult) {
+        if (result.personResult?.bucket === 'review' && !decisions[i]) {
+          buckets.needs_review.push({ index: i, name: result.name, address: result.address, tenantBrand: result.tenantBrand, candidates: result.personResult.candidates })
+        } else if (result.propResult.bucket === 'create') {
+          buckets.will_create.push({ index: i, name: result.name, address: result.address, tenantBrand: result.tenantBrand })
+          if (!preview) imported++
+        } else {
+          buckets.will_update.push({ index: i, name: result.name, address: result.address, tenantBrand: result.tenantBrand, matched_property: result.propResult.existing })
+          if (!preview) imported++
+        }
       } else {
         skipped++
       }
     }
-    db.exec('COMMIT')
+    if (!preview) db.exec('COMMIT')
   } catch (e) {
-    db.exec('ROLLBACK')
+    if (!preview) db.exec('ROLLBACK')
     return res.status(500).json({ error: e.message })
+  }
+
+  if (preview) {
+    return res.json({
+      preview: true,
+      total: records.length,
+      buckets,
+      counts: {
+        will_create:  buckets.will_create.length,
+        will_update:  buckets.will_update.length,
+        needs_review: buckets.needs_review.length,
+      },
+    })
   }
 
   res.json({
     imported,
     skipped,
     total: records.length,
-    errors,
+    needs_review: buckets.needs_review.length,
     stats: {
       tenant_brands: db.prepare('SELECT COUNT(*) AS n FROM tenant_brands').get().n,
       people:        db.prepare('SELECT COUNT(*) AS n FROM people').get().n,
