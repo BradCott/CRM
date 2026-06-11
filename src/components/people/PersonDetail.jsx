@@ -221,7 +221,7 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
               {data.properties.map(p => (
                 <button
                   key={p.id}
-                  onClick={() => navigate(`/properties/${p.id}`)}
+                  onClick={() => navigate(`/properties?open=${p.id}`)}
                   className="w-full flex items-start justify-between gap-2 p-3 bg-slate-50 rounded-xl border border-slate-100 hover:bg-blue-50 hover:border-blue-200 transition-colors text-left"
                 >
                   <div className="min-w-0">
