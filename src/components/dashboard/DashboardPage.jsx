@@ -3,12 +3,15 @@ import { useNavigate } from 'react-router-dom'
 import {
   Landmark, TrendingUp, Users, FileCheck2, AlertTriangle,
   CalendarClock, Loader2, KanbanSquare,
-  Clock, History, Mail, Shield, CheckCircle2, DollarSign, Building2, BarChart3,
-  MapPin, Calendar,
+  History, Mail, Shield, CheckCircle2, Building2,
+  MapPin, Calendar, Send, BookOpen, Plus,
 } from 'lucide-react'
-import { getDashboard, getDeals, getDashboardFinancials, getDashboardDeadlines, getDashboardActivity, getDashboardMapProperties, getDashboardLeaseExpirations } from '../../api/client'
+import { getDashboard, getDeals, getDashboardActivity, getDashboardMapProperties, getDashboardLeaseExpirations, getLauncherCounts } from '../../api/client'
 import knoxLogo from '../../assets/Knox.png'
 import PortfolioMap from './PortfolioMap'
+import TodaysPlays from './TodaysPlays'
+import BrokerLeaderboard from './BrokerLeaderboard'
+import MailEngine from './MailEngine'
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 function fmt$(v) {
@@ -33,7 +36,6 @@ function monthsUntil(d) {
   return (new Date(d + 'T00:00:00') - new Date()) / (86_400_000 * 30.44)
 }
 
-// ── Lease time remaining ──────────────────────────────────────────────────────
 function timeRemaining(leaseEnd) {
   if (!leaseEnd) return { label: 'Unknown', cls: 'text-slate-400' }
   const end   = new Date(leaseEnd + 'T00:00:00')
@@ -51,7 +53,6 @@ function timeRemaining(leaseEnd) {
   return { label: parts.join(' '), cls }
 }
 
-// ── Relative time ─────────────────────────────────────────────────────────────
 function timeAgo(ts) {
   if (!ts) return '—'
   const diff = Date.now() - new Date(ts).getTime()
@@ -75,17 +76,24 @@ const STAGE_BADGE = {
   'LOI':             'bg-violet-100 text-violet-800 border border-violet-200',
 }
 
+const STAGE_BAR = {
+  'LOI':             'bg-violet-300',
+  'PSA Negotiation': 'bg-amber-300',
+  'Under Contract':  'bg-blue-400',
+  'Money Hard':      'bg-emerald-400',
+}
+
 // ── Main component ────────────────────────────────────────────────────────────
 export default function DashboardPage() {
   const navigate = useNavigate()
   const [data, setData]           = useState(null)
   const [loading, setLoading]     = useState(true)
   const [pipeline, setPipeline]   = useState([])
-  const [financials, setFinancials]         = useState(null)
-  const [deadlines, setDeadlines]           = useState([])
   const [activity, setActivity]             = useState([])
   const [mapProperties, setMapProperties]   = useState([])
   const [leaseExpirations, setLeaseExpirations] = useState([])
+  const [launcher, setLauncher]   = useState(null)
+  const [mapOpen, setMapOpen]     = useState(false)
 
   useEffect(() => {
     getDashboard()
@@ -106,11 +114,10 @@ export default function DashboardPage() {
       })
       .catch(console.error)
 
-    getDashboardFinancials().then(setFinancials).catch(console.error)
-    getDashboardDeadlines().then(setDeadlines).catch(console.error)
     getDashboardActivity().then(setActivity).catch(console.error)
     getDashboardMapProperties().then(setMapProperties).catch(console.error)
     getDashboardLeaseExpirations().then(setLeaseExpirations).catch(console.error)
+    getLauncherCounts().then(setLauncher).catch(console.error)
   }, [])
 
   const today = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
@@ -130,6 +137,12 @@ export default function DashboardPage() {
     }),
   }))
 
+  const pipelineValue = pipeline.reduce((s, d) => s + (Number(d.purchase_price) || 0), 0)
+  const stageCounts = pipeline.reduce((acc, d) => {
+    acc[d.stage] = (acc[d.stage] || 0) + 1
+    return acc
+  }, {})
+
   if (loading) {
     return (
       <div className="flex items-center justify-center h-full">
@@ -140,40 +153,110 @@ export default function DashboardPage() {
 
   return (
     <div className="flex-1 overflow-y-auto bg-slate-50">
-      <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+      <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
         <div className="flex items-center justify-between">
-          <LogoOrFallback />
+          <div className="bg-black rounded-xl px-4 py-2 shadow-sm">
+            <img src={knoxLogo} alt="Knox" style={{ width: 160 }} className="object-contain" />
+          </div>
           <p className="text-sm text-slate-400">{today}</p>
         </div>
 
-        {/* ── Metric cards ───────────────────────────────────────────────── */}
-        <div className="grid grid-cols-4 gap-4">
-          <MetricCard
-            icon={Landmark}
-            label="Portfolio Purchase Value"
-            value={fmt$(data?.portfolio_purchase_value)}
-            color="blue"
+        {/* ── Action launcher ────────────────────────────────────────────── */}
+        <div className="grid grid-cols-4 gap-3">
+          <LauncherButton
+            icon={Send} color="text-violet-600" bg="hover:border-violet-300"
+            label="Send Mail"
+            sub={launcher?.mail_due > 0 ? `${launcher.mail_due} owners due` : 'All caught up'}
+            subColor={launcher?.mail_due > 0 ? 'text-orange-600' : 'text-slate-400'}
+            onClick={() => navigate('/campaigns')}
           />
-          <MetricCard
-            icon={TrendingUp}
-            label="Total Fees to Collect"
-            value={fmt$(data?.fees_to_collect)}
-            color="emerald"
+          <LauncherButton
+            icon={Building2} color="text-blue-600" bg="hover:border-blue-300"
+            label="Market Properties"
+            sub={launcher?.market_new > 0 ? `${launcher.market_new} new this week` : 'Browse market'}
+            subColor="text-slate-400"
+            onClick={() => navigate('/properties')}
           />
-          <MetricCard
-            icon={FileCheck2}
-            label="Properties Under Contract"
-            value={data?.under_contract_count ?? '—'}
-            color="amber"
+          <LauncherButton
+            icon={BookOpen} color="text-emerald-600" bg="hover:border-emerald-300"
+            label="Accounting"
+            sub={launcher?.bills_due > 0 ? `${launcher.bills_due} bill${launcher.bills_due !== 1 ? 's' : ''} due soon` : 'Books current'}
+            subColor={launcher?.bills_due > 0 ? 'text-amber-600' : 'text-slate-400'}
+            onClick={() => navigate('/accounting')}
           />
-          <MetricCard
-            icon={Users}
-            label="Active Investors"
-            value={data?.active_investors_count ?? '—'}
-            color="violet"
+          <LauncherButton
+            icon={Plus} color="text-slate-600" bg="hover:border-slate-400"
+            label="New Deal"
+            sub="Add to pipeline"
+            subColor="text-slate-400"
+            onClick={() => navigate('/pipeline')}
           />
+        </div>
+
+        {/* ── Command center: plays + brokers | mail + stats + activity ──── */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
+          <div className="lg:col-span-2 space-y-4">
+            <TodaysPlays />
+            <BrokerLeaderboard />
+          </div>
+
+          <div className="space-y-4">
+            <MailEngine />
+
+            {/* Compact stats */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-5 py-4">
+              <div className="grid grid-cols-2 gap-x-4 gap-y-3">
+                <MiniStat icon={Landmark} label="Portfolio" value={fmt$(data?.portfolio_purchase_value)} color="text-blue-700" />
+                <MiniStat icon={KanbanSquare} label="Pipeline" value={fmt$(pipelineValue)} color="text-violet-700" />
+                <MiniStat icon={TrendingUp} label="Fees to Collect" value={fmt$(data?.fees_to_collect)} color="text-emerald-700" />
+                <MiniStat icon={Users} label="Investors" value={data?.active_investors_count ?? '—'} color="text-slate-700" />
+              </div>
+              {/* Stage distribution bar */}
+              {pipeline.length > 0 && (
+                <div className="mt-4 pt-3 border-t border-slate-100">
+                  <div className="flex gap-1 mb-1.5">
+                    {Object.entries(STAGE_BAR).map(([stage, cls]) =>
+                      stageCounts[stage] ? (
+                        <div key={stage} className={`h-2 rounded-full ${cls}`} style={{ flex: stageCounts[stage] }} title={`${stage}: ${stageCounts[stage]}`} />
+                      ) : null
+                    )}
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    {pipeline.length} active deal{pipeline.length !== 1 ? 's' : ''} · {Object.entries(stageCounts).map(([s, n]) => `${s} ${n}`).join(' · ')}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Compact activity */}
+            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+              <div className="flex items-center gap-2 px-5 py-3 border-b border-slate-100">
+                <History className="w-4 h-4 text-slate-400" />
+                <h2 className="text-sm font-bold text-slate-800">Activity</h2>
+              </div>
+              {activity.length === 0 ? (
+                <p className="px-5 py-4 text-xs text-slate-400">No recent activity</p>
+              ) : (
+                <ul className="divide-y divide-slate-50">
+                  {activity.slice(0, 6).map((item, i) => {
+                    const TypeIcon = item.type === 'letter' ? Mail
+                      : item.type === 'insurance' ? Shield
+                      : item.type === 'task_done' ? CheckCircle2
+                      : KanbanSquare
+                    return (
+                      <li key={`act-${item.type}-${item.id}-${i}`} className="flex items-center gap-2.5 px-5 py-2">
+                        <TypeIcon className="w-3.5 h-3.5 text-slate-300 shrink-0" />
+                        <p className="flex-1 text-xs text-slate-600 truncate">{item.description}</p>
+                        <span className="text-[10px] text-slate-400 shrink-0">{timeAgo(item.timestamp)}</span>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
         </div>
 
         {/* ── Under Contract ─────────────────────────────────────────────── */}
@@ -280,116 +363,25 @@ export default function DashboardPage() {
           )}
         </Section>
 
-        {/* ── Upcoming Deadlines ─────────────────────────────────────────── */}
-        <Section title="Upcoming Deadlines" icon={Clock}>
-          {deadlines.length === 0 ? (
-            <EmptyRow message="No upcoming deadlines." />
-          ) : (
-            <ul className="divide-y divide-slate-100">
-              {deadlines.map((item, i) => {
-                const days = daysUntil(item.due_date)
-                const overdue = days !== null && days < 0
-                const urgent  = days !== null && days <= 7
-                const soon    = days !== null && days <= 30
-                const urgencyDot = overdue || urgent ? 'bg-red-400'
-                  : soon ? 'bg-amber-400' : 'bg-emerald-400'
-                const urgencyText = overdue || urgent ? 'text-red-600 font-semibold'
-                  : soon ? 'text-amber-700 font-semibold' : 'text-emerald-700'
-                const typeIcon = item.type === 'insurance' ? Shield
-                  : item.type === 'deal' ? KanbanSquare : Clock
-
-                const TypeIcon = typeIcon
-                const navTarget = item.type === 'insurance'
-                  ? `/management/${item.property_id}?tab=insurance`
-                  : item.type === 'deal'
-                  ? '/pipeline'
-                  : item.property_id ? `/management/${item.property_id}` : null
-
-                return (
-                  <li
-                    key={`${item.type}-${item.id}-${i}`}
-                    onClick={navTarget ? () => navigate(navTarget) : undefined}
-                    className={`flex items-center gap-4 px-6 py-3.5 ${navTarget ? 'cursor-pointer hover:bg-slate-50 transition-colors' : ''}`}
-                  >
-                    <div className={`w-2 h-2 rounded-full shrink-0 ${urgencyDot}`} />
-                    <TypeIcon className="w-4 h-4 text-slate-400 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-slate-800 truncate">{item.title}</p>
-                      {item.property_address && (
-                        <p className="text-xs text-slate-400 truncate">
-                          {[item.property_address, item.property_city].filter(Boolean).join(', ')}
-                        </p>
-                      )}
-                    </div>
-                    <div className="text-right shrink-0">
-                      <p className={`text-xs ${urgencyText}`}>
-                        {overdue
-                          ? `${Math.abs(days)}d overdue`
-                          : days === 0 ? 'Today'
-                          : `${days}d`}
-                      </p>
-                      <p className="text-xs text-slate-400">{fmtDate(item.due_date)}</p>
-                    </div>
-                  </li>
-                )
-              })}
-            </ul>
+        {/* ── Portfolio Map — collapsed by default ───────────────────────── */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+          <button
+            onClick={() => setMapOpen(o => !o)}
+            className="w-full flex items-center justify-between px-6 py-4 hover:bg-slate-50 transition-colors text-left"
+          >
+            <div className="flex items-center gap-2">
+              <MapPin className="w-4 h-4 text-slate-400" />
+              <h2 className="text-sm font-bold text-slate-800 uppercase tracking-widest">Portfolio Map</h2>
+              <span className="text-xs text-slate-400 normal-case tracking-normal">{mapProperties.length} properties</span>
+            </div>
+            <span className="text-xs text-slate-400">{mapOpen ? 'Hide' : 'Show'}</span>
+          </button>
+          {mapOpen && (
+            <div className="overflow-hidden rounded-b-2xl border-t border-slate-100">
+              <PortfolioMap properties={mapProperties} />
+            </div>
           )}
-        </Section>
-
-        {/* ── Portfolio Map ───────────────────────────────────────────────── */}
-        <Section title="Portfolio Map" icon={MapPin}>
-          <div className="overflow-hidden rounded-b-2xl">
-            <PortfolioMap properties={mapProperties} />
-          </div>
-        </Section>
-
-        {/* ── Recent Activity ─────────────────────────────────────────────── */}
-        <Section title="Recent Activity" icon={History}>
-          {activity.length === 0 ? (
-            <EmptyRow message="No recent activity." />
-          ) : (
-            <ul className="divide-y divide-slate-100">
-              {activity.map((item, i) => {
-                const TypeIcon = item.type === 'letter'    ? Mail
-                  : item.type === 'insurance' ? Shield
-                  : item.type === 'task_done' ? CheckCircle2
-                  : KanbanSquare
-
-                const iconColor = item.type === 'letter'    ? 'text-blue-400'
-                  : item.type === 'insurance' ? 'text-amber-400'
-                  : item.type === 'task_done' ? 'text-emerald-500'
-                  : 'text-violet-400'
-
-                const navTarget = item.type === 'insurance' && item.property_id
-                  ? `/management/${item.property_id}?tab=insurance`
-                  : (item.type === 'task_done' || item.type === 'insurance') && item.property_id
-                  ? `/management/${item.property_id}`
-                  : item.type === 'deal' ? '/pipeline'
-                  : null
-
-                return (
-                  <li
-                    key={`act-${item.type}-${item.id}-${i}`}
-                    onClick={navTarget ? () => navigate(navTarget) : undefined}
-                    className={`flex items-center gap-4 px-6 py-3.5 ${navTarget ? 'cursor-pointer hover:bg-slate-50 transition-colors' : ''}`}
-                  >
-                    <div className={`w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center shrink-0`}>
-                      <TypeIcon className={`w-4 h-4 ${iconColor}`} />
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm text-slate-800 truncate">{item.description}</p>
-                      {item.actor && (
-                        <p className="text-xs text-slate-400">{item.actor}</p>
-                      )}
-                    </div>
-                    <p className="text-xs text-slate-400 shrink-0">{timeAgo(item.timestamp)}</p>
-                  </li>
-                )
-              })}
-            </ul>
-          )}
-        </Section>
+        </div>
 
         {/* ── Leases Expiring ────────────────────────────────────────────── */}
         <Section title="Leases Expiring Soon" icon={CalendarClock}>
@@ -456,30 +448,27 @@ export default function DashboardPage() {
 
 // ── Sub-components ────────────────────────────────────────────────────────────
 
-function LogoOrFallback() {
+function LauncherButton({ icon: Icon, color, bg, label, sub, subColor, onClick }) {
   return (
-    <div className="bg-black rounded-xl px-4 py-2 shadow-sm">
-      <img src={knoxLogo} alt="Knox" style={{ width: 180 }} className="object-contain" />
-    </div>
+    <button
+      onClick={onClick}
+      className={`bg-white rounded-2xl border border-slate-200 shadow-sm px-4 py-4 text-center transition-all hover:shadow-md ${bg} group`}
+    >
+      <Icon className={`w-7 h-7 mx-auto ${color} group-hover:scale-110 transition-transform`} />
+      <p className="mt-2 text-sm font-semibold text-slate-900">{label}</p>
+      <p className={`text-xs mt-0.5 ${subColor}`}>{sub}</p>
+    </button>
   )
 }
 
-const COLOR_MAP = {
-  blue:    { bg: 'bg-blue-50',    icon: 'text-blue-600',   val: 'text-blue-800'   },
-  emerald: { bg: 'bg-emerald-50', icon: 'text-emerald-600',val: 'text-emerald-800'},
-  amber:   { bg: 'bg-amber-50',   icon: 'text-amber-600',  val: 'text-amber-800'  },
-  violet:  { bg: 'bg-violet-50',  icon: 'text-violet-600', val: 'text-violet-800' },
-}
-
-function MetricCard({ icon: Icon, label, value, color }) {
-  const c = COLOR_MAP[color]
+function MiniStat({ icon: Icon, label, value, color }) {
   return (
-    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm px-6 py-5">
-      <div className={`w-10 h-10 rounded-xl ${c.bg} flex items-center justify-center mb-3`}>
-        <Icon className={`w-5 h-5 ${c.icon}`} />
+    <div className="flex items-center gap-2.5 min-w-0">
+      <Icon className="w-4 h-4 text-slate-300 shrink-0" />
+      <div className="min-w-0">
+        <p className="text-[10px] text-slate-400 uppercase tracking-wide truncate">{label}</p>
+        <p className={`text-sm font-bold tabular-nums ${color}`}>{value}</p>
       </div>
-      <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">{label}</p>
-      <p className={`text-3xl font-bold ${c.val}`}>{value}</p>
     </div>
   )
 }

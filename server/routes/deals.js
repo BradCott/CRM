@@ -111,7 +111,8 @@ router.put('/:id', (req, res) => {
           address, city, state, tenant, cap_rate, due_diligence_days, dd_deadline, earnest_money } = req.body
   db.prepare(`
     UPDATE deals SET property_id=?, stage=?, purchase_price=?, close_date=?, notes=?,
-                     address=?, city=?, state=?, tenant=?, cap_rate=?, due_diligence_days=?, dd_deadline=?, earnest_money=?
+                     address=?, city=?, state=?, tenant=?, cap_rate=?, due_diligence_days=?, dd_deadline=?, earnest_money=?,
+                     updated_at=datetime('now')
     WHERE id=?
   `).run(toStr(property_id), stage, toFloat(purchase_price), toStr(close_date), toStr(notes),
          toStr(address), toStr(city), toStr(state), toStr(tenant),
@@ -128,7 +129,7 @@ router.patch('/:id/link-property', (req, res) => {
 router.patch('/:id/stage', (req, res) => {
   const { stage } = req.body
   if (!stage) return res.status(400).json({ error: 'stage is required' })
-  db.prepare('UPDATE deals SET stage = ? WHERE id = ?').run(stage, req.params.id)
+  db.prepare(`UPDATE deals SET stage = ?, updated_at = datetime('now') WHERE id = ?`).run(stage, req.params.id)
   res.json(db.prepare(SELECT + ' WHERE d.id = ?').get(req.params.id))
 })
 

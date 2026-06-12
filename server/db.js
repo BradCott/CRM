@@ -286,6 +286,35 @@ const migrations = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_bills_property ON property_bills(property_id)`,
   `CREATE INDEX IF NOT EXISTS idx_bills_due      ON property_bills(due_date)`,
+  // Today's Plays engine + per-user assignment + broker tracking
+  `ALTER TABLE deals ADD COLUMN assigned_to       INTEGER REFERENCES users(id)`,
+  `ALTER TABLE deals ADD COLUMN broker_id         INTEGER REFERENCES people(id)`,
+  `ALTER TABLE deals ADD COLUMN broker_commission REAL`,
+  `ALTER TABLE deals ADD COLUMN updated_at        TEXT`,
+  `ALTER TABLE oauth_tokens ADD COLUMN notes_folder_id  TEXT`,
+  `ALTER TABLE oauth_tokens ADD COLUMN notes_processed  TEXT`,
+  `CREATE TABLE IF NOT EXISTS plays (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id      INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    source       TEXT NOT NULL DEFAULT 'system',
+    play_type    TEXT,
+    title        TEXT NOT NULL,
+    detail       TEXT,
+    route        TEXT,
+    priority     INTEGER DEFAULT 0,
+    status       TEXT NOT NULL DEFAULT 'open',
+    snooze_until TEXT,
+    due_date     TEXT,
+    dedupe_key   TEXT,
+    created_at   TEXT DEFAULT (datetime('now')),
+    done_at      TEXT
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_plays_dedupe ON plays(dedupe_key) WHERE dedupe_key IS NOT NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_plays_user_status ON plays(user_id, status)`,
+  `CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+  )`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

@@ -23,6 +23,7 @@ import plaidRouter          from './routes/plaid.js'
 import usersRouter          from './routes/users.js'
 import managementRouter     from './routes/management.js'
 import handwryttenRouter   from './routes/handwrytten.js'
+import playsRouter          from './routes/plays.js'
 
 import { requireAuth, requireWrite, requireRole } from './middleware/auth.js'
 
@@ -66,6 +67,7 @@ app.use('/api/deals',            requireAuth, requireWrite, dealsRouter)
 app.use('/api/reports',          requireAuth, reportsRouter)
 app.use('/api/saved-searches',   requireAuth, requireWrite, savedSearchesRouter)
 app.use('/api/dashboard',        requireAuth, dashboardRouter)
+app.use('/api/plays',            requireAuth, playsRouter)
 app.use('/api/emails',           requireAuth, requireWrite, emailsRouter)
 
 // Property management — admin + full_agent
@@ -87,11 +89,24 @@ if (isProd && existsSync(distPath)) {
 
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`\n  CRM API  →  http://0.0.0.0:${PORT}  [${isProd ? 'production' : 'development'}]\n`)
-  import('./services/driveWatcher.js').then(({ watchDrive }) => {
+  import('./services/driveWatcher.js').then(({ watchDrive, watchMeetingNotes }) => {
     watchDrive().catch(() => {})
-    setInterval(() => watchDrive().catch(() => {}), 5 * 60 * 1000)
+    watchMeetingNotes().catch(() => {})
+    setInterval(() => {
+      watchDrive().catch(() => {})
+      watchMeetingNotes().catch(() => {})
+    }, 5 * 60 * 1000)
   })
   import('./services/weeklyReport.js').then(({ startWeeklyReport }) => {
     startWeeklyReport()
   }).catch(err => console.warn('[weeklyReport] could not start:', err.message))
+  // Morning email digest — 6:00 AM daily, suggested plays from overnight email
+  import('node-cron').then(({ default: cron }) => {
+    cron.schedule('0 6 * * *', () => {
+      import('./services/playsEngine.js')
+        .then(({ runMorningDigest }) => runMorningDigest())
+        .catch(err => console.error('[plays] morning digest error:', err.message))
+    })
+    console.log('[plays] morning email digest scheduled — daily 6:00 AM')
+  }).catch(() => {})
 })

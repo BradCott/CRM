@@ -105,6 +105,17 @@ export async function parseSettlementPdf(file) {
   return req('POST', '/accounting/parse-settlement', fd)
 }
 
+// Today's Plays + command center
+export const getPlays            = ()              => req('GET',   '/plays')
+export const patchPlay           = (id, d)         => req('PATCH', `/plays/${id}`, d)
+export const createPlay          = (d)             => req('POST',  '/plays', d)
+export const claimPlay           = (id)            => req('POST',  `/plays/${id}/claim`)
+export const getLauncherCounts   = ()              => req('GET',   '/plays/launcher')
+export const getMailStats        = ()              => req('GET',   '/plays/mail-stats')
+export const setMailTarget       = (target)        => req('PUT',   '/plays/mail-target', { target })
+export const getBrokerLeaderboard = (months)       => req('GET',   `/plays/brokers/leaderboard${months ? `?months=${months}` : ''}`)
+export const assignDealBroker    = (dealId, d)     => req('PATCH', `/plays/brokers/deals/${dealId}`, d)
+
 // Dashboard
 export const getDashboard           = () => req('GET', '/dashboard')
 export const getDashboardFinancials     = () => req('GET', '/dashboard/financials')

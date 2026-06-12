@@ -71,6 +71,62 @@ export async function watchDrive() {
   `).run(JSON.stringify(processed.slice(-200)))
 }
 
+// ── Meeting Notes folder → Today's Plays ──────────────────────────────────────
+// New doc dropped each Monday; parse action items + assignees into plays.
+
+const NOTES_FOLDER_NAME = 'Meeting Notes'
+
+export async function watchMeetingNotes() {
+  const tokenRow = db.prepare(`SELECT * FROM oauth_tokens WHERE provider = 'google'`).get()
+  if (!tokenRow?.access_token) return
+
+  let auth
+  try { auth = getAuthedClient(tokenRow) } catch (_) { return }
+  const drive = google.drive({ version: 'v3', auth })
+
+  let folderId = tokenRow.notes_folder_id
+  if (!folderId) {
+    const res = await drive.files.list({
+      q: `name = '${NOTES_FOLDER_NAME}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+      fields: 'files(id, name)',
+    })
+    folderId = res.data.files?.[0]?.id || null
+    if (folderId) {
+      db.prepare(`UPDATE oauth_tokens SET notes_folder_id = ?, updated_at = datetime('now') WHERE provider = 'google'`).run(folderId)
+    }
+  }
+  if (!folderId) return
+
+  const filesRes = await drive.files.list({
+    q: `'${folderId}' in parents and trashed = false`,
+    fields: 'files(id, name, mimeType, createdTime)',
+    orderBy: 'createdTime desc',
+    pageSize: 10,
+  })
+  const files = filesRes.data.files || []
+
+  let processed = []
+  try { processed = JSON.parse(tokenRow.notes_processed || '[]') } catch (_) {}
+
+  for (const file of files) {
+    if (processed.includes(file.id)) continue
+    try {
+      const text = await extractText(drive, file)
+      if (text && text.trim().length > 20) {
+        const { parseMeetingNotesText } = await import('./playsEngine.js')
+        await parseMeetingNotesText(file.name, text, file.id)
+      }
+      processed.push(file.id)
+    } catch (err) {
+      console.error(`[driveWatcher] Failed to process meeting notes ${file.name}:`, err.message)
+    }
+  }
+
+  db.prepare(`
+    UPDATE oauth_tokens SET notes_processed = ?, updated_at = datetime('now') WHERE provider = 'google'
+  `).run(JSON.stringify(processed.slice(-100)))
+}
+
 async function extractText(drive, file) {
   // Google Docs → export as plain text
   if (file.mimeType === 'application/vnd.google-apps.document') {

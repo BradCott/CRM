@@ -504,6 +504,8 @@ Return ONLY a valid JSON object in exactly this format — every field is requir
   "buyer_taxes_paid": number or null,
   "exchange_proceeds": number or null,
   "total_closing_costs": number or null,
+  "broker_name": "string or null",
+  "broker_commission": number or null,
   "uncertain_items": []
 }
 
@@ -534,6 +536,8 @@ Field extraction rules:
 - "cam_credit": CAM, maintenance, or property management escrow credit given to the buyer (e.g. "CAM Credit", "Maintenance Credit", "Reserve Credit")
 - "buyer_taxes_paid": Property taxes or back taxes PAID BY the buyer at closing — a cost to the buyer, not a credit (HUD-1 lines 1300-1399, e.g. line 1301 back taxes, delinquent taxes). If none, null.
 - "exchange_proceeds": 1031 exchange proceeds deposited to escrow by a Qualified Intermediary (QI). Look for entries from "Investment Property Exchange", "Qualified Intermediary", "QI", "1031 Exchange", or similar in the Buyer Credit column. Return the amount as a positive number. If none, null.
+- "broker_name": Name of the real estate broker or brokerage receiving a commission at closing (e.g. "Marcus & Millichap", "CBRE", or an individual broker's name). Look for "Commission", "Broker Fee", "Real Estate Commission" line items. If multiple brokers, the buyer-side broker. If none visible, null.
+- "broker_commission": Total real estate commission paid at closing as a positive number. Sum buyer-side and seller-side if both shown on this statement. If none, null.
 - "total_closing_costs": Settlement/closing charges only — the actual fees paid at closing, NOT including the purchase price or earnest money reimbursements.
   - For HUD-1: use line 103 "Settlement charges to borrower" exactly.
   - For First American Title: sum ONLY the fee/charge line items in the Buyer Charge column. EXCLUDE: (1) the "Total Consideration" / purchase price line, (2) any earnest money reimbursement disbursements paid back to the buyer or their principals at closing (lines labeled "EM Reimbursement", "Earnest Money Reimbursement", or similar). Include: loan fees, appraisal, title/escrow fees, endorsements, recording, environmental, survey, inspection, acquisition fees, and any other third-party closing charges.
@@ -695,6 +699,8 @@ async function parseSettlementStatement(buffer, apiKey) {
     buyer_taxes_paid:       cn(raw.buyer_taxes_paid),
     exchange_proceeds:      cn(raw.exchange_proceeds),
     total_closing_costs:    cn(raw.total_closing_costs),
+    broker_name:            cleanStr(raw.broker_name),
+    broker_commission:      cn(raw.broker_commission),
     uncertain_items: (() => {
       if (!Array.isArray(raw.uncertain_items)) return []
       return raw.uncertain_items
