@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution } from '../../api/client'
+import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store } from 'lucide-react'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction } from '../../api/client'
 import Button from '../ui/Button'
 import AddTransactionModal from './AddTransactionModal'
 import SettlementUpload from './SettlementUpload'
@@ -9,18 +9,13 @@ import BankStatementReview from './BankStatementReview'
 import InvestorUpload from './InvestorUpload'
 import BalanceSheet from './BalanceSheet'
 import ProfitLoss from './ProfitLoss'
+import CashFlowStatement from './CashFlowStatement'
+import ScheduleE from './ScheduleE'
+import BudgetVsActual from './BudgetVsActual'
+import Bills from './Bills'
+import Vendors from './Vendors'
 import PlaidConnect from './PlaidConnect'
-
-const CATEGORY_COLORS = {
-  'Equity Contribution': 'bg-blue-100 text-blue-700',
-  'Purchase':            'bg-red-100 text-red-700',
-  'Loan':                'bg-teal-100 text-teal-700',
-  'Rent':                'bg-emerald-100 text-emerald-700',
-  'Mortgage':            'bg-amber-100 text-amber-700',
-  'Repair':              'bg-orange-100 text-orange-700',
-  'Sale':                'bg-violet-100 text-violet-700',
-  'Other':               'bg-slate-100 text-slate-600',
-}
+import { CATEGORY_COLORS } from '../../utils/accounting'
 
 const SOURCE_LABELS = {
   'Manual':               { dot: 'bg-slate-400',   label: 'Manual' },
@@ -89,6 +84,17 @@ export default function LedgerPage() {
       setTransactions(prev => prev.filter(t => t.id !== id))
     } finally {
       setDeleting(null)
+    }
+  }
+
+  async function handleReconcile(tx) {
+    const next = tx.reconciled ? 0 : 1
+    // Optimistic toggle
+    setTransactions(prev => prev.map(t => t.id === tx.id ? { ...t, reconciled: next } : t))
+    try {
+      await reconcileTransaction(tx.id, !!next)
+    } catch {
+      setTransactions(prev => prev.map(t => t.id === tx.id ? { ...t, reconciled: tx.reconciled } : t))
     }
   }
 
@@ -179,13 +185,15 @@ export default function LedgerPage() {
   }
 
   function exportCSV() {
-    const header = ['Date', 'Description', 'Category', 'Amount', 'Source']
+    const header = ['Date', 'Description', 'Category', 'Amount', 'Source', 'Vendor', 'Reconciled']
     const rows = transactions.map(t => [
       t.date,
       `"${(t.description || '').replace(/"/g, '""')}"`,
       t.category,
       t.amount,
       t.source,
+      `"${(t.vendor || '').replace(/"/g, '""')}"`,
+      t.reconciled ? 'Yes' : 'No',
     ])
     const csv = [header, ...rows].map(r => r.join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
@@ -272,11 +280,16 @@ export default function LedgerPage() {
         </div>
 
         {/* Tab navigation */}
-        <div className="flex items-center gap-0 -mx-6 px-6 border-t border-slate-100">
+        <div className="flex items-center gap-0 -mx-6 px-6 border-t border-slate-100 overflow-x-auto scrollbar-thin">
           {[
-            { key: 'ledger',  label: 'Ledger',        Icon: null },
-            { key: 'balance', label: 'Balance Sheet',  Icon: Scale },
-            { key: 'pl',      label: 'P&L',            Icon: BarChart2 },
+            { key: 'ledger',    label: 'Ledger',        Icon: null },
+            { key: 'balance',   label: 'Balance Sheet', Icon: Scale },
+            { key: 'pl',        label: 'P&L',           Icon: BarChart2 },
+            { key: 'cashflow',  label: 'Cash Flow',     Icon: ArrowLeftRight },
+            { key: 'schedulee', label: 'Schedule E',    Icon: FileSpreadsheet },
+            { key: 'budget',    label: 'Budget',        Icon: Target },
+            { key: 'bills',     label: 'Bills',         Icon: Receipt },
+            { key: 'vendors',   label: 'Vendors',       Icon: Store },
           ].map(({ key, label, Icon }) => (
             <button
               key={key}
@@ -304,6 +317,31 @@ export default function LedgerPage() {
       {activeView === 'pl' && (
         <div className="flex-1 overflow-y-auto">
           <ProfitLoss transactions={transactions} onChanged={reload} />
+        </div>
+      )}
+      {activeView === 'cashflow' && (
+        <div className="flex-1 overflow-y-auto">
+          <CashFlowStatement transactions={transactions} onChanged={reload} />
+        </div>
+      )}
+      {activeView === 'schedulee' && (
+        <div className="flex-1 overflow-y-auto">
+          <ScheduleE property={property} transactions={transactions} onChanged={reload} />
+        </div>
+      )}
+      {activeView === 'budget' && (
+        <div className="flex-1 overflow-y-auto">
+          <BudgetVsActual propertyId={propertyId} transactions={transactions} />
+        </div>
+      )}
+      {activeView === 'bills' && (
+        <div className="flex-1 overflow-y-auto">
+          <Bills propertyId={propertyId} onChanged={reload} />
+        </div>
+      )}
+      {activeView === 'vendors' && (
+        <div className="flex-1 overflow-y-auto">
+          <Vendors transactions={transactions} onChanged={reload} />
         </div>
       )}
 
@@ -451,6 +489,7 @@ export default function LedgerPage() {
                     <SortTh col="category"    sort={sortState} onSort={handleSort}>Category</SortTh>
                     <SortTh col="amount"      sort={sortState} onSort={handleSort} right>Amount</SortTh>
                     <SortTh col="source"      sort={sortState} onSort={handleSort}>Source</SortTh>
+                    <th className="px-2 py-3 w-12 text-xs font-semibold text-slate-500 uppercase tracking-wide bg-slate-50" title="Reconciled against bank statement">Rec</th>
                     <th className="px-4 py-3 w-10" />
                   </tr>
                 </thead>
@@ -465,8 +504,9 @@ export default function LedgerPage() {
                         <td className="px-4 pl-6 py-3 border-b border-slate-100 text-slate-500 whitespace-nowrap text-xs">
                           {fmtDate(tx.date)}
                         </td>
-                        <td className="px-4 py-3 border-b border-slate-100 text-slate-800 max-w-[260px] truncate font-medium">
-                          {tx.description}
+                        <td className="px-4 py-3 border-b border-slate-100 text-slate-800 max-w-[260px] font-medium">
+                          <span className="truncate block">{tx.description}</span>
+                          {tx.vendor && <span className="text-xs text-slate-400 font-normal">{tx.vendor}</span>}
                         </td>
                         <td className="px-4 py-3 border-b border-slate-100">
                           <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${catStyle}`}>
@@ -483,6 +523,15 @@ export default function LedgerPage() {
                             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${srcConfig.dot}`} />
                             {srcConfig.label}
                           </span>
+                        </td>
+                        <td className="px-2 py-3 border-b border-slate-100 text-center">
+                          <input
+                            type="checkbox"
+                            checked={!!tx.reconciled}
+                            onChange={() => handleReconcile(tx)}
+                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                            title={tx.reconciled ? 'Reconciled — click to undo' : 'Mark as reconciled'}
+                          />
                         </td>
                         <td className="px-4 py-3 pr-6 border-b border-slate-100">
                           <button

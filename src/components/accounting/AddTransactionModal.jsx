@@ -3,14 +3,14 @@ import { X } from 'lucide-react'
 import { Input, Select } from '../ui/Input'
 import Button from '../ui/Button'
 import { createTransactions } from '../../api/client'
-
-const CATEGORIES = ['Equity Contribution', 'Purchase', 'Rent', 'Mortgage', 'Repair', 'Sale', 'Other']
+import { ALL_CATEGORIES } from '../../utils/accounting'
 
 const EMPTY = {
   date:        new Date().toISOString().slice(0, 10),
   description: '',
   category:    'Rent',
   amount:      '',
+  vendor:      '',
   sign:        '+',  // UI toggle: + or -
 }
 
@@ -41,6 +41,7 @@ export default function AddTransactionModal({ propertyId, onSaved, onClose }) {
         category:    form.category,
         amount:      form.sign === '-' ? -rawAmt : rawAmt,
         source:      'Manual',
+        vendor:      form.vendor.trim() || null,
       }])
       onSaved()
       onClose()
@@ -79,8 +80,15 @@ export default function AddTransactionModal({ propertyId, onSaved, onClose }) {
           />
 
           <Select label="Category" value={form.category} onChange={set('category')}>
-            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
           </Select>
+
+          <Input
+            label="Vendor / Payee (optional)"
+            value={form.vendor}
+            onChange={set('vendor')}
+            placeholder="e.g. ABC Plumbing — used for 1099 tracking"
+          />
 
           {/* Amount with +/- toggle */}
           <div>

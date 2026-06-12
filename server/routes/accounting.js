@@ -7,7 +7,13 @@ import { autoLinkInvestors } from '../services/investorMatch.js'
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
 
-const CATEGORIES = ['Equity Contribution', 'Purchase', 'Loan', 'Rent', 'Mortgage', 'Repair', 'Sale', 'Other']
+const CATEGORIES = [
+  'Equity Contribution', 'Purchase', 'Loan', 'Rent', 'Mortgage', 'Repair', 'Sale',
+  // Schedule E-aligned expense categories
+  'Insurance', 'Property Tax', 'Utilities', 'Management Fees', 'Legal & Professional',
+  'Advertising', 'Supplies', 'Travel', 'Commissions', 'Cleaning & Maintenance', 'HOA / CAM',
+  'Other',
+]
 const SOURCES    = ['Manual', 'Settlement Statement', 'Bank Statement', 'Excel Upload']
 
 // ── Portfolio Reports — all properties with full transaction + investor data ──
@@ -23,7 +29,7 @@ router.get('/reports', (req, res) => {
   `).all()
 
   const txStmt  = db.prepare(`
-    SELECT id, date, description, category, amount, source
+    SELECT id, date, description, category, amount, source, vendor, reconciled
     FROM accounting_transactions
     WHERE property_id = ?
     ORDER BY date ASC
@@ -75,7 +81,7 @@ router.get('/:propertyId/transactions', (req, res) => {
   if (!prop) return res.status(404).json({ error: 'Property not found' })
 
   const transactions = db.prepare(`
-    SELECT id, property_id, date, description, category, amount, source, created_at
+    SELECT id, property_id, date, description, category, amount, source, vendor, reconciled, created_at
     FROM accounting_transactions
     WHERE property_id = ?
     ORDER BY date ASC, id ASC
@@ -93,20 +99,20 @@ router.post('/:propertyId/transactions', (req, res) => {
 
   const payload = Array.isArray(req.body) ? req.body : [req.body]
   const stmt = db.prepare(`
-    INSERT INTO accounting_transactions (property_id, date, description, category, amount, source)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO accounting_transactions (property_id, date, description, category, amount, source, vendor)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `)
 
   const created = []
   for (const t of payload) {
-    const { date, description, category, amount, source = 'Manual' } = t
+    const { date, description, category, amount, source = 'Manual', vendor = null } = t
     if (!date || !description || !category || amount === undefined) {
       return res.status(400).json({ error: `Missing required fields on transaction: ${JSON.stringify(t)}` })
     }
     if (!CATEGORIES.includes(category)) return res.status(400).json({ error: `Invalid category: ${category}` })
     if (!SOURCES.includes(source))      return res.status(400).json({ error: `Invalid source: ${source}` })
-    const r = stmt.run(propertyId, date, description, category, parseFloat(amount), source)
-    created.push({ id: r.lastInsertRowid, property_id: Number(propertyId), date, description, category, amount: parseFloat(amount), source })
+    const r = stmt.run(propertyId, date, description, category, parseFloat(amount), source, vendor || null)
+    created.push({ id: r.lastInsertRowid, property_id: Number(propertyId), date, description, category, amount: parseFloat(amount), source, vendor: vendor || null })
   }
 
   res.status(201).json(created)
@@ -115,16 +121,116 @@ router.post('/:propertyId/transactions', (req, res) => {
 // ── Update a transaction ──────────────────────────────────────────────────────
 
 router.put('/transactions/:id', (req, res) => {
-  const { date, description, category, amount } = req.body
+  const { date, description, category, amount, vendor } = req.body
   if (!date || !description || !category || amount === undefined)
     return res.status(400).json({ error: 'Missing required fields' })
   if (!CATEGORIES.includes(category))
     return res.status(400).json({ error: `Invalid category: ${category}` })
   db.prepare(`
-    UPDATE accounting_transactions SET date=?, description=?, category=?, amount=? WHERE id=?
-  `).run(date, description, category, parseFloat(amount), req.params.id)
+    UPDATE accounting_transactions SET date=?, description=?, category=?, amount=?, vendor=? WHERE id=?
+  `).run(date, description, category, parseFloat(amount), vendor || null, req.params.id)
   const updated = db.prepare('SELECT * FROM accounting_transactions WHERE id=?').get(req.params.id)
   res.json(updated)
+})
+
+// ── Toggle reconciled flag ────────────────────────────────────────────────────
+
+router.patch('/transactions/:id/reconcile', (req, res) => {
+  const { reconciled } = req.body
+  db.prepare('UPDATE accounting_transactions SET reconciled = ? WHERE id = ?')
+    .run(reconciled ? 1 : 0, req.params.id)
+  const updated = db.prepare('SELECT * FROM accounting_transactions WHERE id=?').get(req.params.id)
+  if (!updated) return res.status(404).json({ error: 'Transaction not found' })
+  res.json(updated)
+})
+
+// ── Budgets — annual amount per category ──────────────────────────────────────
+
+router.get('/:propertyId/budget', (req, res) => {
+  const year = Number(req.query.year) || new Date().getFullYear()
+  const rows = db.prepare(`
+    SELECT id, category, amount FROM property_budgets
+    WHERE property_id = ? AND year = ?
+  `).all(req.params.propertyId, year)
+  res.json({ year, budgets: rows })
+})
+
+router.put('/:propertyId/budget', (req, res) => {
+  const { year, budgets } = req.body
+  if (!year || !Array.isArray(budgets)) return res.status(400).json({ error: 'year and budgets[] required' })
+  const upsert = db.prepare(`
+    INSERT INTO property_budgets (property_id, year, category, amount)
+    VALUES (?, ?, ?, ?)
+    ON CONFLICT(property_id, year, category) DO UPDATE SET amount = excluded.amount
+  `)
+  for (const b of budgets) {
+    if (!b.category || !CATEGORIES.includes(b.category)) continue
+    upsert.run(req.params.propertyId, year, b.category, parseFloat(b.amount) || 0)
+  }
+  const rows = db.prepare('SELECT id, category, amount FROM property_budgets WHERE property_id = ? AND year = ?')
+    .all(req.params.propertyId, year)
+  res.json({ year: Number(year), budgets: rows })
+})
+
+// ── Bills (Accounts Payable) ──────────────────────────────────────────────────
+
+router.get('/:propertyId/bills', (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, property_id, payee, description, category, amount, due_date, paid_at, paid_tx_id, created_at
+    FROM property_bills
+    WHERE property_id = ?
+    ORDER BY (paid_at IS NOT NULL) ASC, due_date ASC
+  `).all(req.params.propertyId)
+  res.json(rows)
+})
+
+router.post('/:propertyId/bills', (req, res) => {
+  const { payee, description, category = 'Other', amount, due_date } = req.body
+  if (!payee || amount === undefined || !due_date)
+    return res.status(400).json({ error: 'payee, amount, and due_date are required' })
+  if (!CATEGORIES.includes(category)) return res.status(400).json({ error: `Invalid category: ${category}` })
+  const r = db.prepare(`
+    INSERT INTO property_bills (property_id, payee, description, category, amount, due_date)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(req.params.propertyId, payee.trim(), description || null, category, Math.abs(parseFloat(amount)), due_date)
+  const row = db.prepare('SELECT * FROM property_bills WHERE id = ?').get(r.lastInsertRowid)
+  res.status(201).json(row)
+})
+
+router.put('/bills/:id', (req, res) => {
+  const bill = db.prepare('SELECT * FROM property_bills WHERE id = ?').get(req.params.id)
+  if (!bill) return res.status(404).json({ error: 'Bill not found' })
+  const { payee, description, category, amount, due_date } = req.body
+  db.prepare(`
+    UPDATE property_bills SET payee=?, description=?, category=?, amount=?, due_date=? WHERE id=?
+  `).run(
+    payee ?? bill.payee, description ?? bill.description, category ?? bill.category,
+    amount !== undefined ? Math.abs(parseFloat(amount)) : bill.amount,
+    due_date ?? bill.due_date, req.params.id
+  )
+  res.json(db.prepare('SELECT * FROM property_bills WHERE id = ?').get(req.params.id))
+})
+
+// Mark a bill paid — records the payment as a ledger transaction
+router.post('/bills/:id/pay', (req, res) => {
+  const bill = db.prepare('SELECT * FROM property_bills WHERE id = ?').get(req.params.id)
+  if (!bill) return res.status(404).json({ error: 'Bill not found' })
+  if (bill.paid_at) return res.status(400).json({ error: 'Bill is already paid' })
+
+  const paidDate = req.body?.paid_date || new Date().toISOString().slice(0, 10)
+  const tx = db.prepare(`
+    INSERT INTO accounting_transactions (property_id, date, description, category, amount, source, vendor)
+    VALUES (?, ?, ?, ?, ?, 'Manual', ?)
+  `).run(bill.property_id, paidDate, bill.description || `Bill — ${bill.payee}`, bill.category, -Math.abs(bill.amount), bill.payee)
+
+  db.prepare(`UPDATE property_bills SET paid_at = datetime('now'), paid_tx_id = ? WHERE id = ?`)
+    .run(tx.lastInsertRowid, req.params.id)
+  res.json(db.prepare('SELECT * FROM property_bills WHERE id = ?').get(req.params.id))
+})
+
+router.delete('/bills/:id', (req, res) => {
+  db.prepare('DELETE FROM property_bills WHERE id = ?').run(req.params.id)
+  res.status(204).end()
 })
 
 // ── Delete a transaction ──────────────────────────────────────────────────────

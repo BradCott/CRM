@@ -129,6 +129,18 @@ export const getLedger                = (propertyId)    => req('GET',    `/accou
 export const createTransactions       = (propertyId, d) => req('POST',   `/accounting/${propertyId}/transactions`, d)
 export const updateTransaction        = (id, d)         => req('PUT',    `/accounting/transactions/${id}`, d)
 export const deleteTransaction        = (id)            => req('DELETE', `/accounting/transactions/${id}`)
+export const reconcileTransaction     = (id, val)       => req('PATCH',  `/accounting/transactions/${id}/reconcile`, { reconciled: val })
+
+// Budgets
+export const getBudget  = (propertyId, year) => req('GET', `/accounting/${propertyId}/budget?year=${year}`)
+export const saveBudget = (propertyId, year, budgets) => req('PUT', `/accounting/${propertyId}/budget`, { year, budgets })
+
+// Bills (Accounts Payable)
+export const getBills    = (propertyId)    => req('GET',    `/accounting/${propertyId}/bills`)
+export const createBill  = (propertyId, d) => req('POST',   `/accounting/${propertyId}/bills`, d)
+export const updateBill  = (id, d)         => req('PUT',    `/accounting/bills/${id}`, d)
+export const payBill     = (id, paidDate)  => req('POST',   `/accounting/bills/${id}/pay`, paidDate ? { paid_date: paidDate } : {})
+export const deleteBill  = (id)            => req('DELETE', `/accounting/bills/${id}`)
 export async function uploadSettlement(propertyId, file) {
   const fd = new FormData()
   fd.append('file', file)

@@ -1,4 +1,5 @@
 // Balance Sheet — computed from the ledger transactions + investors table
+import { PL_CATS } from '../../utils/accounting'
 
 function fmt$(n) {
   if (n === null || n === undefined) return '—'
@@ -42,7 +43,8 @@ export default function BalanceSheet({ transactions, investors }) {
   // from the settlement statement (those funded the acquisition, not ongoing operations).
   const opCash = sum(
     transactions.filter(t =>
-      ['Rent', 'Mortgage', 'Repair', 'Sale'].includes(t.category) &&
+      (PL_CATS.has(t.category) || t.category === 'Sale') &&
+      t.category !== 'Other' &&
       t.source !== 'Settlement Statement'
     )
   )

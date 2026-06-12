@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { X, Pencil, Check, XCircle, Trash2, Loader2 } from 'lucide-react'
 import { updateTransaction, deleteTransaction } from '../../api/client'
-
-const CATEGORIES = ['Rent', 'Mortgage', 'Repair', 'Other', 'Equity Contribution', 'Purchase', 'Loan', 'Sale']
+import { ALL_CATEGORIES } from '../../utils/accounting'
 
 function fmt$(n) {
   if (n === null || n === undefined) return '—'
@@ -19,14 +18,14 @@ function EditRow({ tx, onSaved, onDeleted }) {
   const [editing, setEditing] = useState(false)
   const [saving,  setSaving]  = useState(false)
   const [deleting, setDeleting] = useState(false)
-  const [form, setForm] = useState({ date: tx.date, description: tx.description, category: tx.category, amount: tx.amount })
+  const [form, setForm] = useState({ date: tx.date, description: tx.description, category: tx.category, amount: tx.amount, vendor: tx.vendor || '' })
 
   const set = f => e => setForm(p => ({ ...p, [f]: e.target.value }))
 
   async function handleSave() {
     setSaving(true)
     try {
-      const updated = await updateTransaction(tx.id, { ...form, amount: parseFloat(form.amount) })
+      const updated = await updateTransaction(tx.id, { ...form, amount: parseFloat(form.amount), vendor: form.vendor.trim() || null })
       onSaved(updated)
       setEditing(false)
     } catch (e) {
@@ -60,10 +59,14 @@ function EditRow({ tx, onSaved, onDeleted }) {
             className="text-xs border border-slate-300 rounded px-2 py-1 w-full focus:outline-none focus:ring-1 focus:ring-blue-400" />
         </td>
         <td className="px-3 py-2">
-          <select value={form.category} onChange={set('category')}
-            className="text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400">
-            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-          </select>
+          <div className="space-y-1">
+            <select value={form.category} onChange={set('category')}
+              className="text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400">
+              {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+            </select>
+            <input type="text" value={form.vendor} onChange={set('vendor')} placeholder="Vendor"
+              className="text-xs border border-slate-300 rounded px-2 py-1 w-full focus:outline-none focus:ring-1 focus:ring-blue-400" />
+          </div>
         </td>
         <td className="px-3 py-2">
           <input type="number" value={form.amount} onChange={set('amount')} step="0.01"
@@ -88,8 +91,14 @@ function EditRow({ tx, onSaved, onDeleted }) {
   return (
     <tr className="border-b border-slate-100 hover:bg-slate-50 group cursor-pointer" onClick={() => setEditing(true)}>
       <td className="px-3 py-2.5 text-xs text-slate-500 whitespace-nowrap">{fmtDate(tx.date)}</td>
-      <td className="px-3 py-2.5 text-xs text-slate-800 font-medium max-w-[200px] truncate">{tx.description}</td>
-      <td className="px-3 py-2.5 text-xs text-slate-500">{tx.category}</td>
+      <td className="px-3 py-2.5 text-xs text-slate-800 font-medium max-w-[200px]">
+        <span className="truncate block">{tx.description}</span>
+        {tx.vendor && <span className="text-slate-400 font-normal">{tx.vendor}</span>}
+      </td>
+      <td className="px-3 py-2.5 text-xs text-slate-500 whitespace-nowrap">
+        {tx.category}
+        {!!tx.reconciled && <span className="ml-1.5 text-emerald-500" title="Reconciled">✓</span>}
+      </td>
       <td className={`px-3 py-2.5 text-xs font-semibold tabular-nums text-right whitespace-nowrap ${Number(tx.amount) >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
         {fmt$(Number(tx.amount))}
       </td>

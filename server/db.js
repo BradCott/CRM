@@ -257,6 +257,35 @@ const migrations = [
   `ALTER TABLE properties ADD COLUMN addr_key TEXT`,
   `CREATE INDEX IF NOT EXISTS idx_people_name_key ON people(name_key)`,
   `CREATE INDEX IF NOT EXISTS idx_prop_addr_key   ON properties(addr_key)`,
+  // QuickBooks-style accounting: reconciliation + vendor/payee tracking
+  `ALTER TABLE accounting_transactions ADD COLUMN reconciled INTEGER DEFAULT 0`,
+  `ALTER TABLE accounting_transactions ADD COLUMN vendor TEXT`,
+  // Budget vs Actual — annual budget per property per category
+  `CREATE TABLE IF NOT EXISTS property_budgets (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    year        INTEGER NOT NULL,
+    category    TEXT NOT NULL,
+    amount      REAL NOT NULL DEFAULT 0,
+    created_at  TEXT DEFAULT (datetime('now')),
+    UNIQUE(property_id, year, category)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_budget_property ON property_budgets(property_id, year)`,
+  // Accounts payable — bills with due dates
+  `CREATE TABLE IF NOT EXISTS property_bills (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    payee       TEXT NOT NULL,
+    description TEXT,
+    category    TEXT NOT NULL DEFAULT 'Other',
+    amount      REAL NOT NULL,
+    due_date    TEXT NOT NULL,
+    paid_at     TEXT,
+    paid_tx_id  INTEGER,
+    created_at  TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_bills_property ON property_bills(property_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_bills_due      ON property_bills(due_date)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

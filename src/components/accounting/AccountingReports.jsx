@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Loader2, RefreshCw, ChevronDown, ChevronRight, Scale, BarChart2, Download } from 'lucide-react'
 import { getAccountingReports } from '../../api/client'
+import { PL_CATS } from '../../utils/accounting'
 import knoxLogo from '../../assets/Knox.png'
 
 // ── Formatters ────────────────────────────────────────────────────────────────
@@ -33,7 +34,7 @@ function computeBS(transactions, investors) {
   const land     = Math.abs(sum(transactions.filter(t => t.description === 'Land Value')))
   const totalRealEstate = building + land
   const opCash = sum(transactions.filter(t =>
-    ['Rent','Mortgage','Repair','Sale'].includes(t.category) && t.source !== 'Settlement Statement'
+    (PL_CATS.has(t.category) || t.category === 'Sale') && t.category !== 'Other' && t.source !== 'Settlement Statement'
   ))
   const otherOp = sum(transactions.filter(t =>
     t.category === 'Other' && t.source !== 'Settlement Statement'
@@ -79,7 +80,7 @@ function filterByPeriod(transactions, period, fromDate, toDate) {
 
 function computePL(transactions, period, fromDate, toDate) {
   const base = filterByPeriod(transactions, period, fromDate, toDate)
-    .filter(t => ['Rent','Mortgage','Repair','Other'].includes(t.category))
+    .filter(t => PL_CATS.has(t.category))
   const pos = txs => txs.filter(t => Number(t.amount) > 0).reduce((s,t) => s+Number(t.amount), 0)
   const neg = txs => txs.filter(t => Number(t.amount) < 0).reduce((s,t) => s+Math.abs(Number(t.amount)), 0)
   const rentRevenue  = pos(base.filter(t => t.category === 'Rent'))
@@ -87,7 +88,8 @@ function computePL(transactions, period, fromDate, toDate) {
   const totalRevenue = rentRevenue + otherRevenue
   const mortgageExp  = neg(base.filter(t => t.category === 'Mortgage'))
   const repairExp    = neg(base.filter(t => t.category === 'Repair'))
-  const otherExp     = neg(base.filter(t => t.category === 'Other'))
+  // "Other" expenses = every remaining operating expense category
+  const otherExp     = neg(base.filter(t => !['Rent','Mortgage','Repair'].includes(t.category)))
   const totalExpenses = mortgageExp + repairExp + otherExp
   const noi    = totalRevenue - totalExpenses
   const margin = totalRevenue > 0 ? (noi / totalRevenue) * 100 : null
@@ -103,7 +105,7 @@ function computeMonthlyGrid(properties, year) {
     const end   = new Date(year, m+1, 0, 23, 59, 59)
     const base  = allTxs.filter(t => {
       const d = new Date(t.date+'T00:00:00')
-      return d >= start && d <= end && ['Rent','Mortgage','Repair','Other'].includes(t.category)
+      return d >= start && d <= end && PL_CATS.has(t.category)
     })
     const pos = txs => txs.filter(t => Number(t.amount) > 0).reduce((s,t) => s+Number(t.amount), 0)
     const neg = txs => txs.filter(t => Number(t.amount) < 0).reduce((s,t) => s+Math.abs(Number(t.amount)), 0)
@@ -112,7 +114,7 @@ function computeMonthlyGrid(properties, year) {
     const totalRevenue = rentRevenue + otherRevenue
     const mortgageExp  = neg(base.filter(t => t.category === 'Mortgage'))
     const repairExp    = neg(base.filter(t => t.category === 'Repair'))
-    const otherExp     = neg(base.filter(t => t.category === 'Other'))
+    const otherExp     = neg(base.filter(t => !['Rent','Mortgage','Repair'].includes(t.category)))
     const totalExpenses = mortgageExp + repairExp + otherExp
     const noi = totalRevenue - totalExpenses
     return { month: m, rentRevenue, otherRevenue, totalRevenue, mortgageExp, repairExp, otherExp, totalExpenses, noi }
@@ -583,7 +585,6 @@ function PLView({ properties }) {
   const [expanded, setExpanded] = useState(false)
   const [monthYear, setMonthYear] = useState(new Date().getFullYear())
 
-  const PL_CATS = new Set(['Rent','Mortgage','Repair','Other'])
   const rows = properties.map(p => ({ ...p, pl: computePL(p.transactions, period, fromDate, toDate) }))
   const total = rows.reduce((acc, r) => {
     const pl = r.pl

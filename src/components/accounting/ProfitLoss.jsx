@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import DrilldownModal from './DrilldownModal'
+import { computePL, filterByPeriod, PL_CATS, EXPENSE_CATEGORIES, expenseLabel } from '../../utils/accounting'
 
 function fmt$(n) {
   if (n === null || n === undefined) return '—'
@@ -47,67 +48,32 @@ function ClickableAmount({ value, label, transactions, onChanged, bold, indent, 
   )
 }
 
-function filterByPeriod(transactions, period, fromDate, toDate) {
-  if (period === 'all') return transactions
-  const now = new Date()
-  let from = null, to = null
-  if (period === 'ytd') {
-    from = new Date(now.getFullYear(), 0, 1); to = now
-  } else if (period === 'ly') {
-    from = new Date(now); from.setFullYear(from.getFullYear() - 1); to = now
-  } else if (period === 'custom') {
-    from = fromDate ? new Date(fromDate + 'T00:00:00') : null
-    to   = toDate   ? new Date(toDate   + 'T23:59:59') : null
-  }
-  return transactions.filter(t => {
-    const d = new Date(t.date + 'T00:00:00')
-    if (from && d < from) return false
-    if (to   && d > to)   return false
-    return true
-  })
-}
-
-const PL_CATS = new Set(['Rent', 'Mortgage', 'Repair', 'Other'])
-
-function computePL(txs) {
-  const base = txs.filter(t => PL_CATS.has(t.category))
-  const pos = (arr) => arr.filter(t => Number(t.amount) > 0)
-  const neg = (arr) => arr.filter(t => Number(t.amount) < 0)
-  const sum = (arr) => arr.reduce((s, t) => s + Math.abs(Number(t.amount)), 0)
-
-  const rentTxs    = base.filter(t => t.category === 'Rent')
-  const otherRevTxs = base.filter(t => t.category === 'Other' && Number(t.amount) > 0)
-  const mortgageTxs = neg(base.filter(t => t.category === 'Mortgage'))
-  const repairTxs   = neg(base.filter(t => t.category === 'Repair'))
-  const otherExpTxs = neg(base.filter(t => t.category === 'Other'))
-
-  const rentRevenue   = sum(pos(rentTxs))
-  const otherRevenue  = sum(otherRevTxs)
-  const totalRevenue  = rentRevenue + otherRevenue
-  const mortgageExp   = sum(mortgageTxs)
-  const repairExp     = sum(repairTxs)
-  const otherExp      = sum(otherExpTxs)
-  const totalExpenses = mortgageExp + repairExp + otherExp
-  const noi           = totalRevenue - totalExpenses
-
-  return {
-    rentRevenue, otherRevenue, totalRevenue,
-    mortgageExp, repairExp, otherExp, totalExpenses, noi,
-    txs: {
-      rentTxs: pos(rentTxs), otherRevTxs,
-      mortgageTxs, repairTxs, otherExpTxs,
-    },
-  }
-}
-
 // ── Monthly view ──────────────────────────────────────────────────────────────
+
+function Cell({ value, txs, label, onChanged, bold, color }) {
+  const [open, setOpen] = useState(false)
+  const hasData = txs?.length > 0
+  return (
+    <>
+      <td className={`px-2 py-2 text-xs tabular-nums min-w-[90px] text-right ${bold ? 'font-semibold' : ''} ${color || 'text-slate-700'}`}>
+        <button
+          onClick={() => hasData && setOpen(true)}
+          className={`w-full text-right ${hasData ? 'underline decoration-dotted underline-offset-2 hover:opacity-70' : 'cursor-default'} transition-opacity`}
+        >
+          {value > 0 ? fmt$(value) : '—'}
+        </button>
+      </td>
+      {open && (
+        <DrilldownModal title={label} transactions={txs} onClose={() => setOpen(false)} onChanged={onChanged} />
+      )}
+    </>
+  )
+}
 
 function MonthlyView({ transactions, onChanged }) {
   const base = transactions.filter(t => PL_CATS.has(t.category))
 
-  // Build sorted list of year-month keys from the data
   const monthKeys = [...new Set(base.map(t => t.date.slice(0, 7)))].sort()
-
   if (monthKeys.length === 0) {
     return <p className="text-sm text-slate-400 py-8 text-center">No transactions to display</p>
   }
@@ -116,44 +82,31 @@ function MonthlyView({ transactions, onChanged }) {
     const [year, month] = key.split('-')
     const label = new Date(Number(year), Number(month) - 1, 1)
       .toLocaleDateString(undefined, { month: 'short', year: '2-digit' })
-    const txs = base.filter(t => t.date.startsWith(key))
-    return { key, label, ...computePL(txs) }
+    return { key, label, pl: computePL(base.filter(t => t.date.startsWith(key))) }
   })
 
-  // Row totals across all months
   const totals = computePL(base)
 
-  const colW = 'min-w-[90px] text-right'
+  // Expense categories with any activity across the whole range
+  const activeExpenseCats = EXPENSE_CATEGORIES.filter(cat =>
+    totals.expenses.some(e => e.category === cat)
+  )
 
-  function Cell({ value, txs, label, onChanged, bold, color }) {
-    const [open, setOpen] = useState(false)
-    const hasData = txs?.length > 0
-    return (
-      <>
-        <td className={`px-2 py-2 text-xs tabular-nums ${colW} ${bold ? 'font-semibold' : ''} ${color || 'text-slate-700'}`}>
-          <button
-            onClick={() => hasData && setOpen(true)}
-            className={`w-full text-right ${hasData ? 'underline decoration-dotted underline-offset-2 hover:opacity-70' : 'cursor-default'} transition-opacity`}
-          >
-            {value > 0 ? fmt$(value) : '—'}
-          </button>
-        </td>
-        {open && (
-          <DrilldownModal title={label} transactions={txs} onClose={() => setOpen(false)} onChanged={onChanged} />
-        )}
-      </>
-    )
-  }
+  const expenseFor = (pl, cat) => pl.expenses.find(e => e.category === cat) || { amount: 0, txs: [] }
 
   const rows = [
-    { key: 'rentRevenue',   label: 'Rental Income',           txKey: 'rentTxs',     color: 'text-emerald-700' },
-    { key: 'otherRevenue',  label: 'Other Income',            txKey: 'otherRevTxs', color: 'text-emerald-700' },
-    { key: 'totalRevenue',  label: 'Total Revenue',           txKey: null,          color: 'text-emerald-700', bold: true, divider: true },
-    { key: 'mortgageExp',   label: 'Mortgage / Debt Service', txKey: 'mortgageTxs', color: 'text-red-600' },
-    { key: 'repairExp',     label: 'Repairs & Maintenance',   txKey: 'repairTxs',   color: 'text-red-600' },
-    { key: 'otherExp',      label: 'Other Expenses',          txKey: 'otherExpTxs', color: 'text-red-600' },
-    { key: 'totalExpenses', label: 'Total Expenses',          txKey: null,          color: 'text-red-600',     bold: true, divider: true },
-    { key: 'noi',           label: 'Net Operating Income',    txKey: null,          color: null,               bold: true },
+    { key: 'rent',  label: 'Rental Income', get: pl => ({ value: pl.rentRevenue, txs: pl.txs.rentTxs }), color: 'text-emerald-700' },
+    ...(totals.otherRevenue > 0
+      ? [{ key: 'otherRev', label: 'Other Income', get: pl => ({ value: pl.otherRevenue, txs: pl.txs.otherRevTxs }), color: 'text-emerald-700' }]
+      : []),
+    { key: 'totalRev', label: 'Total Revenue', get: pl => ({ value: pl.totalRevenue, txs: [...pl.txs.rentTxs, ...pl.txs.otherRevTxs] }), color: 'text-emerald-700', bold: true, divider: true },
+    ...activeExpenseCats.map(cat => ({
+      key: cat, label: expenseLabel(cat),
+      get: pl => { const e = expenseFor(pl, cat); return { value: e.amount, txs: e.txs } },
+      color: 'text-red-600',
+    })),
+    { key: 'totalExp', label: 'Total Expenses', get: pl => ({ value: pl.totalExpenses, txs: pl.txs.allExpenseTxs }), color: 'text-red-600', bold: true, divider: true },
+    { key: 'noi', label: 'Net Operating Income', get: pl => ({ value: pl.noi, txs: [] }), noi: true, bold: true },
   ]
 
   return (
@@ -163,9 +116,9 @@ function MonthlyView({ transactions, onChanged }) {
           <tr className="border-b-2 border-slate-200">
             <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left sticky left-0 bg-white min-w-[160px]"></th>
             {months.map(m => (
-              <th key={m.key} className={`px-2 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide ${colW}`}>{m.label}</th>
+              <th key={m.key} className="px-2 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide min-w-[90px] text-right">{m.label}</th>
             ))}
-            <th className={`px-2 py-2.5 text-xs font-semibold text-slate-700 uppercase tracking-wide ${colW} border-l border-slate-200`}>Total</th>
+            <th className="px-2 py-2.5 text-xs font-semibold text-slate-700 uppercase tracking-wide min-w-[90px] text-right border-l border-slate-200">Total</th>
           </tr>
         </thead>
         <tbody>
@@ -174,26 +127,22 @@ function MonthlyView({ transactions, onChanged }) {
               <td className={`px-3 py-2 text-xs sticky left-0 bg-inherit ${row.bold ? 'font-semibold text-slate-900' : 'text-slate-600'}`}>
                 {row.label}
               </td>
-              {months.map(m => (
-                <Cell
-                  key={m.key}
-                  value={m[row.key]}
-                  txs={row.txKey ? m.txs[row.txKey] : []}
-                  label={`${row.label} — ${m.label}`}
-                  onChanged={onChanged}
-                  bold={row.bold}
-                  color={row.key === 'noi' ? (m.noi >= 0 ? 'text-emerald-700' : 'text-red-600') : row.color}
-                />
-              ))}
-              {/* Total column */}
-              <Cell
-                value={totals[row.key]}
-                txs={row.txKey ? totals.txs[row.txKey] : []}
-                label={`${row.label} — All Months`}
-                onChanged={onChanged}
-                bold={row.bold}
-                color={row.key === 'noi' ? (totals.noi >= 0 ? 'text-emerald-700' : 'text-red-600') : row.color}
-              />
+              {months.map(m => {
+                const { value, txs } = row.get(m.pl)
+                return (
+                  <Cell key={m.key} value={value} txs={txs}
+                    label={`${row.label} — ${m.label}`} onChanged={onChanged} bold={row.bold}
+                    color={row.noi ? (m.pl.noi >= 0 ? 'text-emerald-700' : 'text-red-600') : row.color} />
+                )
+              })}
+              {(() => {
+                const { value, txs } = row.get(totals)
+                return (
+                  <Cell value={value} txs={txs}
+                    label={`${row.label} — All Months`} onChanged={onChanged} bold={row.bold}
+                    color={row.noi ? (totals.noi >= 0 ? 'text-emerald-700' : 'text-red-600') : row.color} />
+                )
+              })()}
             </tr>
           ))}
         </tbody>
@@ -229,7 +178,6 @@ export default function ProfitLoss({ transactions, onChanged }) {
           <p className="text-xs text-slate-400">{periodLabel}</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {/* View toggle */}
           <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
             <button
               onClick={() => setView('summary')}
@@ -301,26 +249,18 @@ export default function ProfitLoss({ transactions, onChanged }) {
 
           <SectionLabel>Expenses</SectionLabel>
 
-          {pl.mortgageExp > 0 && (
-            <ClickableAmount label="Mortgage / Debt Service" value={pl.mortgageExp}
-              transactions={pl.txs.mortgageTxs} indent color="text-red-600" onChanged={onChanged}
-              note="Includes principal; actual interest portion may differ" />
-          )}
-          {pl.repairExp > 0 && (
-            <ClickableAmount label="Repairs & Maintenance" value={pl.repairExp}
-              transactions={pl.txs.repairTxs} indent color="text-red-600" onChanged={onChanged} />
-          )}
-          {pl.otherExp > 0 && (
-            <ClickableAmount label="Other Expenses" value={pl.otherExp}
-              transactions={pl.txs.otherExpTxs} indent color="text-red-600" onChanged={onChanged} />
-          )}
+          {pl.expenses.map(e => (
+            <ClickableAmount key={e.category} label={e.label} value={e.amount}
+              transactions={e.txs} indent color="text-red-600" onChanged={onChanged}
+              note={e.category === 'Mortgage' ? 'Includes principal; actual interest portion may differ' : undefined} />
+          ))}
           {pl.totalExpenses === 0 && (
             <p className="text-sm text-slate-400 pl-6 py-1.5">No expenses in this period</p>
           )}
 
           <Divider thick />
           <ClickableAmount label="TOTAL EXPENSES" value={pl.totalExpenses}
-            transactions={[...pl.txs.mortgageTxs, ...pl.txs.repairTxs, ...pl.txs.otherExpTxs]}
+            transactions={pl.txs.allExpenseTxs}
             bold color="text-red-600" onChanged={onChanged} />
 
           <div className="mt-4 bg-slate-50 rounded-xl p-4 border border-slate-200">

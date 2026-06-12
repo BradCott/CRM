@@ -6,23 +6,7 @@ import {
   syncPlaidConnection, disconnectPlaid, createTransactions,
 } from '../../api/client'
 import Button from '../ui/Button'
-
-// ── Category guesser ──────────────────────────────────────────────────────────
-
-const CATEGORIES = ['Rent', 'Mortgage', 'Repair', 'Other', 'Equity Contribution', 'Sale']
-
-function guessCategory(name, amount) {
-  const n = (name || '').toLowerCase()
-  if (amount > 0) {
-    if (n.includes('rent') || n.includes('lease') || n.includes('tenant')) return 'Rent'
-    return 'Other'
-  }
-  if (n.includes('mortgage') || n.includes(' mtg') || n.includes('home loan') || n.includes('loan pmt')) return 'Mortgage'
-  if (n.includes('repair') || n.includes('maintenance') || n.includes('plumb') || n.includes('electric') ||
-      n.includes('hvac') || n.includes('roof') || n.includes('contractor') || n.includes('hardware') ||
-      n.includes('home depot') || n.includes('lowes') || n.includes('ace hardware')) return 'Repair'
-  return 'Other'
-}
+import { ALL_CATEGORIES as CATEGORIES, guessCategory } from '../../utils/accounting'
 
 function fmt$(n) {
   if (!n && n !== 0) return '—'

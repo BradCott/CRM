@@ -2,17 +2,7 @@ import { useState, useRef } from 'react'
 import { X, Upload, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
 import Button from '../ui/Button'
 import { uploadBankStatement, createTransactions } from '../../api/client'
-
-const CATEGORIES = ['Rent', 'Mortgage', 'Repair', 'Equity Contribution', 'Sale', 'Other']
-
-// Guess a category from the transaction description
-function guessCategory(description) {
-  const d = description.toLowerCase()
-  if (/rent|lease/.test(d))                              return 'Rent'
-  if (/mortgage|loan|payment|mtg|escrow/.test(d))        return 'Mortgage'
-  if (/repair|maintenance|plumb|electric|hvac|roof/.test(d)) return 'Repair'
-  return 'Other'
-}
+import { ALL_CATEGORIES as CATEGORIES, guessCategory } from '../../utils/accounting'
 
 function fmt$(v) {
   if (v === null || v === undefined) return '—'
@@ -44,7 +34,7 @@ export default function BankStatementReview({ propertyId, onSaved, onClose }) {
         date:        t.date,
         description: t.description,
         amount:      t.amount,
-        category:    guessCategory(t.description),
+        category:    guessCategory(t.description, t.amount),
         include:     true,
       }))
       setMeta({ account_info: data.account_info, statement_period: data.statement_period })
