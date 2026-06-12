@@ -12,6 +12,7 @@ import PortfolioMap from './PortfolioMap'
 import TodaysPlays from './TodaysPlays'
 import BrokerLeaderboard from './BrokerLeaderboard'
 import MailEngine from './MailEngine'
+import TreasuryChart from './TreasuryChart'
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 function fmt$(v) {
@@ -203,6 +204,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="space-y-4">
+            <TreasuryChart />
             <MailEngine />
 
             {/* Compact stats */}

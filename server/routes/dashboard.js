@@ -94,6 +94,52 @@ router.get('/', (req, res) => {
   })
 })
 
+// ── GET /treasury — 10-year treasury yield, last 6 months (FRED DGS10) ────────
+// Cached for 6 hours in app_settings so we don't hammer FRED on every load.
+
+router.get('/treasury', async (req, res) => {
+  const readCache = () => {
+    const row = db.prepare(`SELECT value FROM app_settings WHERE key = 'treasury_10y'`).get()
+    if (!row) return null
+    try { return JSON.parse(row.value) } catch { return null }
+  }
+
+  const cached = readCache()
+  if (cached && Date.now() - new Date(cached.fetched_at).getTime() < 6 * 60 * 60 * 1000) {
+    return res.json(cached)
+  }
+
+  try {
+    const start = new Date(Date.now() - 185 * 86_400_000).toISOString().slice(0, 10)
+    const url = `https://fred.stlouisfed.org/graph/fredgraph.csv?id=DGS10&cosd=${start}`
+    const r = await fetch(url, { headers: { 'User-Agent': 'KnoxCRM/1.0' } })
+    if (!r.ok) throw new Error(`FRED responded ${r.status}`)
+    const csv = await r.text()
+
+    const series = csv.trim().split('\n').slice(1).map(line => {
+      const [date, v] = line.split(',')
+      return { date: date?.trim(), rate: parseFloat(v) }
+    }).filter(p => p.date && isFinite(p.rate))
+
+    if (!series.length) throw new Error('FRED returned no data')
+
+    const payload = {
+      fetched_at: new Date().toISOString(),
+      series,
+      latest: series[series.length - 1],
+    }
+    db.prepare(`
+      INSERT INTO app_settings (key, value) VALUES ('treasury_10y', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(JSON.stringify(payload))
+    res.json(payload)
+  } catch (err) {
+    console.error('[treasury]', err.message)
+    if (cached) return res.json(cached)   // stale beats nothing
+    res.status(502).json({ error: 'Could not load treasury data' })
+  }
+})
+
 // ── GET /map-properties ───────────────────────────────────────────────────────
 // Geocodes any portfolio property that doesn't yet have lat/lng stored,
 // caches results back to the DB, then returns the full list.
