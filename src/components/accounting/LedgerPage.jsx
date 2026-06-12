@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store } from 'lucide-react'
+import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins } from 'lucide-react'
 import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction } from '../../api/client'
 import Button from '../ui/Button'
 import AddTransactionModal from './AddTransactionModal'
@@ -14,6 +14,7 @@ import ScheduleE from './ScheduleE'
 import BudgetVsActual from './BudgetVsActual'
 import Bills from './Bills'
 import Vendors from './Vendors'
+import Distributions from './Distributions'
 import PlaidConnect from './PlaidConnect'
 import { CATEGORY_COLORS } from '../../utils/accounting'
 
@@ -290,6 +291,7 @@ export default function LedgerPage() {
             { key: 'budget',    label: 'Budget',        Icon: Target },
             { key: 'bills',     label: 'Bills',         Icon: Receipt },
             { key: 'vendors',   label: 'Vendors',       Icon: Store },
+            { key: 'distributions', label: 'Distributions', Icon: HandCoins },
           ].map(({ key, label, Icon }) => (
             <button
               key={key}
@@ -342,6 +344,11 @@ export default function LedgerPage() {
       {activeView === 'vendors' && (
         <div className="flex-1 overflow-y-auto">
           <Vendors transactions={transactions} onChanged={reload} />
+        </div>
+      )}
+      {activeView === 'distributions' && (
+        <div className="flex-1 overflow-y-auto">
+          <Distributions propertyId={propertyId} />
         </div>
       )}
 

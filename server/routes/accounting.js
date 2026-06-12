@@ -233,6 +233,43 @@ router.delete('/bills/:id', (req, res) => {
   res.status(204).end()
 })
 
+// ── Investor distributions ────────────────────────────────────────────────────
+
+// Portfolio-wide distributions report (all properties)
+router.get('/distributions', (req, res) => {
+  const rows = db.prepare(`
+    SELECT d.id, d.investor_id, d.property_id, d.amount, d.distribution_date, d.distribution_type, d.notes,
+           i.name AS investor_name, p.address AS property_address
+    FROM investor_distributions d
+    JOIN investors i ON i.id = d.investor_id
+    LEFT JOIN properties p ON p.id = d.property_id
+    ORDER BY d.distribution_date DESC, d.id DESC
+  `).all()
+  res.json(rows)
+})
+
+// Distributions for one property + the investors linked to it (for the record form)
+router.get('/:propertyId/distributions', (req, res) => {
+  const distributions = db.prepare(`
+    SELECT d.id, d.investor_id, d.property_id, d.amount, d.distribution_date, d.distribution_type, d.notes,
+           i.name AS investor_name
+    FROM investor_distributions d
+    JOIN investors i ON i.id = d.investor_id
+    WHERE d.property_id = ?
+    ORDER BY d.distribution_date DESC, d.id DESC
+  `).all(req.params.propertyId)
+
+  const investors = db.prepare(`
+    SELECT i.id, i.name, l.contribution, l.preferred_return_rate
+    FROM investor_property_links l
+    JOIN investors i ON i.id = l.investor_id
+    WHERE l.property_id = ?
+    ORDER BY l.contribution DESC, i.name ASC
+  `).all(req.params.propertyId)
+
+  res.json({ distributions, investors })
+})
+
 // ── Delete a transaction ──────────────────────────────────────────────────────
 
 router.delete('/transactions/:id', (req, res) => {

@@ -141,6 +141,10 @@ export const createBill  = (propertyId, d) => req('POST',   `/accounting/${prope
 export const updateBill  = (id, d)         => req('PUT',    `/accounting/bills/${id}`, d)
 export const payBill     = (id, paidDate)  => req('POST',   `/accounting/bills/${id}/pay`, paidDate ? { paid_date: paidDate } : {})
 export const deleteBill  = (id)            => req('DELETE', `/accounting/bills/${id}`)
+
+// Investor distributions (property + portfolio views)
+export const getPropertyDistributions = (propertyId) => req('GET', `/accounting/${propertyId}/distributions`)
+export const getAllDistributions      = ()            => req('GET', '/accounting/distributions')
 export async function uploadSettlement(propertyId, file) {
   const fd = new FormData()
   fd.append('file', file)

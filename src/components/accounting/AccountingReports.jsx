@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowLeft, Loader2, RefreshCw, ChevronDown, ChevronRight, Scale, BarChart2, Download } from 'lucide-react'
-import { getAccountingReports } from '../../api/client'
+import { ArrowLeft, Loader2, RefreshCw, ChevronDown, ChevronRight, Scale, BarChart2, Download, HandCoins } from 'lucide-react'
+import { getAccountingReports, getAllDistributions } from '../../api/client'
 import { PL_CATS } from '../../utils/accounting'
 import knoxLogo from '../../assets/Knox.png'
 
@@ -858,6 +858,131 @@ function PLView({ properties }) {
   )
 }
 
+// ── Distributions view ────────────────────────────────────────────────────────
+
+function DistributionsView() {
+  const [rows, setRows]       = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError]     = useState(null)
+  const [year, setYear]       = useState('all')
+
+  useEffect(() => {
+    getAllDistributions()
+      .then(setRows)
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false))
+  }, [])
+
+  if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="w-5 h-5 text-slate-400 animate-spin" /></div>
+  if (error)   return <div className="px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>
+
+  const years = [...new Set(rows.map(d => d.distribution_date.slice(0, 4)))].sort((a, b) => b - a)
+  const filtered = year === 'all' ? rows : rows.filter(d => d.distribution_date.startsWith(year))
+  const total = filtered.reduce((s, d) => s + Number(d.amount), 0)
+
+  const TYPES = ['Preferred Return', 'Principal', 'Profit']
+  const byType = TYPES.map(t => ({
+    type: t,
+    total: filtered.filter(d => d.distribution_type === t).reduce((s, d) => s + Number(d.amount), 0),
+  }))
+
+  const groupBy = (key, labelKey) => {
+    const map = new Map()
+    for (const d of filtered) {
+      const k = d[key] ?? '—'
+      if (!map.has(k)) map.set(k, { label: d[labelKey] || 'Unassigned', total: 0, count: 0, byType: { 'Preferred Return': 0, 'Principal': 0, 'Profit': 0 } })
+      const g = map.get(k)
+      g.total += Number(d.amount)
+      g.count += 1
+      g.byType[d.distribution_type] = (g.byType[d.distribution_type] || 0) + Number(d.amount)
+    }
+    return [...map.values()].sort((a, b) => b.total - a.total)
+  }
+
+  const byInvestor = groupBy('investor_id', 'investor_name')
+  const byProperty = groupBy('property_id', 'property_address')
+
+  const GroupTable = ({ title, groups, labelHeader }) => (
+    <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+      <div className="px-5 py-3.5 border-b border-slate-100">
+        <h3 className="text-sm font-semibold text-slate-900">{title}</h3>
+      </div>
+      <table className="w-full text-sm border-collapse">
+        <thead>
+          <tr className="bg-slate-50 border-b border-slate-200">
+            <Th>{labelHeader}</Th>
+            <Th right>Pref. Return</Th>
+            <Th right>Principal</Th>
+            <Th right>Profit</Th>
+            <Th right>Total</Th>
+          </tr>
+        </thead>
+        <tbody>
+          {groups.map((g, i) => (
+            <tr key={i} className="hover:bg-slate-50/60">
+              <Td><span className="font-medium text-slate-900">{g.label}</span></Td>
+              <Td right muted={!g.byType['Preferred Return']}>{g.byType['Preferred Return'] ? fmt$(g.byType['Preferred Return']) : '—'}</Td>
+              <Td right muted={!g.byType['Principal']}>{g.byType['Principal'] ? fmt$(g.byType['Principal']) : '—'}</Td>
+              <Td right muted={!g.byType['Profit']}>{g.byType['Profit'] ? fmt$(g.byType['Profit']) : '—'}</Td>
+              <Td right bold color="text-emerald-700">{fmt$(g.total)}</Td>
+            </tr>
+          ))}
+        </tbody>
+        <TotalRow label="Total"
+          values={[
+            byType[0].total || '—',
+            byType[1].total || '—',
+            byType[2].total || '—',
+            total,
+          ]}
+          colorFn={(v, i) => i === 3 ? 'text-emerald-700' : 'text-slate-900'}
+        />
+      </table>
+    </div>
+  )
+
+  return (
+    <div className="space-y-6">
+      {/* Year filter */}
+      <div className="flex items-center gap-3 flex-wrap">
+        <span className="text-sm text-slate-500">Year:</span>
+        <button onClick={() => setYear('all')}
+          className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+            year === 'all' ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-blue-300'
+          }`}>All Time</button>
+        {years.map(y => (
+          <button key={y} onClick={() => setYear(y)}
+            className={`px-3 py-1.5 text-sm rounded-lg border transition-colors ${
+              year === y ? 'bg-blue-600 border-blue-600 text-white' : 'bg-white border-slate-200 text-slate-600 hover:border-blue-300'
+            }`}>{y}</button>
+        ))}
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <SummaryCard label="Total Distributed" value={fmt$(total)} color="text-emerald-700"
+          sub={year === 'all' ? 'all time' : year} />
+        {byType.map(t => (
+          <SummaryCard key={t.type} label={t.type} value={fmt$(t.total)} />
+        ))}
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-2">
+          <HandCoins className="w-8 h-8 opacity-30" />
+          <p className="text-sm font-medium">No distributions recorded{year !== 'all' ? ` in ${year}` : ''}</p>
+          <p className="text-xs">Record distributions from a property's Distributions tab or an investor's profile</p>
+        </div>
+      ) : (
+        <>
+          <GroupTable title="By Investor" groups={byInvestor} labelHeader="Investor" />
+          <GroupTable title="By Property" groups={byProperty} labelHeader="Property" />
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Main page ─────────────────────────────────────────────────────────────────
 
 export default function AccountingReports() {
@@ -897,8 +1022,9 @@ export default function AccountingReports() {
         </div>
         <div className="flex items-center gap-0">
           {[
-            { key:'balance', label:'Balance Sheet', Icon:Scale },
-            { key:'pl',      label:'P&L',           Icon:BarChart2 },
+            { key:'balance',       label:'Balance Sheet', Icon:Scale },
+            { key:'pl',            label:'P&L',           Icon:BarChart2 },
+            { key:'distributions', label:'Distributions', Icon:HandCoins },
           ].map(({ key, label, Icon }) => (
             <button key={key} onClick={() => setActiveTab(key)}
               className={['flex items-center gap-1.5 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors whitespace-nowrap',
@@ -915,7 +1041,7 @@ export default function AccountingReports() {
       <div className="flex-1 overflow-y-auto p-6">
         {loading && <div className="flex items-center justify-center py-20"><Loader2 className="w-6 h-6 text-slate-400 animate-spin" /></div>}
         {error   && <div className="mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
-        {!loading && properties.length === 0 && (
+        {!loading && properties.length === 0 && activeTab !== 'distributions' && (
           <div className="flex flex-col items-center justify-center py-20 text-slate-400 gap-2">
             <p className="text-sm font-medium">No portfolio properties with transactions</p>
             <p className="text-xs">Add transactions to properties to generate reports</p>
@@ -927,6 +1053,7 @@ export default function AccountingReports() {
             {activeTab==='pl'      && <PLView properties={properties} />}
           </>
         )}
+        {!loading && activeTab==='distributions' && <DistributionsView />}
       </div>
     </div>
   )
