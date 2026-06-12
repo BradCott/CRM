@@ -112,6 +112,21 @@ router.post('/:propertyId/transactions', (req, res) => {
   res.status(201).json(created)
 })
 
+// ── Update a transaction ──────────────────────────────────────────────────────
+
+router.put('/transactions/:id', (req, res) => {
+  const { date, description, category, amount } = req.body
+  if (!date || !description || !category || amount === undefined)
+    return res.status(400).json({ error: 'Missing required fields' })
+  if (!CATEGORIES.includes(category))
+    return res.status(400).json({ error: `Invalid category: ${category}` })
+  db.prepare(`
+    UPDATE accounting_transactions SET date=?, description=?, category=?, amount=? WHERE id=?
+  `).run(date, description, category, parseFloat(amount), req.params.id)
+  const updated = db.prepare('SELECT * FROM accounting_transactions WHERE id=?').get(req.params.id)
+  res.json(updated)
+})
+
 // ── Delete a transaction ──────────────────────────────────────────────────────
 
 router.delete('/transactions/:id', (req, res) => {

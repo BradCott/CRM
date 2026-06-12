@@ -303,7 +303,7 @@ export default function LedgerPage() {
       )}
       {activeView === 'pl' && (
         <div className="flex-1 overflow-y-auto">
-          <ProfitLoss transactions={transactions} />
+          <ProfitLoss transactions={transactions} onChanged={reload} />
         </div>
       )}
 

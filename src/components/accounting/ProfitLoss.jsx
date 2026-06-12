@@ -1,26 +1,11 @@
-// Profit & Loss Statement — computed from ledger transactions
-
 import { useState } from 'react'
+import DrilldownModal from './DrilldownModal'
 
 function fmt$(n) {
   if (n === null || n === undefined) return '—'
   const abs = '$' + Math.abs(Math.round(n)).toLocaleString()
   if (n < 0) return `(${abs})`
   return abs
-}
-
-function Row({ label, value, bold, indent, color, note }) {
-  return (
-    <div className={`flex items-start justify-between py-1.5 ${indent ? 'pl-6' : ''}`}>
-      <div>
-        <span className={`text-sm ${bold ? 'font-semibold text-slate-900' : 'text-slate-600'}`}>{label}</span>
-        {note && <p className="text-xs text-slate-400 italic mt-0.5">{note}</p>}
-      </div>
-      <span className={`text-sm tabular-nums shrink-0 ml-4 ${bold ? 'font-semibold' : ''} ${color || (bold ? 'text-slate-900' : 'text-slate-700')}`}>
-        {typeof value === 'number' ? fmt$(value) : value}
-      </span>
-    </div>
-  )
 }
 
 function Divider({ thick }) {
@@ -31,25 +16,49 @@ function SectionLabel({ children }) {
   return <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-4 mb-1">{children}</p>
 }
 
+// Clickable number — opens drilldown modal
+function ClickableAmount({ value, label, transactions, onChanged, bold, indent, color, note }) {
+  const [open, setOpen] = useState(false)
+  const hasData = transactions?.length > 0
+
+  return (
+    <>
+      <div className={`flex items-start justify-between py-1.5 ${indent ? 'pl-6' : ''}`}>
+        <div>
+          <span className={`text-sm ${bold ? 'font-semibold text-slate-900' : 'text-slate-600'}`}>{label}</span>
+          {note && <p className="text-xs text-slate-400 italic mt-0.5">{note}</p>}
+        </div>
+        <button
+          onClick={() => hasData && setOpen(true)}
+          className={`text-sm tabular-nums shrink-0 ml-4 ${bold ? 'font-semibold' : ''} ${color || (bold ? 'text-slate-900' : 'text-slate-700')} ${hasData ? 'underline decoration-dotted underline-offset-2 hover:opacity-70 cursor-pointer' : 'cursor-default'} transition-opacity`}
+        >
+          {fmt$(value)}
+        </button>
+      </div>
+      {open && (
+        <DrilldownModal
+          title={label}
+          transactions={transactions}
+          onClose={() => setOpen(false)}
+          onChanged={onChanged}
+        />
+      )}
+    </>
+  )
+}
+
 function filterByPeriod(transactions, period, fromDate, toDate) {
   if (period === 'all') return transactions
-
   const now = new Date()
-  let from = null
-  let to   = null
-
+  let from = null, to = null
   if (period === 'ytd') {
-    from = new Date(now.getFullYear(), 0, 1)
-    to   = now
+    from = new Date(now.getFullYear(), 0, 1); to = now
   } else if (period === 'ly') {
-    from = new Date(now)
-    from.setFullYear(from.getFullYear() - 1)
-    to = now
+    from = new Date(now); from.setFullYear(from.getFullYear() - 1); to = now
   } else if (period === 'custom') {
     from = fromDate ? new Date(fromDate + 'T00:00:00') : null
     to   = toDate   ? new Date(toDate   + 'T23:59:59') : null
   }
-
   return transactions.filter(t => {
     const d = new Date(t.date + 'T00:00:00')
     if (from && d < from) return false
@@ -58,130 +67,277 @@ function filterByPeriod(transactions, period, fromDate, toDate) {
   })
 }
 
-export default function ProfitLoss({ transactions }) {
-  const [period,   setPeriod]   = useState('all')
+const PL_CATS = new Set(['Rent', 'Mortgage', 'Repair', 'Other'])
+
+function computePL(txs) {
+  const base = txs.filter(t => PL_CATS.has(t.category))
+  const pos = (arr) => arr.filter(t => Number(t.amount) > 0)
+  const neg = (arr) => arr.filter(t => Number(t.amount) < 0)
+  const sum = (arr) => arr.reduce((s, t) => s + Math.abs(Number(t.amount)), 0)
+
+  const rentTxs    = base.filter(t => t.category === 'Rent')
+  const otherRevTxs = base.filter(t => t.category === 'Other' && Number(t.amount) > 0)
+  const mortgageTxs = neg(base.filter(t => t.category === 'Mortgage'))
+  const repairTxs   = neg(base.filter(t => t.category === 'Repair'))
+  const otherExpTxs = neg(base.filter(t => t.category === 'Other'))
+
+  const rentRevenue   = sum(pos(rentTxs))
+  const otherRevenue  = sum(otherRevTxs)
+  const totalRevenue  = rentRevenue + otherRevenue
+  const mortgageExp   = sum(mortgageTxs)
+  const repairExp     = sum(repairTxs)
+  const otherExp      = sum(otherExpTxs)
+  const totalExpenses = mortgageExp + repairExp + otherExp
+  const noi           = totalRevenue - totalExpenses
+
+  return {
+    rentRevenue, otherRevenue, totalRevenue,
+    mortgageExp, repairExp, otherExp, totalExpenses, noi,
+    txs: {
+      rentTxs: pos(rentTxs), otherRevTxs,
+      mortgageTxs, repairTxs, otherExpTxs,
+    },
+  }
+}
+
+// ── Monthly view ──────────────────────────────────────────────────────────────
+
+function MonthlyView({ transactions, onChanged }) {
+  const base = transactions.filter(t => PL_CATS.has(t.category))
+
+  // Build sorted list of year-month keys from the data
+  const monthKeys = [...new Set(base.map(t => t.date.slice(0, 7)))].sort()
+
+  if (monthKeys.length === 0) {
+    return <p className="text-sm text-slate-400 py-8 text-center">No transactions to display</p>
+  }
+
+  const months = monthKeys.map(key => {
+    const [year, month] = key.split('-')
+    const label = new Date(Number(year), Number(month) - 1, 1)
+      .toLocaleDateString(undefined, { month: 'short', year: '2-digit' })
+    const txs = base.filter(t => t.date.startsWith(key))
+    return { key, label, ...computePL(txs) }
+  })
+
+  // Row totals across all months
+  const totals = computePL(base)
+
+  const colW = 'min-w-[90px] text-right'
+
+  function Cell({ value, txs, label, onChanged, bold, color }) {
+    const [open, setOpen] = useState(false)
+    const hasData = txs?.length > 0
+    return (
+      <>
+        <td className={`px-2 py-2 text-xs tabular-nums ${colW} ${bold ? 'font-semibold' : ''} ${color || 'text-slate-700'}`}>
+          <button
+            onClick={() => hasData && setOpen(true)}
+            className={`w-full text-right ${hasData ? 'underline decoration-dotted underline-offset-2 hover:opacity-70' : 'cursor-default'} transition-opacity`}
+          >
+            {value > 0 ? fmt$(value) : '—'}
+          </button>
+        </td>
+        {open && (
+          <DrilldownModal title={label} transactions={txs} onClose={() => setOpen(false)} onChanged={onChanged} />
+        )}
+      </>
+    )
+  }
+
+  const rows = [
+    { key: 'rentRevenue',   label: 'Rental Income',           txKey: 'rentTxs',     color: 'text-emerald-700' },
+    { key: 'otherRevenue',  label: 'Other Income',            txKey: 'otherRevTxs', color: 'text-emerald-700' },
+    { key: 'totalRevenue',  label: 'Total Revenue',           txKey: null,          color: 'text-emerald-700', bold: true, divider: true },
+    { key: 'mortgageExp',   label: 'Mortgage / Debt Service', txKey: 'mortgageTxs', color: 'text-red-600' },
+    { key: 'repairExp',     label: 'Repairs & Maintenance',   txKey: 'repairTxs',   color: 'text-red-600' },
+    { key: 'otherExp',      label: 'Other Expenses',          txKey: 'otherExpTxs', color: 'text-red-600' },
+    { key: 'totalExpenses', label: 'Total Expenses',          txKey: null,          color: 'text-red-600',     bold: true, divider: true },
+    { key: 'noi',           label: 'Net Operating Income',    txKey: null,          color: null,               bold: true },
+  ]
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm border-collapse">
+        <thead>
+          <tr className="border-b-2 border-slate-200">
+            <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left sticky left-0 bg-white min-w-[160px]"></th>
+            {months.map(m => (
+              <th key={m.key} className={`px-2 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide ${colW}`}>{m.label}</th>
+            ))}
+            <th className={`px-2 py-2.5 text-xs font-semibold text-slate-700 uppercase tracking-wide ${colW} border-l border-slate-200`}>Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(row => (
+            <tr key={row.key} className={`${row.divider ? 'border-t-2 border-slate-300' : 'border-b border-slate-100'} ${row.bold ? 'bg-slate-50' : ''}`}>
+              <td className={`px-3 py-2 text-xs sticky left-0 bg-inherit ${row.bold ? 'font-semibold text-slate-900' : 'text-slate-600'}`}>
+                {row.label}
+              </td>
+              {months.map(m => (
+                <Cell
+                  key={m.key}
+                  value={m[row.key]}
+                  txs={row.txKey ? m.txs[row.txKey] : []}
+                  label={`${row.label} — ${m.label}`}
+                  onChanged={onChanged}
+                  bold={row.bold}
+                  color={row.key === 'noi' ? (m.noi >= 0 ? 'text-emerald-700' : 'text-red-600') : row.color}
+                />
+              ))}
+              {/* Total column */}
+              <Cell
+                value={totals[row.key]}
+                txs={row.txKey ? totals.txs[row.txKey] : []}
+                label={`${row.label} — All Months`}
+                onChanged={onChanged}
+                bold={row.bold}
+                color={row.key === 'noi' ? (totals.noi >= 0 ? 'text-emerald-700' : 'text-red-600') : row.color}
+              />
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
+export default function ProfitLoss({ transactions, onChanged }) {
+  const [period,   setPeriod]   = useState('ytd')
   const [fromDate, setFromDate] = useState('')
   const [toDate,   setToDate]   = useState('')
-
-  // P&L only includes income/expense categories — not balance-sheet items
-  const PL_CATS = new Set(['Rent', 'Mortgage', 'Repair', 'Other'])
+  const [view,     setView]     = useState('summary') // 'summary' | 'monthly'
 
   const base = filterByPeriod(transactions, period, fromDate, toDate)
-    .filter(t => PL_CATS.has(t.category))
-
-  const sum = (txs, sign) =>
-    txs.filter(t => sign === 'pos' ? Number(t.amount) > 0 : Number(t.amount) < 0)
-       .reduce((s, t) => s + Math.abs(Number(t.amount)), 0)
-
-  // Revenue
-  const rentRevenue    = sum(base.filter(t => t.category === 'Rent'),  'pos')
-  const otherRevenue   = sum(base.filter(t => t.category === 'Other'), 'pos')
-  const totalRevenue   = rentRevenue + otherRevenue
-
-  // Expenses (shown as positive amounts for display)
-  const mortgageExp    = sum(base.filter(t => t.category === 'Mortgage'), 'neg')
-  const repairExp      = sum(base.filter(t => t.category === 'Repair'),   'neg')
-  const otherExp       = sum(base.filter(t => t.category === 'Other'),    'neg')
-  const totalExpenses  = mortgageExp + repairExp + otherExp
-
-  const noi            = totalRevenue - totalExpenses
+  const pl   = computePL(base)
 
   const periodLabel = {
     all:    'All Time',
     ytd:    `Year to Date (${new Date().getFullYear()})`,
     ly:     'Last 12 Months',
-    custom: fromDate || toDate
-      ? `${fromDate || '…'} → ${toDate || '…'}`
-      : 'Custom Range',
+    custom: fromDate || toDate ? `${fromDate || '…'} → ${toDate || '…'}` : 'Custom Range',
   }[period]
 
   return (
-    <div className="max-w-lg mx-auto px-6 py-6">
-      <div className="flex items-start justify-between mb-1">
+    <div className="px-6 py-6">
+      {/* Header controls */}
+      <div className="flex items-center justify-between mb-4 gap-3 flex-wrap">
         <div>
           <h2 className="text-base font-bold text-slate-900">Profit &amp; Loss</h2>
           <p className="text-xs text-slate-400">{periodLabel}</p>
         </div>
-
-        <select
-          value={period}
-          onChange={e => setPeriod(e.target.value)}
-          className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
-        >
-          <option value="all">All Time</option>
-          <option value="ytd">Year to Date</option>
-          <option value="ly">Last 12 Months</option>
-          <option value="custom">Custom Range</option>
-        </select>
+        <div className="flex items-center gap-2 flex-wrap">
+          {/* View toggle */}
+          <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
+            <button
+              onClick={() => setView('summary')}
+              className={`px-3 py-1.5 transition-colors ${view === 'summary' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+            >
+              Summary
+            </button>
+            <button
+              onClick={() => setView('monthly')}
+              className={`px-3 py-1.5 transition-colors ${view === 'monthly' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}
+            >
+              By Month
+            </button>
+          </div>
+          <select
+            value={period}
+            onChange={e => setPeriod(e.target.value)}
+            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+          >
+            <option value="ytd">Year to Date</option>
+            <option value="ly">Last 12 Months</option>
+            <option value="all">All Time</option>
+            <option value="custom">Custom Range</option>
+          </select>
+        </div>
       </div>
 
       {period === 'custom' && (
-        <div className="flex items-center gap-3 mt-3 mb-4">
+        <div className="flex items-center gap-3 mb-4">
           <div>
             <label className="text-xs text-slate-500 block mb-1">From</label>
-            <input
-              type="date"
-              value={fromDate}
-              onChange={e => setFromDate(e.target.value)}
-              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
-            />
+            <input type="date" value={fromDate} onChange={e => setFromDate(e.target.value)}
+              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
           </div>
           <div>
             <label className="text-xs text-slate-500 block mb-1">To</label>
-            <input
-              type="date"
-              value={toDate}
-              onChange={e => setToDate(e.target.value)}
-              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
-            />
+            <input type="date" value={toDate} onChange={e => setToDate(e.target.value)}
+              className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
           </div>
         </div>
       )}
 
-      <div className="mt-4">
-        {/* REVENUE */}
-        <SectionLabel>Revenue</SectionLabel>
+      {/* Monthly view */}
+      {view === 'monthly' && (
+        <MonthlyView transactions={base} onChanged={onChanged} />
+      )}
 
-        {rentRevenue  > 0 && <Row label="Rental Income"  value={rentRevenue}  indent color="text-emerald-700" />}
-        {otherRevenue > 0 && <Row label="Other Income"   value={otherRevenue} indent color="text-emerald-700" />}
-        {totalRevenue === 0 && (
-          <p className="text-sm text-slate-400 pl-6 py-1.5">No revenue in this period</p>
-        )}
+      {/* Summary view */}
+      {view === 'summary' && (
+        <div className="max-w-lg">
+          <SectionLabel>Revenue</SectionLabel>
 
-        <Divider thick />
-        <Row label="TOTAL REVENUE" value={totalRevenue} bold color="text-emerald-700" />
-
-        {/* EXPENSES */}
-        <SectionLabel>Expenses</SectionLabel>
-
-        {mortgageExp > 0 && (
-          <Row label="Mortgage / Debt Service" value={mortgageExp} indent color="text-red-600"
-            note="Includes principal; actual interest portion may differ" />
-        )}
-        {repairExp   > 0 && <Row label="Repairs &amp; Maintenance" value={repairExp} indent color="text-red-600" />}
-        {otherExp    > 0 && <Row label="Other Expenses"            value={otherExp}  indent color="text-red-600" />}
-        {totalExpenses === 0 && (
-          <p className="text-sm text-slate-400 pl-6 py-1.5">No expenses in this period</p>
-        )}
-
-        <Divider thick />
-        <Row label="TOTAL EXPENSES" value={totalExpenses} bold color="text-red-600" />
-
-        {/* NOI */}
-        <div className="mt-4 bg-slate-50 rounded-xl p-4 border border-slate-200">
-          <div className="flex items-center justify-between">
-            <span className="text-sm font-bold text-slate-900">Net Operating Income</span>
-            <span className={`text-lg font-bold tabular-nums ${noi >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
-              {fmt$(noi)}
-            </span>
-          </div>
-          {totalRevenue > 0 && (
-            <p className="text-xs text-slate-400 mt-1">
-              Margin: {Math.round((noi / totalRevenue) * 100)}%
-            </p>
+          {pl.rentRevenue > 0 && (
+            <ClickableAmount label="Rental Income" value={pl.rentRevenue} transactions={pl.txs.rentTxs}
+              indent color="text-emerald-700" onChanged={onChanged} />
           )}
+          {pl.otherRevenue > 0 && (
+            <ClickableAmount label="Other Income" value={pl.otherRevenue} transactions={pl.txs.otherRevTxs}
+              indent color="text-emerald-700" onChanged={onChanged} />
+          )}
+          {pl.totalRevenue === 0 && (
+            <p className="text-sm text-slate-400 pl-6 py-1.5">No revenue in this period</p>
+          )}
+
+          <Divider thick />
+          <ClickableAmount label="TOTAL REVENUE" value={pl.totalRevenue}
+            transactions={[...pl.txs.rentTxs, ...pl.txs.otherRevTxs]}
+            bold color="text-emerald-700" onChanged={onChanged} />
+
+          <SectionLabel>Expenses</SectionLabel>
+
+          {pl.mortgageExp > 0 && (
+            <ClickableAmount label="Mortgage / Debt Service" value={pl.mortgageExp}
+              transactions={pl.txs.mortgageTxs} indent color="text-red-600" onChanged={onChanged}
+              note="Includes principal; actual interest portion may differ" />
+          )}
+          {pl.repairExp > 0 && (
+            <ClickableAmount label="Repairs & Maintenance" value={pl.repairExp}
+              transactions={pl.txs.repairTxs} indent color="text-red-600" onChanged={onChanged} />
+          )}
+          {pl.otherExp > 0 && (
+            <ClickableAmount label="Other Expenses" value={pl.otherExp}
+              transactions={pl.txs.otherExpTxs} indent color="text-red-600" onChanged={onChanged} />
+          )}
+          {pl.totalExpenses === 0 && (
+            <p className="text-sm text-slate-400 pl-6 py-1.5">No expenses in this period</p>
+          )}
+
+          <Divider thick />
+          <ClickableAmount label="TOTAL EXPENSES" value={pl.totalExpenses}
+            transactions={[...pl.txs.mortgageTxs, ...pl.txs.repairTxs, ...pl.txs.otherExpTxs]}
+            bold color="text-red-600" onChanged={onChanged} />
+
+          <div className="mt-4 bg-slate-50 rounded-xl p-4 border border-slate-200">
+            <div className="flex items-center justify-between">
+              <span className="text-sm font-bold text-slate-900">Net Operating Income</span>
+              <span className={`text-lg font-bold tabular-nums ${pl.noi >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                {fmt$(pl.noi)}
+              </span>
+            </div>
+            {pl.totalRevenue > 0 && (
+              <p className="text-xs text-slate-400 mt-1">
+                Margin: {Math.round((pl.noi / pl.totalRevenue) * 100)}%
+              </p>
+            )}
+          </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }

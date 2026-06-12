@@ -127,6 +127,7 @@ export const getAccountingSummary     = ()              => req('GET',    '/accou
 export const getAccountingReports     = ()              => req('GET',    '/accounting/reports')
 export const getLedger                = (propertyId)    => req('GET',    `/accounting/${propertyId}/transactions`)
 export const createTransactions       = (propertyId, d) => req('POST',   `/accounting/${propertyId}/transactions`, d)
+export const updateTransaction        = (id, d)         => req('PUT',    `/accounting/transactions/${id}`, d)
 export const deleteTransaction        = (id)            => req('DELETE', `/accounting/transactions/${id}`)
 export async function uploadSettlement(propertyId, file) {
   const fd = new FormData()
