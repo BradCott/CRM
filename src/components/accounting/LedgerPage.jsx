@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction } from '../../api/client'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, recordAllTransactions } from '../../api/client'
+import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
 import AddTransactionModal from './AddTransactionModal'
 import SettlementUpload from './SettlementUpload'
@@ -60,6 +61,10 @@ export default function LedgerPage() {
   const [ledgerOpen, setLedgerOpen]         = useState(false)
   const [sortState, setSortState]           = useState({ col: 'date', dir: 'desc' })
   const [invSort, setInvSort]               = useState({ col: 'contribution', dir: 'desc' })
+  const [reviewFilter, setReviewFilter]     = useState('all') // 'all' | 'review' | 'recorded'
+  const [reviewCats, setReviewCats]         = useState({})     // tx.id → category override
+  const [recordingId, setRecordingId]       = useState(null)
+  const [recordingAll, setRecordingAll]     = useState(false)
 
   const reload = useCallback(() => {
     setLoading(true)
@@ -71,6 +76,11 @@ export default function LedgerPage() {
         setProperty(ledger.property)
         setTransactions(ledger.transactions)
         setInvestors(invs)
+        // Surface pending review items: open the ledger and focus the review filter
+        if (ledger.transactions.some(t => t.review_status === 'needs_review')) {
+          setLedgerOpen(true)
+          setReviewFilter('review')
+        }
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
@@ -99,6 +109,26 @@ export default function LedgerPage() {
     }
   }
 
+  async function handleRecord(tx) {
+    setRecordingId(tx.id)
+    try {
+      await recordTransaction(tx.id, { category: reviewCats[tx.id] ?? tx.category })
+      await reload()
+    } finally {
+      setRecordingId(null)
+    }
+  }
+
+  async function handleRecordAll() {
+    setRecordingAll(true)
+    try {
+      await recordAllTransactions(propertyId)
+      await reload()
+    } finally {
+      setRecordingAll(false)
+    }
+  }
+
   async function handleDeleteInvestor(id) {
     setDeletingInv(id)
     try {
@@ -123,8 +153,13 @@ export default function LedgerPage() {
     }
   }
 
-  // Compute running balance (transactions already sorted date ASC)
-  const withBalance = transactions.reduce((acc, tx) => {
+  // QuickBooks-style split: 'needs_review' items are NOT in the books yet, so
+  // they're excluded from every financial computation until recorded.
+  const needsReview = transactions.filter(t => t.review_status === 'needs_review')
+  const recordedTx  = transactions.filter(t => t.review_status !== 'needs_review')
+
+  // Compute running balance over recorded transactions only
+  const withBalance = recordedTx.reduce((acc, tx) => {
     const prev = acc.length > 0 ? acc[acc.length - 1].running_balance : 0
     acc.push({ ...tx, running_balance: prev + Number(tx.amount) })
     return acc
@@ -170,7 +205,7 @@ export default function LedgerPage() {
   // Cash balance excludes Building Value and Land Value — those are asset entries,
   // not cash movements, and would distort the cash position if included.
   const NON_CASH = new Set(['Building Value', 'Land Value'])
-  const cashBalance = transactions
+  const cashBalance = recordedTx
     .filter(t => !NON_CASH.has(t.description))
     .reduce((s, t) => s + Number(t.amount), 0)
 
@@ -181,8 +216,8 @@ export default function LedgerPage() {
   const totals = {
     balance:   cashBalance,
     equity:    equityContributed,
-    rent:      transactions.filter(t => t.category === 'Rent'    && t.amount > 0).reduce((s, t) => s + Number(t.amount), 0),
-    mortgage:  transactions.filter(t => t.category === 'Mortgage' && t.amount < 0).reduce((s, t) => s + Number(t.amount), 0),
+    rent:      recordedTx.filter(t => t.category === 'Rent'    && t.amount > 0).reduce((s, t) => s + Number(t.amount), 0),
+    mortgage:  recordedTx.filter(t => t.category === 'Mortgage' && t.amount < 0).reduce((s, t) => s + Number(t.amount), 0),
   }
 
   function exportCSV() {
@@ -310,30 +345,30 @@ export default function LedgerPage() {
         </div>
       </header>
 
-      {/* Balance Sheet / P&L views */}
+      {/* Balance Sheet / P&L views — recorded transactions only */}
       {activeView === 'balance' && (
         <div className="flex-1 overflow-y-auto">
-          <BalanceSheet transactions={transactions} investors={investors} />
+          <BalanceSheet transactions={recordedTx} investors={investors} />
         </div>
       )}
       {activeView === 'pl' && (
         <div className="flex-1 overflow-y-auto">
-          <ProfitLoss transactions={transactions} onChanged={reload} />
+          <ProfitLoss transactions={recordedTx} onChanged={reload} />
         </div>
       )}
       {activeView === 'cashflow' && (
         <div className="flex-1 overflow-y-auto">
-          <CashFlowStatement transactions={transactions} onChanged={reload} />
+          <CashFlowStatement transactions={recordedTx} onChanged={reload} />
         </div>
       )}
       {activeView === 'schedulee' && (
         <div className="flex-1 overflow-y-auto">
-          <ScheduleE property={property} transactions={transactions} onChanged={reload} />
+          <ScheduleE property={property} transactions={recordedTx} onChanged={reload} />
         </div>
       )}
       {activeView === 'budget' && (
         <div className="flex-1 overflow-y-auto">
-          <BudgetVsActual propertyId={propertyId} transactions={transactions} />
+          <BudgetVsActual propertyId={propertyId} transactions={recordedTx} />
         </div>
       )}
       {activeView === 'bills' && (
@@ -343,7 +378,7 @@ export default function LedgerPage() {
       )}
       {activeView === 'vendors' && (
         <div className="flex-1 overflow-y-auto">
-          <Vendors transactions={transactions} onChanged={reload} />
+          <Vendors transactions={recordedTx} onChanged={reload} />
         </div>
       )}
       {activeView === 'distributions' && (
@@ -476,12 +511,53 @@ export default function LedgerPage() {
             }
             <span className="text-sm font-semibold text-slate-700">Transaction Ledger</span>
             <span className="text-xs text-slate-400 font-normal">{transactions.length} transaction{transactions.length !== 1 ? 's' : ''}</span>
+            {needsReview.length > 0 && (
+              <span className="text-xs font-bold bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full">
+                {needsReview.length} need{needsReview.length !== 1 ? '' : 's'} review
+              </span>
+            )}
           </div>
         </button>
 
         {/* Table — only shown when open */}
         {ledgerOpen && (
           <div className="flex-1 overflow-y-auto">
+            {/* Filter pills + record-all */}
+            {transactions.length > 0 && (
+              <div className="flex items-center justify-between px-6 py-2.5 bg-white border-b border-slate-100 sticky top-0 z-20">
+                <div className="flex gap-1.5">
+                  {[
+                    { key: 'all',      label: `All ${transactions.length}` },
+                    { key: 'review',   label: `Needs Review ${needsReview.length}`, amber: needsReview.length > 0 },
+                    { key: 'recorded', label: `Recorded ${recordedTx.length}` },
+                  ].map(p => (
+                    <button
+                      key={p.key}
+                      onClick={() => setReviewFilter(p.key)}
+                      className={`text-xs px-3 py-1.5 rounded-lg transition-colors ${
+                        reviewFilter === p.key
+                          ? p.amber ? 'bg-amber-500 text-white' : 'bg-slate-800 text-white'
+                          : p.amber ? 'text-amber-700 bg-amber-50 hover:bg-amber-100' : 'text-slate-500 border border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+                {needsReview.length > 0 && (
+                  <button
+                    onClick={handleRecordAll}
+                    disabled={recordingAll}
+                    className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 px-3 py-1.5 rounded-lg border border-emerald-200 hover:bg-emerald-50 transition-colors disabled:opacity-50"
+                  >
+                    {recordingAll
+                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Recording…</>
+                      : <><Check className="w-3.5 h-3.5" /> Record all {needsReview.length}</>}
+                  </button>
+                )}
+              </div>
+            )}
+
             {transactions.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-16 text-slate-400 gap-2">
                 <p className="text-sm font-medium">No transactions yet</p>
@@ -490,7 +566,7 @@ export default function LedgerPage() {
             ) : (
               <table className="w-full text-sm border-collapse">
                 <thead>
-                  <tr className="bg-slate-50 border-y border-slate-200 sticky top-0 z-10">
+                  <tr className="bg-slate-50 border-y border-slate-200 sticky top-[45px] z-10">
                     <SortTh col="date"        sort={sortState} onSort={handleSort}>Date</SortTh>
                     <SortTh col="description" sort={sortState} onSort={handleSort}>Description</SortTh>
                     <SortTh col="category"    sort={sortState} onSort={handleSort}>Category</SortTh>
@@ -501,13 +577,18 @@ export default function LedgerPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sorted.map((tx, i) => {
+                  {sorted
+                    .filter(tx => reviewFilter === 'all' ? true
+                      : reviewFilter === 'review' ? tx.review_status === 'needs_review'
+                      : tx.review_status !== 'needs_review')
+                    .map((tx, i) => {
                     const catStyle  = CATEGORY_COLORS[tx.category] || CATEGORY_COLORS['Other']
                     const srcConfig = SOURCE_LABELS[tx.source]     || SOURCE_LABELS['Manual']
                     const isPos     = Number(tx.amount) >= 0
+                    const pending   = tx.review_status === 'needs_review'
 
                     return (
-                      <tr key={tx.id} className={i % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}>
+                      <tr key={tx.id} className={pending ? 'bg-amber-50/50' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}>
                         <td className="px-4 pl-6 py-3 border-b border-slate-100 text-slate-500 whitespace-nowrap text-xs">
                           {fmtDate(tx.date)}
                         </td>
@@ -516,9 +597,19 @@ export default function LedgerPage() {
                           {tx.vendor && <span className="text-xs text-slate-400 font-normal">{tx.vendor}</span>}
                         </td>
                         <td className="px-4 py-3 border-b border-slate-100">
-                          <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${catStyle}`}>
-                            {tx.category}
-                          </span>
+                          {pending ? (
+                            <select
+                              value={reviewCats[tx.id] ?? tx.category}
+                              onChange={e => setReviewCats(prev => ({ ...prev, [tx.id]: e.target.value }))}
+                              className="text-xs border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                            >
+                              {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                          ) : (
+                            <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${catStyle}`}>
+                              {tx.category}
+                            </span>
+                          )}
                         </td>
                         <td className={`px-4 py-3 border-b border-slate-100 text-right font-semibold tabular-nums whitespace-nowrap ${
                           isPos ? 'text-emerald-600' : 'text-red-600'
@@ -526,32 +617,52 @@ export default function LedgerPage() {
                           {fmt$(tx.amount, true)}
                         </td>
                         <td className="px-4 py-3 border-b border-slate-100">
-                          <span className="flex items-center gap-1.5 text-xs text-slate-500">
-                            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${srcConfig.dot}`} />
-                            {srcConfig.label}
-                          </span>
+                          {pending ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full">Needs review</span>
+                          ) : (
+                            <span className="flex items-center gap-1.5 text-xs text-slate-500">
+                              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${srcConfig.dot}`} />
+                              {srcConfig.label}
+                            </span>
+                          )}
                         </td>
                         <td className="px-2 py-3 border-b border-slate-100 text-center">
-                          <input
-                            type="checkbox"
-                            checked={!!tx.reconciled}
-                            onChange={() => handleReconcile(tx)}
-                            className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
-                            title={tx.reconciled ? 'Reconciled — click to undo' : 'Mark as reconciled'}
-                          />
+                          {!pending && (
+                            <input
+                              type="checkbox"
+                              checked={!!tx.reconciled}
+                              onChange={() => handleReconcile(tx)}
+                              className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-500 cursor-pointer"
+                              title={tx.reconciled ? 'Reconciled — click to undo' : 'Mark as reconciled'}
+                            />
+                          )}
                         </td>
                         <td className="px-4 py-3 pr-6 border-b border-slate-100">
-                          <button
-                            onClick={() => handleDelete(tx.id)}
-                            disabled={deleting === tx.id}
-                            className="p-1.5 rounded text-slate-200 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
-                            title="Delete"
-                          >
-                            {deleting === tx.id
-                              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                              : <Trash2 className="w-3.5 h-3.5" />
-                            }
-                          </button>
+                          <div className="flex items-center gap-1 justify-end">
+                            {pending && (
+                              <button
+                                onClick={() => handleRecord(tx)}
+                                disabled={recordingId === tx.id}
+                                className="flex items-center gap-1 text-xs font-medium text-emerald-700 px-2 py-1 rounded-lg border border-emerald-200 hover:bg-emerald-50 transition-colors disabled:opacity-50"
+                                title="Record this transaction into the books"
+                              >
+                                {recordingId === tx.id
+                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  : <><Check className="w-3 h-3" /> Record</>}
+                              </button>
+                            )}
+                            <button
+                              onClick={() => handleDelete(tx.id)}
+                              disabled={deleting === tx.id}
+                              className="p-1.5 rounded text-slate-200 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
+                              title={pending ? 'Exclude (delete)' : 'Delete'}
+                            >
+                              {deleting === tx.id
+                                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                : <Trash2 className="w-3.5 h-3.5" />
+                              }
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     )

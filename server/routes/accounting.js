@@ -32,7 +32,7 @@ router.get('/reports', (req, res) => {
   const txStmt  = db.prepare(`
     SELECT id, date, description, category, amount, source, vendor, reconciled
     FROM accounting_transactions
-    WHERE property_id = ?
+    WHERE property_id = ? AND review_status = 'recorded'
     ORDER BY date ASC
   `)
   const invStmt = db.prepare(`
@@ -66,7 +66,7 @@ router.get('/summary', (req, res) => {
       COUNT(tx.id) AS tx_count
     FROM properties p
     LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
-    LEFT JOIN accounting_transactions tx ON tx.property_id = p.id
+    LEFT JOIN accounting_transactions tx ON tx.property_id = p.id AND tx.review_status = 'recorded'
     WHERE p.is_portfolio = 1
     GROUP BY p.id
     ORDER BY p.address ASC
@@ -82,7 +82,8 @@ router.get('/:propertyId/transactions', (req, res) => {
   if (!prop) return res.status(404).json({ error: 'Property not found' })
 
   const transactions = db.prepare(`
-    SELECT id, property_id, date, description, category, amount, source, vendor, reconciled, created_at
+    SELECT id, property_id, date, description, category, amount, source, vendor, reconciled,
+           review_status, external_id, created_at
     FROM accounting_transactions
     WHERE property_id = ?
     ORDER BY date ASC, id ASC
@@ -276,6 +277,45 @@ router.get('/:propertyId/distributions', (req, res) => {
 router.delete('/transactions/:id', (req, res) => {
   db.prepare('DELETE FROM accounting_transactions WHERE id = ?').run(req.params.id)
   res.status(204).end()
+})
+
+// ── Record a reviewed transaction (needs_review → recorded) ───────────────────
+
+router.patch('/transactions/:id/record', (req, res) => {
+  const tx = db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id)
+  if (!tx) return res.status(404).json({ error: 'Transaction not found' })
+
+  // Allow recording with a corrected category/vendor in one step
+  const category = req.body?.category ?? tx.category
+  const vendor   = req.body?.vendor !== undefined ? req.body.vendor : tx.vendor
+  if (!CATEGORIES.includes(category)) return res.status(400).json({ error: `Invalid category: ${category}` })
+
+  db.prepare(`
+    UPDATE accounting_transactions
+    SET review_status = 'recorded', category = ?, vendor = ?
+    WHERE id = ?
+  `).run(category, vendor || null, req.params.id)
+
+  // Learn the approved categorization
+  try { learnRules([{ description: tx.description, category }]) } catch (_) {}
+
+  res.json(db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id))
+})
+
+// Record all pending transactions for a property at once
+router.post('/:propertyId/transactions/record-all', (req, res) => {
+  const pending = db.prepare(
+    `SELECT id, description, category FROM accounting_transactions
+     WHERE property_id = ? AND review_status = 'needs_review'`
+  ).all(req.params.propertyId)
+
+  db.prepare(
+    `UPDATE accounting_transactions SET review_status = 'recorded'
+     WHERE property_id = ? AND review_status = 'needs_review'`
+  ).run(req.params.propertyId)
+
+  try { learnRules(pending.map(p => ({ description: p.description, category: p.category }))) } catch (_) {}
+  res.json({ recorded: pending.length })
 })
 
 // ── AI + rules categorization for bank/Plaid imports ──────────────────────────

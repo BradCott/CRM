@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { createRequire } from 'node:module'
 import db from '../db.js'
+import { categorizeBatch } from '../utils/categorize.js'
 
 // plaid is CJS — use createRequire so it loads cleanly in an ESM project
 const require = createRequire(import.meta.url)
@@ -129,10 +130,9 @@ router.post('/connections/:id/sync', async (req, res) => {
     db.prepare(`UPDATE bank_connections SET cursor = ?, last_synced_at = datetime('now') WHERE id = ?`)
       .run(cursor, conn.id)
 
-    // Filter to just this account and format for the review modal
+    // Filter to just this account and normalize.
     // Plaid sign convention: positive = money leaving account (debit), negative = deposit (credit)
-    // Our convention:        positive = money in,  negative = money out
-    // → negate Plaid amounts
+    // Our convention:        positive = money in,  negative = money out  → negate Plaid amounts
     const transactions = added
       .filter(t => !conn.plaid_account_id || t.account_id === conn.plaid_account_id)
       .map(t => ({
@@ -143,8 +143,38 @@ router.post('/connections/:id/sync', async (req, res) => {
         plaid_category: t.personal_finance_category?.primary || (t.category?.[0] ?? ''),
       }))
 
-    console.log(`[plaid] sync connection ${conn.id}: ${transactions.length} new transactions`)
-    res.json({ transactions, count: transactions.length })
+    // Auto-categorize (learned rules → AI → regex) then insert as 'needs_review'.
+    // Dedupe by Plaid transaction id so re-syncs never double-import.
+    let suggestions = []
+    try {
+      suggestions = await categorizeBatch(transactions, process.env.ANTHROPIC_API_KEY)
+    } catch (e) {
+      console.error('[plaid] categorize failed:', e.message)
+    }
+
+    const existsStmt = db.prepare(
+      `SELECT 1 FROM accounting_transactions WHERE property_id = ? AND external_id = ?`
+    )
+    const insertStmt = db.prepare(`
+      INSERT INTO accounting_transactions
+        (property_id, date, description, category, amount, source, review_status, external_id)
+      VALUES (?, ?, ?, ?, ?, 'Bank Statement', 'needs_review', ?)
+    `)
+
+    let inserted = 0, skipped = 0
+    transactions.forEach((t, i) => {
+      if (existsStmt.get(conn.property_id, t.plaid_transaction_id)) { skipped++; return }
+      const category = suggestions[i]?.category || 'Other'
+      insertStmt.run(conn.property_id, t.date, t.description, category, t.amount, t.plaid_transaction_id)
+      inserted++
+    })
+
+    const { needs_review } = db.prepare(
+      `SELECT COUNT(*) AS needs_review FROM accounting_transactions WHERE property_id = ? AND review_status = 'needs_review'`
+    ).get(conn.property_id)
+
+    console.log(`[plaid] sync connection ${conn.id}: ${inserted} new, ${skipped} dupes, ${needs_review} awaiting review`)
+    res.json({ count: inserted, skipped, needs_review })
   } catch (err) {
     console.error('[plaid] sync:', plaidErr(err))
     res.status(500).json({ error: plaidErr(err) })

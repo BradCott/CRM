@@ -219,7 +219,7 @@ export default function PlaidConnect({ propertyId, onSaved }) {
   const [fetchingToken,  setFetchingToken]  = useState(false)
   const [syncing,        setSyncing]        = useState(null)   // conn id
   const [disconnecting,  setDisconnecting]  = useState(null)   // conn id
-  const [syncResult,     setSyncResult]     = useState(null)   // { transactions }
+  const [syncMsg,        setSyncMsg]        = useState(null)   // post-sync status text
   const [notConfigured,  setNotConfigured]  = useState(false)
   const [error,          setError]          = useState(null)
 
@@ -275,12 +275,16 @@ export default function PlaidConnect({ propertyId, onSaved }) {
   async function handleSync(connId) {
     setSyncing(connId)
     setError(null)
+    setSyncMsg(null)
     try {
       const result = await syncPlaidConnection(connId)
       await loadConnections()     // refresh last_synced_at
-      if (result.count > 0) {
-        setSyncResult(result.transactions)
-      }
+      onSaved?.()                 // refresh the ledger so review items show up
+      setSyncMsg(
+        result.count > 0
+          ? `${result.count} new transaction${result.count !== 1 ? 's' : ''} added for review${result.skipped ? ` (${result.skipped} already imported)` : ''}.`
+          : 'No new transactions since last sync.'
+      )
     } catch (e) {
       setError(e.message)
     } finally {
@@ -372,6 +376,15 @@ export default function PlaidConnect({ propertyId, onSaved }) {
           </div>
         )}
 
+        {/* Sync result */}
+        {syncMsg && (
+          <div className="mx-6 mb-3 flex items-center gap-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-700">
+            <CheckCircle className="w-3.5 h-3.5 shrink-0" />
+            <span>{syncMsg} Review them in the ledger below.</span>
+            <button onClick={() => setSyncMsg(null)} className="ml-auto text-emerald-400 hover:text-emerald-600">✕</button>
+          </div>
+        )}
+
         {/* Empty state */}
         {!notConfigured && connections.length === 0 && (
           <p className="px-6 pb-4 text-sm text-slate-400">
@@ -430,16 +443,6 @@ export default function PlaidConnect({ propertyId, onSaved }) {
           </div>
         )}
       </div>
-
-      {/* Sync review modal */}
-      {syncResult && (
-        <SyncReview
-          propertyId={propertyId}
-          transactions={syncResult}
-          onSaved={onSaved}
-          onClose={() => setSyncResult(null)}
-        />
-      )}
     </>
   )
 }

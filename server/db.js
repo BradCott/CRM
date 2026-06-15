@@ -327,6 +327,12 @@ const migrations = [
     last_used    TEXT DEFAULT (datetime('now')),
     created_at   TEXT DEFAULT (datetime('now'))
   )`,
+  // QuickBooks-style review workflow: bank-synced transactions land as
+  // 'needs_review' (excluded from the books) until the user records them.
+  // Existing rows default to 'recorded' so the books are unchanged.
+  `ALTER TABLE accounting_transactions ADD COLUMN review_status TEXT DEFAULT 'recorded'`,
+  `ALTER TABLE accounting_transactions ADD COLUMN external_id   TEXT`,
+  `CREATE INDEX IF NOT EXISTS idx_tx_review ON accounting_transactions(property_id, review_status)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────
