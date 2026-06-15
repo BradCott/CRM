@@ -1,12 +1,27 @@
 import { useEffect, useState } from 'react'
-import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink } from 'lucide-react'
-import { getGoogleStatus, disconnectGoogle } from '../../api/client'
+import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle } from 'lucide-react'
+import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher } from '../../api/client'
 import Button from '../ui/Button'
 
 export default function SettingsPage() {
   const [status, setStatus]   = useState(null)
   const [loading, setLoading] = useState(true)
   const [msg, setMsg]         = useState(null)
+  const [diag, setDiag]       = useState(null)
+  const [diagLoading, setDiagLoading] = useState(false)
+
+  async function handleTestNow() {
+    setDiagLoading(true)
+    setMsg(null)
+    try {
+      const result = await runDriveWatcher()
+      setDiag(result)
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message })
+    } finally {
+      setDiagLoading(false)
+    }
+  }
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
@@ -94,7 +109,7 @@ export default function SettingsPage() {
                     : 'border-amber-200 bg-amber-50'
                 }`}>
                   <FolderOpen className={`w-4 h-4 shrink-0 ${status.driveFolderFound ? 'text-slate-400' : 'text-amber-500'}`} />
-                  <div>
+                  <div className="flex-1">
                     <p className="text-xs font-semibold text-slate-700">LOIs Folder</p>
                     <p className={`text-xs mt-0.5 ${status.driveFolderFound ? 'text-slate-500' : 'text-amber-600'}`}>
                       {status.driveFolderFound
@@ -102,7 +117,47 @@ export default function SettingsPage() {
                         : 'Folder named "LOIs" not found in your Drive'}
                     </p>
                   </div>
+                  <button
+                    onClick={handleTestNow}
+                    disabled={diagLoading}
+                    className="flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 px-3 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors shrink-0 disabled:opacity-50"
+                  >
+                    {diagLoading
+                      ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Testing…</>
+                      : <><PlayCircle className="w-3.5 h-3.5" /> Test now</>}
+                  </button>
                 </div>
+
+                {diag && (
+                  <div className="space-y-2">
+                    {['LOIs', 'notes'].map(key => {
+                      const f = diag.folders?.[key]
+                      if (!f) return null
+                      const ok = f.found && f.fileCount >= 0
+                      return (
+                        <div key={key} className={`p-3 rounded-xl border text-xs ${
+                          f.found ? 'border-emerald-200 bg-emerald-50' : 'border-amber-200 bg-amber-50'
+                        }`}>
+                          <div className="flex items-center gap-2">
+                            {f.found
+                              ? <CheckCircle className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                              : <AlertCircle className="w-3.5 h-3.5 text-amber-600 shrink-0" />}
+                            <span className="font-semibold text-slate-700">"{f.name}" folder</span>
+                            {f.inSharedDrive && <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">Shared Drive</span>}
+                          </div>
+                          <p className={`mt-1 ${f.found ? 'text-emerald-700' : 'text-amber-700'}`}>{f.message}</p>
+                          {f.recentFiles?.length > 0 && (
+                            <ul className="mt-1.5 space-y-0.5 text-slate-500">
+                              {f.recentFiles.map((rf, i) => (
+                                <li key={i} className="truncate">• {rf.name}</li>
+                              ))}
+                            </ul>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
               </div>
             ) : (
               <div className="space-y-4">

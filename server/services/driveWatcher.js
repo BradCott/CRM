@@ -6,6 +6,15 @@ import { getAuthedClient } from './googleClient.js'
 
 const FOLDER_NAME = 'LOIs'
 
+// Shared Drives ("Team Drives") are invisible to the Drive API unless every
+// call opts in with these flags. Knox's "Knoxcre" drive is a Shared Drive, so
+// without them the folder search and file listings silently return nothing.
+const ALL_DRIVES = {
+  supportsAllDrives:         true,
+  includeItemsFromAllDrives: true,
+  corpora:                   'allDrives',
+}
+
 export async function watchDrive() {
   const tokenRow = db.prepare(`SELECT * FROM oauth_tokens WHERE provider = 'google'`).get()
   if (!tokenRow?.access_token) return
@@ -23,13 +32,17 @@ export async function watchDrive() {
     const res = await drive.files.list({
       q: `name = '${FOLDER_NAME}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
       fields: 'files(id, name)',
+      ...ALL_DRIVES,
     })
     folderId = res.data.files?.[0]?.id || null
     if (folderId) {
       db.prepare(`UPDATE oauth_tokens SET drive_folder_id = ?, updated_at = datetime('now') WHERE provider = 'google'`).run(folderId)
     }
   }
-  if (!folderId) return
+  if (!folderId) {
+    console.warn('[driveWatcher] LOIs folder not found in Drive (incl. shared drives)')
+    return
+  }
 
   // List files added since last check
   const lastCheck = tokenRow.last_drive_check
@@ -40,9 +53,11 @@ export async function watchDrive() {
     q: `'${folderId}' in parents and trashed = false and createdTime > '${lastCheck}'`,
     fields: 'files(id, name, mimeType, createdTime)',
     orderBy: 'createdTime',
+    ...ALL_DRIVES,
   })
 
   const files = filesRes.data.files || []
+  if (files.length) console.log(`[driveWatcher] ${files.length} new file(s) in LOIs folder`)
 
   // Load already-processed file IDs
   let processed = []
@@ -74,7 +89,7 @@ export async function watchDrive() {
 // ── Meeting Notes folder → Today's Plays ──────────────────────────────────────
 // New doc dropped each Monday; parse action items + assignees into plays.
 
-const NOTES_FOLDER_NAME = 'Meeting Notes'
+const NOTES_FOLDER_NAME = 'monday meetings'   // lives at Knoxcre/meetings/monday meetings
 
 export async function watchMeetingNotes() {
   const tokenRow = db.prepare(`SELECT * FROM oauth_tokens WHERE provider = 'google'`).get()
@@ -89,19 +104,27 @@ export async function watchMeetingNotes() {
     const res = await drive.files.list({
       q: `name = '${NOTES_FOLDER_NAME}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
       fields: 'files(id, name)',
+      ...ALL_DRIVES,
     })
     folderId = res.data.files?.[0]?.id || null
     if (folderId) {
       db.prepare(`UPDATE oauth_tokens SET notes_folder_id = ?, updated_at = datetime('now') WHERE provider = 'google'`).run(folderId)
     }
   }
-  if (!folderId) return
+  if (!folderId) {
+    console.warn(`[driveWatcher] "${NOTES_FOLDER_NAME}" folder not found in Drive (incl. shared drives)`)
+    return
+  }
 
+  // Only docs created in the last 7 days — keeps the first run from parsing
+  // months of old meeting notes into stale plays.
+  const recentCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
   const filesRes = await drive.files.list({
-    q: `'${folderId}' in parents and trashed = false`,
+    q: `'${folderId}' in parents and trashed = false and createdTime > '${recentCutoff}'`,
     fields: 'files(id, name, mimeType, createdTime)',
     orderBy: 'createdTime desc',
     pageSize: 10,
+    ...ALL_DRIVES,
   })
   const files = filesRes.data.files || []
 
@@ -130,13 +153,19 @@ export async function watchMeetingNotes() {
 async function extractText(drive, file) {
   // Google Docs → export as plain text
   if (file.mimeType === 'application/vnd.google-apps.document') {
-    const res = await drive.files.export({ fileId: file.id, mimeType: 'text/plain' }, { responseType: 'text' })
+    const res = await drive.files.export(
+      { fileId: file.id, mimeType: 'text/plain', supportsAllDrives: true },
+      { responseType: 'text' }
+    )
     return res.data
   }
 
   // .docx → mammoth
   if (file.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
-    const res = await drive.files.get({ fileId: file.id, alt: 'media' }, { responseType: 'arraybuffer' })
+    const res = await drive.files.get(
+      { fileId: file.id, alt: 'media', supportsAllDrives: true },
+      { responseType: 'arraybuffer' }
+    )
     const buffer = Buffer.from(res.data)
     const result = await mammoth.extractRawText({ buffer })
     return result.value
@@ -144,11 +173,70 @@ async function extractText(drive, file) {
 
   // .txt
   if (file.mimeType === 'text/plain') {
-    const res = await drive.files.get({ fileId: file.id, alt: 'media' }, { responseType: 'text' })
+    const res = await drive.files.get(
+      { fileId: file.id, alt: 'media', supportsAllDrives: true },
+      { responseType: 'text' }
+    )
     return res.data
   }
 
   return null
+}
+
+// ── Diagnostics — run live and report each step so the UI can show what's wrong ──
+
+export async function diagnoseDrive() {
+  const tokenRow = db.prepare(`SELECT * FROM oauth_tokens WHERE provider = 'google'`).get()
+  if (!tokenRow?.access_token) {
+    return { connected: false, step: 'auth', message: 'No Google account connected.' }
+  }
+
+  let auth
+  try { auth = getAuthedClient(tokenRow) }
+  catch (e) { return { connected: false, step: 'auth', message: `Auth client failed: ${e.message}` } }
+
+  const drive = google.drive({ version: 'v3', auth })
+  const out = { connected: true, email: tokenRow.email, folders: {} }
+
+  for (const [key, name] of [['LOIs', FOLDER_NAME], ['notes', NOTES_FOLDER_NAME]]) {
+    const entry = { name }
+    try {
+      const res = await drive.files.list({
+        q: `name = '${name}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+        fields: 'files(id, name, driveId)',
+        ...ALL_DRIVES,
+      })
+      const folder = res.data.files?.[0]
+      if (!folder) {
+        entry.found = false
+        entry.message = `No folder named "${name}" visible to ${tokenRow.email} (searched My Drive + shared drives).`
+      } else {
+        entry.found = true
+        entry.folderId = folder.id
+        entry.inSharedDrive = !!folder.driveId
+        const filesRes = await drive.files.list({
+          q: `'${folder.id}' in parents and trashed = false`,
+          fields: 'files(id, name, mimeType, createdTime)',
+          orderBy: 'createdTime desc',
+          pageSize: 10,
+          ...ALL_DRIVES,
+        })
+        const files = filesRes.data.files || []
+        entry.fileCount = files.length
+        entry.recentFiles = files.slice(0, 5).map(f => ({ name: f.name, created: f.createdTime }))
+        entry.message = files.length
+          ? `Found ${files.length} file(s).`
+          : 'Folder found but it is empty.'
+      }
+    } catch (e) {
+      entry.found = false
+      entry.error = e.message
+      entry.message = `Drive API error: ${e.message}`
+    }
+    out.folders[key] = entry
+  }
+
+  return out
 }
 
 async function createDealFromLOI(filename, text, fileId) {

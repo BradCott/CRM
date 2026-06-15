@@ -1,8 +1,29 @@
 import { Router } from 'express'
 import multer from 'multer'
+import { diagnoseDrive, watchDrive, watchMeetingNotes } from '../services/driveWatcher.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } })
+
+// GET /api/loi-import/diagnose — live check of the Drive watcher (admin)
+router.get('/diagnose', async (_req, res) => {
+  try {
+    res.json(await diagnoseDrive())
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/loi-import/run — force a watcher pass now and report what it did
+router.post('/run', async (_req, res) => {
+  try {
+    await watchDrive()
+    await watchMeetingNotes()
+    res.json({ ok: true, ...(await diagnoseDrive()) })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 // POST /api/loi-import
 router.post('/', upload.single('file'), async (req, res) => {
