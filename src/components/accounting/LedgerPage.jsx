@@ -459,7 +459,7 @@ export default function LedgerPage() {
 
       {/* Bank Connections — only in ledger view */}
       {activeView === 'ledger' && (
-        <PlaidConnect propertyId={propertyId} onTransactionsImported={reload} />
+        <PlaidConnect propertyId={propertyId} onSaved={reload} />
       )}
 
       {/* Transaction Ledger — collapsible, only in ledger view */}

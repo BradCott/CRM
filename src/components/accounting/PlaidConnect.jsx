@@ -78,7 +78,7 @@ function SyncReview({ propertyId, transactions: raw, onSaved, onClose }) {
       })))
       // Teach the rules engine from the approved categories (fire-and-forget)
       learnCategories(included.map(r => ({ description: r.description, category: r.category }))).catch(() => {})
-      onSaved()
+      onSaved?.()
       onClose()
     } catch (e) {
       setError(e.message)
