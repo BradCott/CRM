@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { useAssistant } from '../../context/AssistantContext'
 import { X, Upload, Loader2, CheckCircle, AlertCircle, AlertTriangle, Copy, Check, Users } from 'lucide-react'
 import Button from '../ui/Button'
 import { uploadSettlement, createTransactions, saveJournalEntry, getInvestors } from '../../api/client'
@@ -326,6 +327,25 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
       .then(data => setInvestors(Array.isArray(data) ? data : []))
       .catch(() => setInvestors([]))
   }, [propertyId])
+
+  // Feed the parsed settlement statement to the copilot so it can advise on it
+  const { setAssistantContext } = useAssistant()
+  useEffect(() => {
+    if (!fields) { setAssistantContext(''); return }
+    const lines = Object.entries(fields)
+      .filter(([, v]) => v !== null && v !== undefined && v !== '' && v !== 0)
+      .map(([k, v]) => `  ${k}: ${v}`)
+      .join('\n')
+    const uncertain = uncertainItems.length
+      ? '\nUncertain items flagged (need a decision):\n' +
+        uncertainItems.map(u => `  - "${u.description}" $${u.amount} — guess: ${u.suggestion || '?'} (${u.reason || ''})`).join('\n')
+      : ''
+    setAssistantContext(
+      `The user is reviewing a parsed SETTLEMENT STATEMENT for property "${propertyName}".\n` +
+      `Extracted fields:\n${lines}${uncertain}`
+    )
+    return () => setAssistantContext('')
+  }, [fields, uncertainItems, propertyName, setAssistantContext])
 
   async function handleFile(file) {
     if (!file) return

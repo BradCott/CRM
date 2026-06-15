@@ -153,6 +153,9 @@ export const createCategory           = (d)             => req('POST',   '/accou
 export const deleteCategory           = (id)            => req('DELETE', `/accounting/categories/${id}`)
 // Split a transaction into multiple lines
 export const splitTransaction         = (id, splits)    => req('POST',   `/accounting/transactions/${id}/split`, { splits })
+
+// In-app AI copilot
+export const askAssistant             = (messages, context) => req('POST', '/assistant/chat', { messages, context })
 export const reconcileTransaction     = (id, val)       => req('PATCH',  `/accounting/transactions/${id}/reconcile`, { reconciled: val })
 export const recordTransaction        = (id, d = {})    => req('PATCH',  `/accounting/transactions/${id}/record`, d)
 export const recordAllTransactions    = (propertyId)    => req('POST',   `/accounting/${propertyId}/transactions/record-all`)

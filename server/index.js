@@ -24,6 +24,7 @@ import usersRouter          from './routes/users.js'
 import managementRouter     from './routes/management.js'
 import handwryttenRouter   from './routes/handwrytten.js'
 import playsRouter          from './routes/plays.js'
+import assistantRouter      from './routes/assistant.js'
 
 import { requireAuth, requireWrite, requireRole } from './middleware/auth.js'
 
@@ -68,6 +69,7 @@ app.use('/api/reports',          requireAuth, reportsRouter)
 app.use('/api/saved-searches',   requireAuth, requireWrite, savedSearchesRouter)
 app.use('/api/dashboard',        requireAuth, dashboardRouter)
 app.use('/api/plays',            requireAuth, playsRouter)
+app.use('/api/assistant',        requireAuth, assistantRouter)
 app.use('/api/emails',           requireAuth, requireWrite, emailsRouter)
 
 // Property management — admin + full_agent
