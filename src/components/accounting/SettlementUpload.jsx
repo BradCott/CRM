@@ -196,8 +196,8 @@ function ReconstructedStatement({ fields }) {
   const costRows = CLOSING_COST_ITEMS.filter(([k]) => n(k) !== 0)
   const itemizedCosts = costRows.reduce((s, [k]) => s + n(k), 0)
   const statedCosts   = n('total_closing_costs')
-  const costsGap      = statedCosts - itemizedCosts
-  const costsMatch    = Math.abs(costsGap) < 1
+  const otherCosts    = statedCosts - itemizedCosts          // unitemized remainder (incl. assigned items)
+  const overItemized  = itemizedCosts > statedCosts + 1      // named fees exceed the total → likely double-count
 
   const netPP = n('purchase_price') - n('seller_closing_credit')
 
@@ -233,17 +233,19 @@ function ReconstructedStatement({ fields }) {
         {/* Closing costs — itemized with reconciliation */}
         <div>
           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Closing Costs — itemized</p>
-          {costRows.length === 0 && <p className="text-[11px] text-slate-400 py-1">No itemized fees were extracted.</p>}
+          {costRows.length === 0 && otherCosts <= 1 && <p className="text-[11px] text-slate-400 py-1">No itemized fees were extracted.</p>}
           {costRows.map(([k, label, hint]) => (
             <StmtRow key={k} label={label} hint={hint} value={n(k)} indent />
           ))}
-          <StmtRow label="Sum of itemized fees" value={itemizedCosts} strong />
-          <div className={`mt-1 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] ${costsMatch ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-            {costsMatch
-              ? <><Check className="w-3 h-3 shrink-0" /> Matches the stated total ({money(statedCosts)})</>
-              : <><AlertTriangle className="w-3 h-3 shrink-0" /> Stated total is {money(statedCosts)} — a {money(Math.abs(costsGap))} {costsGap > 0 ? 'gap (a fee may be missing)' : 'overage (an item may be double-counted)'}</>
-            }
-          </div>
+          {otherCosts > 1 && (
+            <StmtRow label="Other / unitemized closing costs" hint="Closing costs in the statement total that aren't broken out into a named fee above — including any flagged items you assigned to Buyer Closing Costs." value={otherCosts} indent />
+          )}
+          <StmtRow label="Total Closing Costs" value={statedCosts} strong />
+          {overItemized && (
+            <div className="mt-1 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] bg-amber-50 text-amber-700">
+              <AlertTriangle className="w-3 h-3 shrink-0" /> Itemized fees exceed the total by {money(itemizedCosts - statedCosts)} — an item may be double-counted, or the total is too low.
+            </div>
+          )}
         </div>
 
         {/* Credits & financing */}
@@ -282,6 +284,8 @@ function ReconstructedStatement({ fields }) {
 
 const FIELD_MAP = {
   'Loan Amount':       'loan_amount',
+  'Buyer Closing Costs':  'total_closing_costs',
+  'Seller Closing Costs': null,
   '1031 Exchange':     'exchange_proceeds',
   'Cash to Close':     'cash_to_close',
   'Earnest Money':     'earnest_money',
@@ -300,21 +304,24 @@ function isBrokerFee(description) {
   return d.includes('commission') || d.includes('broker') || d.includes('realty') || d.includes('agent fee')
 }
 
-/** Map AI suggestion text to one of the FIELD_MAP keys. */
+/** Map AI suggestion + description text to one of the FIELD_MAP keys. */
 function guessCategory(suggestion, description) {
-  if (isBrokerFee(description)) return 'Ignore'
-  if (!suggestion) return 'Ignore'
-  const s = suggestion.toLowerCase()
+  if (isBrokerFee(description)) return 'Seller Closing Costs'
+  const s = `${suggestion || ''} ${description || ''}`.toLowerCase()
+  if (!s.trim()) return 'Buyer Closing Costs'
   if (s.includes('1031') || s.includes('exchange') || s.includes('intermediary') || s.includes('qi deposit')) return '1031 Exchange'
   if (s.includes('loan') || s.includes('mortgage') || s.includes('principal')) return 'Loan Amount'
-  if (s.includes('cash') && (s.includes('close') || s.includes('closing')))    return 'Cash to Close'
   if (s.includes('earnest'))                                                     return 'Earnest Money'
   if (s.includes('seller') && s.includes('credit'))                            return 'Seller Credit'
   if (s.includes('rent'))                                                        return 'Prorated Rent'
-  if (s.includes('tax') || s.includes('proration'))                            return 'Tax Proration'
   if (s.includes('insurance'))                                                   return 'Insurance Credit'
   if (s.includes('cam') || s.includes('maintenance'))                          return 'CAM Credit'
-  return 'Ignore'
+  if (s.includes('proration') || (s.includes('tax') && s.includes('credit')))  return 'Tax Proration'
+  if (s.includes('cash') && s.includes('clos'))                                return 'Cash to Close'
+  // Fee-like line items → buyer closing cost (the common case for flagged items)
+  if (/closing cost|\bfee\b|phase|environmental|survey|title|recording|appraisal|endorsement|travel|inspection|escrow|flood|settlement charge|notary|wire|courier|search|exam|abstract/.test(s))
+    return 'Buyer Closing Costs'
+  return 'Buyer Closing Costs'
 }
 
 /** A single uncertain-item row. */
@@ -381,7 +388,7 @@ function UncertainItemsPanel({ items, onAssign }) {
             {items.length} item{items.length !== 1 ? 's' : ''} flagged for review
           </span>
           <p className="text-xs text-amber-700 mt-0.5">
-            Assign each item to a field, or ignore if it's a seller expense or already included in your totals.
+            Assign each item — most flagged fees (Phase I, travel, survey, etc.) are <span className="font-medium">Buyer Closing Costs</span>. Use Seller Closing Costs or Ignore for items that aren't yours.
           </p>
         </div>
       </div>
