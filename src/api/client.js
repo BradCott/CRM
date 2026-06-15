@@ -143,6 +143,10 @@ export const getLedger                = (propertyId)    => req('GET',    `/accou
 export const createTransactions       = (propertyId, d) => req('POST',   `/accounting/${propertyId}/transactions`, d)
 export const updateTransaction        = (id, d)         => req('PUT',    `/accounting/transactions/${id}`, d)
 export const deleteTransaction        = (id)            => req('DELETE', `/accounting/transactions/${id}`)
+export const categorizeTransactions   = (transactions)  => req('POST',   '/accounting/categorize', { transactions })
+export const learnCategories          = (items)         => req('POST',   '/accounting/learn-categories', { items })
+export const getCategoryRules         = ()              => req('GET',    '/accounting/rules')
+export const deleteCategoryRule       = (id)            => req('DELETE', `/accounting/rules/${id}`)
 export const reconcileTransaction     = (id, val)       => req('PATCH',  `/accounting/transactions/${id}/reconcile`, { reconciled: val })
 
 // Budgets

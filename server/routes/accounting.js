@@ -3,6 +3,7 @@ import multer from 'multer'
 import * as XLSX from 'xlsx'
 import db from '../db.js'
 import { autoLinkInvestors } from '../services/investorMatch.js'
+import { categorizeBatch, learnRules } from '../utils/categorize.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
@@ -274,6 +275,42 @@ router.get('/:propertyId/distributions', (req, res) => {
 
 router.delete('/transactions/:id', (req, res) => {
   db.prepare('DELETE FROM accounting_transactions WHERE id = ?').run(req.params.id)
+  res.status(204).end()
+})
+
+// ── AI + rules categorization for bank/Plaid imports ──────────────────────────
+
+// Suggest a category per transaction: learned rules → AI → regex fallback
+router.post('/categorize', async (req, res) => {
+  const txs = Array.isArray(req.body?.transactions) ? req.body.transactions : []
+  if (!txs.length) return res.json({ suggestions: [] })
+  try {
+    const suggestions = await categorizeBatch(txs, process.env.ANTHROPIC_API_KEY)
+    res.json({ suggestions })
+  } catch (err) {
+    console.error('[categorize]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Learn rules from approved categorizations (called after a bank import / edit)
+router.post('/learn-categories', (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : []
+  const learned = learnRules(items)
+  res.json({ learned })
+})
+
+// List learned rules (for a management screen)
+router.get('/rules', (_req, res) => {
+  const rows = db.prepare(`
+    SELECT id, merchant_key, category, hit_count, last_used
+    FROM transaction_rules ORDER BY hit_count DESC, last_used DESC
+  `).all()
+  res.json(rows)
+})
+
+router.delete('/rules/:id', (req, res) => {
+  db.prepare('DELETE FROM transaction_rules WHERE id = ?').run(req.params.id)
   res.status(204).end()
 })
 

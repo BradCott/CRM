@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { X, Pencil, Check, XCircle, Trash2, Loader2 } from 'lucide-react'
-import { updateTransaction, deleteTransaction } from '../../api/client'
+import { updateTransaction, deleteTransaction, learnCategories } from '../../api/client'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 
 function fmt$(n) {
@@ -26,6 +26,10 @@ function EditRow({ tx, onSaved, onDeleted }) {
     setSaving(true)
     try {
       const updated = await updateTransaction(tx.id, { ...form, amount: parseFloat(form.amount), vendor: form.vendor.trim() || null })
+      // If the category was corrected on a bank-sourced transaction, teach the rule
+      if (form.category !== tx.category && tx.source === 'Bank Statement') {
+        learnCategories([{ description: form.description, category: form.category }]).catch(() => {})
+      }
       onSaved(updated)
       setEditing(false)
     } catch (e) {

@@ -4,9 +4,16 @@ import { Link2, RefreshCw, Trash2, Loader2, Building2, AlertCircle, CheckCircle,
 import {
   createPlaidLinkToken, exchangePlaidToken, getPlaidConnections,
   syncPlaidConnection, disconnectPlaid, createTransactions,
+  categorizeTransactions, learnCategories,
 } from '../../api/client'
 import Button from '../ui/Button'
 import { ALL_CATEGORIES as CATEGORIES, guessCategory } from '../../utils/accounting'
+
+const SOURCE_BADGE = {
+  rule:  { label: 'learned', cls: 'bg-emerald-100 text-emerald-700' },
+  ai:    { label: 'AI',      cls: 'bg-violet-100 text-violet-700' },
+  guess: { label: 'guess',   cls: 'bg-slate-100 text-slate-500' },
+}
 
 function fmt$(n) {
   if (!n && n !== 0) return '—'
@@ -27,13 +34,35 @@ function fmtTs(iso) {
 // ── Sync review modal ─────────────────────────────────────────────────────────
 
 function SyncReview({ propertyId, transactions: raw, onSaved, onClose }) {
+  // Start with an instant local guess so the table renders immediately,
+  // then upgrade to learned-rule / AI suggestions from the server.
   const [rows, setRows] = useState(() =>
-    raw.map(t => ({ ...t, category: guessCategory(t.description, t.amount), include: true }))
+    raw.map(t => ({ ...t, category: guessCategory(t.description, t.amount), source: 'guess', edited: false, include: true }))
   )
-  const [saving, setSaving] = useState(false)
-  const [error,  setError]  = useState(null)
+  const [saving, setSaving]         = useState(false)
+  const [error,  setError]          = useState(null)
+  const [suggesting, setSuggesting] = useState(raw.length > 0)
+
+  // Fetch smarter suggestions on open
+  useEffect(() => {
+    let cancelled = false
+    if (!raw.length) { setSuggesting(false); return }
+    categorizeTransactions(raw.map(t => ({
+      description: t.description, amount: t.amount, plaid_category: t.plaid_category,
+    })))
+      .then(({ suggestions }) => {
+        if (cancelled || !suggestions?.length) return
+        setRows(prev => prev.map((r, i) =>
+          r.edited ? r : { ...r, category: suggestions[i]?.category ?? r.category, source: suggestions[i]?.source ?? r.source }
+        ))
+      })
+      .catch(() => {})
+      .finally(() => { if (!cancelled) setSuggesting(false) })
+    return () => { cancelled = true }
+  }, [raw])
 
   const included = rows.filter(r => r.include)
+  const learnedCount = rows.filter(r => r.source === 'rule').length
 
   async function handleImport() {
     if (!included.length) return onClose()
@@ -47,6 +76,8 @@ function SyncReview({ propertyId, transactions: raw, onSaved, onClose }) {
         amount:      r.amount,
         source:      'Bank Statement',
       })))
+      // Teach the rules engine from the approved categories (fire-and-forget)
+      learnCategories(included.map(r => ({ description: r.description, category: r.category }))).catch(() => {})
       onSaved()
       onClose()
     } catch (e) {
@@ -64,7 +95,15 @@ function SyncReview({ propertyId, transactions: raw, onSaved, onClose }) {
           <div>
             <h2 className="text-base font-semibold text-slate-900">Review Synced Transactions</h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              {raw.length} new transaction{raw.length !== 1 ? 's' : ''} — uncheck any to skip, adjust categories as needed
+              {suggesting ? (
+                <span className="inline-flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Auto-categorizing…</span>
+              ) : (
+                <>
+                  {raw.length} transaction{raw.length !== 1 ? 's' : ''} — categories auto-filled
+                  {learnedCount > 0 && <span className="text-emerald-600 font-medium"> · {learnedCount} from learned rules</span>}
+                  . Adjust any and they'll be remembered.
+                </>
+              )}
             </p>
           </div>
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 transition-colors">
@@ -112,12 +151,19 @@ function SyncReview({ propertyId, transactions: raw, onSaved, onClose }) {
                       {fmt$(row.amount)}
                     </td>
                     <td className="px-3 pr-5 py-2.5">
-                      <select value={row.category}
-                        onChange={e => setRows(prev => prev.map((r, j) => j === i ? { ...r, category: e.target.value } : r))}
-                        className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                      >
-                        {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                      </select>
+                      <div className="flex items-center gap-1.5">
+                        <select value={row.category}
+                          onChange={e => setRows(prev => prev.map((r, j) => j === i ? { ...r, category: e.target.value, source: 'edited', edited: true } : r))}
+                          className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                        >
+                          {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                        {SOURCE_BADGE[row.source] && (
+                          <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0 ${SOURCE_BADGE[row.source].cls}`}>
+                            {SOURCE_BADGE[row.source].label}
+                          </span>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

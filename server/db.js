@@ -318,6 +318,15 @@ const migrations = [
   // Drive-imported LOIs were created with an invalid 'lead' stage that maps to
   // no pipeline column — flip them to 'loi' so they actually appear on the board.
   `UPDATE deals SET stage = 'loi' WHERE source = 'drive_loi' AND stage = 'lead'`,
+  // Learned categorization rules for bank/Plaid transactions
+  `CREATE TABLE IF NOT EXISTS transaction_rules (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    merchant_key TEXT NOT NULL UNIQUE,
+    category     TEXT NOT NULL,
+    hit_count    INTEGER DEFAULT 1,
+    last_used    TEXT DEFAULT (datetime('now')),
+    created_at   TEXT DEFAULT (datetime('now'))
+  )`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

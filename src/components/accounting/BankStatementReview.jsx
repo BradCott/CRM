@@ -1,7 +1,7 @@
 import { useState, useRef } from 'react'
 import { X, Upload, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
 import Button from '../ui/Button'
-import { uploadBankStatement, createTransactions } from '../../api/client'
+import { uploadBankStatement, createTransactions, categorizeTransactions, learnCategories } from '../../api/client'
 import { ALL_CATEGORIES as CATEGORIES, guessCategory } from '../../utils/accounting'
 
 function fmt$(v) {
@@ -40,6 +40,13 @@ export default function BankStatementReview({ propertyId, onSaved, onClose }) {
       setMeta({ account_info: data.account_info, statement_period: data.statement_period })
       setRows(txs)
       setStep('review')
+      // Upgrade to learned-rule / AI categories in the background
+      categorizeTransactions(txs.map(t => ({ description: t.description, amount: t.amount })))
+        .then(({ suggestions }) => {
+          if (!suggestions?.length) return
+          setRows(prev => prev.map((r, i) => ({ ...r, category: suggestions[i]?.category ?? r.category })))
+        })
+        .catch(() => {})
     } catch (err) {
       setError(err.message)
       setStep('upload')
@@ -68,6 +75,7 @@ export default function BankStatementReview({ propertyId, onSaved, onClose }) {
         source:      'Bank Statement',
       }))
       await createTransactions(propertyId, payload)
+      learnCategories(payload.map(p => ({ description: p.description, category: p.category }))).catch(() => {})
       onSaved()
       onClose()
     } catch (err) {
