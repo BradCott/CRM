@@ -134,6 +134,150 @@ function buildClipboardText(journal, fields, date, propertyName = '') {
   ].filter(l => l !== null).join('\n')
 }
 
+// ── Reconstructed settlement statement (review panel) ─────────────────────────
+// Rebuilds the whole statement from every extracted line item, shows how each
+// subtotal adds up, and reconciles cash-to-close so it's obvious what balances.
+
+const money = v => {
+  const n = Number(v) || 0
+  const s = '$' + Math.abs(Math.round(n)).toLocaleString()
+  return n < 0 ? `(${s})` : s
+}
+
+// [field key, label, hover explanation]
+const CLOSING_COST_ITEMS = [
+  ['loan_origination_fee',    'Loan Origination Fee',        'Lender fee / points to originate the mortgage'],
+  ['appraisal_fee',           'Appraisal Fee',               'Property valuation ordered by the lender'],
+  ['title_and_closing_fees',  'Title & Closing Fees',        'Title insurance, escrow, settlement, closing, notary, wire, doc prep'],
+  ['endorsements_fee',        'Title Endorsements',          'ALTA / zoning and other title policy endorsements'],
+  ['recording_fees',          'Recording Fees',              'County fees to record the deed and mortgage'],
+  ['survey_fee',              'Survey Fee',                  'Boundary / ALTA survey'],
+  ['environmental_fees',      'Environmental (Phase I/II)',  'Phase I ESA, PCA, or other environmental reports'],
+  ['flood_determination_fee', 'Flood Determination',         'Flood zone certification'],
+  ['acquisition_fee',         'Acquisition Fee',             'Fee paid to Knox Capital at closing'],
+]
+
+const CREDIT_ITEMS = [
+  ['loan_amount',        'Loan Proceeds',          'New mortgage from the lender — reduces cash needed'],
+  ['exchange_proceeds',  '1031 Exchange Proceeds', 'Funds from a Qualified Intermediary applied to the purchase'],
+  ['earnest_money',      'Earnest Money (already paid)', 'Deposit paid before closing — credited against cash to close'],
+  ['prorated_rent',      'Prorated Rent Credit',   "Seller's rent owed to you for the closing month"],
+  ['tax_credits',        'Tax Proration Credit',   "Seller's share of unpaid property taxes, credited to you"],
+  ['insurance_credit',   'Insurance Credit',       'Insurance escrow / proration credited to you'],
+  ['cam_credit',         'CAM / Maintenance Credit', 'CAM or reserve credit from the seller'],
+]
+
+function StmtRow({ label, hint, value, sub, strong, indent, sign }) {
+  const n = Number(value) || 0
+  return (
+    <div className={`flex items-start justify-between py-1.5 ${indent ? 'pl-4' : ''} ${strong ? 'border-t border-slate-200 mt-0.5' : 'border-b border-slate-100'}`}>
+      <div className="flex items-center gap-1.5 min-w-0">
+        <span className={`text-xs ${strong ? 'font-semibold text-slate-800' : 'text-slate-600'}`}>{label}</span>
+        {hint && (
+          <span className="group relative inline-flex">
+            <AlertCircle className="w-3 h-3 text-slate-300 hover:text-slate-500 cursor-help shrink-0" />
+            <span className="pointer-events-none absolute left-1/2 -translate-x-1/2 bottom-full mb-1 w-52 px-2.5 py-1.5 rounded-lg bg-slate-800 text-white text-[10px] leading-snug opacity-0 group-hover:opacity-100 transition-opacity z-20 shadow-lg">
+              {hint}
+            </span>
+          </span>
+        )}
+      </div>
+      <span className={`text-xs tabular-nums shrink-0 ml-3 ${strong ? 'font-bold text-slate-900' : 'text-slate-700'}`}>
+        {sign === '-' ? `(${money(value).replace(/[()]/g, '')})` : money(value)}
+        {sub && <span className="block text-[10px] text-slate-400 font-normal">{sub}</span>}
+      </span>
+    </div>
+  )
+}
+
+function ReconstructedStatement({ fields }) {
+  const n = k => Number(fields[k]) || 0
+
+  const costRows = CLOSING_COST_ITEMS.filter(([k]) => n(k) !== 0)
+  const itemizedCosts = costRows.reduce((s, [k]) => s + n(k), 0)
+  const statedCosts   = n('total_closing_costs')
+  const costsGap      = statedCosts - itemizedCosts
+  const costsMatch    = Math.abs(costsGap) < 1
+
+  const netPP = n('purchase_price') - n('seller_closing_credit')
+
+  const creditRows = CREDIT_ITEMS.filter(([k]) => n(k) !== 0)
+  const totalCredits = creditRows.reduce((s, [k]) => s + n(k), 0)
+
+  // Cash to close = what the buyer owes − what's credited
+  const owes = netPP + statedCosts + n('buyer_taxes_paid')
+  const expectedCTC = owes - totalCredits
+  const statedCTC   = n('cash_to_close')
+  const ctcGap      = statedCTC - expectedCTC
+  const ctcMatch    = Math.abs(ctcGap) < 2 || statedCTC === 0
+
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden">
+      <div className="px-4 py-2.5 bg-slate-800 text-white">
+        <p className="text-xs font-semibold uppercase tracking-wide">Reconstructed Settlement Statement</p>
+        <p className="text-[10px] text-slate-300 mt-0.5">Every line item the AI pulled, and how each total adds up. Hover the ⓘ on any line. For review only.</p>
+      </div>
+
+      <div className="grid md:grid-cols-2 gap-x-6 gap-y-1 px-4 py-3">
+
+        {/* Purchase */}
+        <div>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Purchase</p>
+          <StmtRow label="Total Consideration" hint="Contract purchase price / total consideration" value={n('purchase_price')} />
+          {n('seller_closing_credit') !== 0 && (
+            <StmtRow label="Less: Seller Closing Credit" hint="Credit from the seller — reduces your net price" value={n('seller_closing_credit')} sign="-" indent />
+          )}
+          <StmtRow label="Net Purchase Price" value={netPP} strong />
+        </div>
+
+        {/* Closing costs — itemized with reconciliation */}
+        <div>
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Closing Costs — itemized</p>
+          {costRows.length === 0 && <p className="text-[11px] text-slate-400 py-1">No itemized fees were extracted.</p>}
+          {costRows.map(([k, label, hint]) => (
+            <StmtRow key={k} label={label} hint={hint} value={n(k)} indent />
+          ))}
+          <StmtRow label="Sum of itemized fees" value={itemizedCosts} strong />
+          <div className={`mt-1 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] ${costsMatch ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+            {costsMatch
+              ? <><Check className="w-3 h-3 shrink-0" /> Matches the stated total ({money(statedCosts)})</>
+              : <><AlertTriangle className="w-3 h-3 shrink-0" /> Stated total is {money(statedCosts)} — a {money(Math.abs(costsGap))} {costsGap > 0 ? 'gap (a fee may be missing)' : 'overage (an item may be double-counted)'}</>
+            }
+          </div>
+        </div>
+
+        {/* Credits & financing */}
+        <div className="mt-2">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Credits & Financing (reduce cash to close)</p>
+          {creditRows.length === 0 && <p className="text-[11px] text-slate-400 py-1">None extracted.</p>}
+          {creditRows.map(([k, label, hint]) => (
+            <StmtRow key={k} label={label} hint={hint} value={n(k)} indent />
+          ))}
+          <StmtRow label="Total Credits" value={totalCredits} strong />
+        </div>
+
+        {/* Cash to close reconciliation */}
+        <div className="mt-2">
+          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Cash to Close — reconciliation</p>
+          <StmtRow label="Net Purchase Price" value={netPP} indent />
+          <StmtRow label="+ Total Closing Costs" value={statedCosts} indent />
+          {n('buyer_taxes_paid') !== 0 && <StmtRow label="+ Buyer Taxes Paid at Closing" hint="Back/current taxes the buyer pays at closing (not part of closing costs)" value={n('buyer_taxes_paid')} indent />}
+          <StmtRow label="− Total Credits & Financing" value={totalCredits} sign="-" indent />
+          <StmtRow label="Expected Cash to Close" value={expectedCTC} strong />
+          <div className={`mt-1 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] ${ctcMatch ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+            {statedCTC === 0
+              ? <><AlertCircle className="w-3 h-3 shrink-0" /> No cash-to-close was extracted — expected {money(expectedCTC)}</>
+              : ctcMatch
+                ? <><Check className="w-3 h-3 shrink-0" /> Matches the statement's cash to close ({money(statedCTC)})</>
+                : <><AlertTriangle className="w-3 h-3 shrink-0" /> Statement says {money(statedCTC)} — off by {money(Math.abs(ctcGap))}. A credit or fee is likely mis-keyed.</>
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ── Uncertain items — category map + helpers ──────────────────────────────────
 
 const FIELD_MAP = {
@@ -724,6 +868,8 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
                   )}
                 </div>
               </div>
+              {/* Reconstructed settlement statement — full width, review only */}
+              <ReconstructedStatement fields={fields} />
             </div>
           )}
         </div>
