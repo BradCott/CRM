@@ -342,6 +342,31 @@ const migrations = [
   )`,
   // Transaction splits — child lines grouped under a shared id
   `ALTER TABLE accounting_transactions ADD COLUMN split_group TEXT`,
+  // Loan amortization schedules — auto-split mortgage payments into principal/interest
+  `CREATE TABLE IF NOT EXISTS loan_schedules (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id    INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    name           TEXT,
+    original_principal REAL,
+    annual_rate    REAL,
+    payment_amount REAL,
+    first_payment  TEXT,
+    term_months    INTEGER,
+    created_at     TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE TABLE IF NOT EXISTS loan_schedule_rows (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    schedule_id INTEGER NOT NULL REFERENCES loan_schedules(id) ON DELETE CASCADE,
+    period      INTEGER,
+    due_date    TEXT,
+    payment     REAL,
+    principal   REAL,
+    interest    REAL,
+    balance     REAL,
+    consumed    INTEGER DEFAULT 0
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_sched_property ON loan_schedules(property_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_sched_rows ON loan_schedule_rows(schedule_id, due_date)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

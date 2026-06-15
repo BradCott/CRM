@@ -18,6 +18,7 @@ import Vendors from './Vendors'
 import Distributions from './Distributions'
 import PlaidConnect from './PlaidConnect'
 import SplitTransactionModal from './SplitTransactionModal'
+import AmortizationCard from './AmortizationCard'
 import { CATEGORY_COLORS } from '../../utils/accounting'
 
 const SOURCE_LABELS = {
@@ -535,6 +536,11 @@ export default function LedgerPage() {
       {/* Bank Connections — only in ledger view */}
       {activeView === 'ledger' && (
         <PlaidConnect propertyId={propertyId} onSaved={reload} />
+      )}
+
+      {/* Loan amortization — only in ledger view */}
+      {activeView === 'ledger' && (
+        <AmortizationCard propertyId={propertyId} />
       )}
 
       {/* Transaction Ledger — collapsible, only in ledger view */}

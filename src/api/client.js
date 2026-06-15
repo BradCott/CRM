@@ -154,6 +154,15 @@ export const deleteCategory           = (id)            => req('DELETE', `/accou
 // Split a transaction into multiple lines
 export const splitTransaction         = (id, splits)    => req('POST',   `/accounting/transactions/${id}/split`, { splits })
 
+// Loan amortization schedule
+export const getAmortization          = (propertyId)    => req('GET',    `/accounting/${propertyId}/amortization`)
+export const deleteAmortization       = (id)            => req('DELETE', `/accounting/amortization/${id}`)
+export async function uploadAmortization(propertyId, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return req('POST', `/accounting/${propertyId}/amortization`, fd)
+}
+
 // In-app AI copilot
 export const askAssistant             = (messages, context) => req('POST', '/assistant/chat', { messages, context })
 export const reconcileTransaction     = (id, val)       => req('PATCH',  `/accounting/transactions/${id}/reconcile`, { reconciled: val })

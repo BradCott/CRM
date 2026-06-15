@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { createRequire } from 'node:module'
 import db from '../db.js'
 import { categorizeBatch } from '../utils/categorize.js'
+import { matchMortgageSplit, markRowConsumed } from '../utils/amortization.js'
 
 // plaid is CJS — use createRequire so it loads cleanly in an ESM project
 const require = createRequire(import.meta.url)
@@ -160,10 +161,32 @@ router.post('/connections/:id/sync', async (req, res) => {
         (property_id, date, description, category, amount, source, review_status, external_id)
       VALUES (?, ?, ?, ?, ?, 'Bank Statement', 'needs_review', ?)
     `)
+    const insertSplit = db.prepare(`
+      INSERT INTO accounting_transactions
+        (property_id, date, description, category, amount, source, review_status, external_id, split_group)
+      VALUES (?, ?, ?, ?, ?, 'Bank Statement', 'needs_review', ?, ?)
+    `)
 
-    let inserted = 0, skipped = 0
+    let inserted = 0, skipped = 0, autoSplit = 0
     transactions.forEach((t, i) => {
       if (existsStmt.get(conn.property_id, t.plaid_transaction_id)) { skipped++; return }
+
+      // Auto-split mortgage payments into principal + interest from the amortization schedule
+      const split = matchMortgageSplit(conn.property_id, t)
+      if (split) {
+        const group = `amort-${t.plaid_transaction_id}`
+        split.lines.forEach((line, j) => {
+          insertSplit.run(
+            conn.property_id, t.date, `${t.description} — ${line.description}`,
+            line.category, line.amount, j === 0 ? t.plaid_transaction_id : null, group
+          )
+        })
+        markRowConsumed(split.rowId)
+        inserted += split.lines.length
+        autoSplit++
+        return
+      }
+
       const category = suggestions[i]?.category || 'Other'
       insertStmt.run(conn.property_id, t.date, t.description, category, t.amount, t.plaid_transaction_id)
       inserted++
@@ -173,8 +196,8 @@ router.post('/connections/:id/sync', async (req, res) => {
       `SELECT COUNT(*) AS needs_review FROM accounting_transactions WHERE property_id = ? AND review_status = 'needs_review'`
     ).get(conn.property_id)
 
-    console.log(`[plaid] sync connection ${conn.id}: ${inserted} new, ${skipped} dupes, ${needs_review} awaiting review`)
-    res.json({ count: inserted, skipped, needs_review })
+    console.log(`[plaid] sync connection ${conn.id}: ${inserted} new, ${skipped} dupes, ${autoSplit} auto-split, ${needs_review} awaiting review`)
+    res.json({ count: inserted, skipped, needs_review, autoSplit })
   } catch (err) {
     console.error('[plaid] sync:', plaidErr(err))
     res.status(500).json({ error: plaidErr(err) })

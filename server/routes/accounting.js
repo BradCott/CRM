@@ -4,6 +4,7 @@ import * as XLSX from 'xlsx'
 import db from '../db.js'
 import { autoLinkInvestors } from '../services/investorMatch.js'
 import { categorizeBatch, learnRules } from '../utils/categorize.js'
+import { generateSchedule } from '../utils/amortization.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
@@ -285,6 +286,126 @@ router.get('/:propertyId/distributions', (req, res) => {
 
 router.delete('/transactions/:id', (req, res) => {
   db.prepare('DELETE FROM accounting_transactions WHERE id = ?').run(req.params.id)
+  res.status(204).end()
+})
+
+// ── Loan amortization schedules ───────────────────────────────────────────────
+
+const AMORT_PROMPT = `You are reading a mortgage AMORTIZATION SCHEDULE for a commercial property loan. Extract the loan TERMS (not every row). Return ONLY a JSON object:
+{
+  "lender": "string or null",
+  "original_principal": number or null,   // original/beginning loan balance
+  "annual_interest_rate": number or null, // annual rate as a percent, e.g. 6.5
+  "monthly_payment": number or null,      // scheduled principal+interest payment (exclude escrow)
+  "first_payment_date": "YYYY-MM-DD or null",
+  "term_months": number or null           // total number of payments (e.g. 360, or 240)
+}
+Rules:
+- original_principal: the starting loan amount (top of the schedule / payment 1 beginning balance).
+- annual_interest_rate: the stated note rate as a percent number (e.g. 6.5 for 6.5%).
+- monthly_payment: the recurring principal + interest payment amount. If payments vary, use the regular/most common one. Exclude taxes/insurance escrow.
+- term_months: total scheduled payments. If you see a 30-year loan, that's 360; 20-year is 240; 25-year is 300.
+- If the rate isn't explicitly stated but principal, payment, and term are, still return what you can; leave rate null.
+Return ONLY the JSON object, no markdown.`
+
+async function callClaudeTextJson(apiKey, text, prompt) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 1024,
+      messages: [{ role: 'user', content: `${prompt}\n\nDocument:\n${text.slice(0, 16000)}` }],
+    }),
+  })
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.error?.message || `Anthropic API error ${response.status}`)
+  }
+  const data = await response.json()
+  const t = (data.content?.[0]?.text || '').replace(/```(?:json)?/g, '').trim()
+  const m = t.match(/\{[\s\S]*\}/)
+  if (!m) throw new Error('Could not read the loan terms from that file')
+  return JSON.parse(m[0])
+}
+
+// Upload an amortization schedule (PDF, xlsx, or csv) → store generated schedule
+router.post('/:propertyId/amortization', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set' })
+
+  const { propertyId } = req.params
+  const { originalname, buffer } = req.file
+  const ext = originalname.split('.').pop().toLowerCase()
+
+  try {
+    let terms
+    if (ext === 'pdf') {
+      terms = await callClaudeWithPrompt(apiKey, buffer, AMORT_PROMPT)
+    } else if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
+      const wb = XLSX.read(buffer, { type: 'buffer' })
+      const csv = XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]])
+      terms = await callClaudeTextJson(apiKey, csv, AMORT_PROMPT)
+    } else {
+      return res.status(400).json({ error: 'Upload a PDF, XLSX, or CSV amortization schedule' })
+    }
+
+    const schedule = generateSchedule({
+      original_principal: terms.original_principal,
+      annual_rate:        terms.annual_interest_rate,
+      monthly_payment:    terms.monthly_payment,
+      first_payment:      terms.first_payment_date,
+      term_months:        terms.term_months,
+    })
+
+    // Replace any existing schedule for this property (one loan per property for now)
+    const existing = db.prepare('SELECT id FROM loan_schedules WHERE property_id = ?').all(propertyId)
+    for (const e of existing) db.prepare('DELETE FROM loan_schedules WHERE id = ?').run(e.id)
+
+    const r = db.prepare(`
+      INSERT INTO loan_schedules (property_id, name, original_principal, annual_rate, payment_amount, first_payment, term_months)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(propertyId, terms.lender || originalname.replace(/\.[^.]+$/, ''),
+           terms.original_principal || null, terms.annual_interest_rate || null,
+           schedule.payment_amount, terms.first_payment_date || null, terms.term_months || schedule.rows.length)
+
+    const insertRow = db.prepare(`
+      INSERT INTO loan_schedule_rows (schedule_id, period, due_date, payment, principal, interest, balance)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `)
+    const insertAll = db.transaction(() => {
+      for (const row of schedule.rows) {
+        insertRow.run(r.lastInsertRowid, row.period, row.due_date, row.payment, row.principal, row.interest, row.balance)
+      }
+    })
+    insertAll()
+
+    res.status(201).json({
+      ok: true,
+      schedule: {
+        id: r.lastInsertRowid, name: terms.lender || 'Loan',
+        original_principal: terms.original_principal, annual_rate: terms.annual_interest_rate,
+        payment_amount: schedule.payment_amount, first_payment: terms.first_payment_date,
+        term_months: terms.term_months || schedule.rows.length, row_count: schedule.rows.length,
+      },
+    })
+  } catch (err) {
+    console.error('[amortization]', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+router.get('/:propertyId/amortization', (req, res) => {
+  const schedule = db.prepare('SELECT * FROM loan_schedules WHERE property_id = ? ORDER BY id DESC LIMIT 1').get(req.params.propertyId)
+  if (!schedule) return res.json({ schedule: null })
+  const next = db.prepare(`SELECT * FROM loan_schedule_rows WHERE schedule_id = ? AND consumed = 0 ORDER BY due_date ASC LIMIT 1`).get(schedule.id)
+  const { used } = db.prepare(`SELECT COUNT(*) AS used FROM loan_schedule_rows WHERE schedule_id = ? AND consumed = 1`).get(schedule.id)
+  res.json({ schedule, next, used })
+})
+
+router.delete('/amortization/:id', (req, res) => {
+  db.prepare('DELETE FROM loan_schedules WHERE id = ?').run(req.params.id)
   res.status(204).end()
 })
 
