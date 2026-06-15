@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins } from 'lucide-react'
+import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split } from 'lucide-react'
 import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, recordAllTransactions, updateTransaction } from '../../api/client'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
@@ -17,6 +17,7 @@ import Bills from './Bills'
 import Vendors from './Vendors'
 import Distributions from './Distributions'
 import PlaidConnect from './PlaidConnect'
+import SplitTransactionModal from './SplitTransactionModal'
 import { CATEGORY_COLORS } from '../../utils/accounting'
 
 const SOURCE_LABELS = {
@@ -68,6 +69,7 @@ export default function LedgerPage() {
   const [editingId, setEditingId]           = useState(null)   // tx.id being edited inline
   const [editForm, setEditForm]             = useState(null)
   const [savingEdit, setSavingEdit]         = useState(false)
+  const [splitTx, setSplitTx]               = useState(null)    // transaction being split
 
   const reload = useCallback(() => {
     setLoading(true)
@@ -752,6 +754,13 @@ export default function LedgerPage() {
                               <Pencil className="w-3.5 h-3.5" />
                             </button>
                             <button
+                              onClick={() => setSplitTx(tx)}
+                              className="p-1.5 rounded text-slate-300 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                              title="Split (e.g. principal / interest)"
+                            >
+                              <Split className="w-3.5 h-3.5" />
+                            </button>
+                            <button
                               onClick={() => handleDelete(tx.id)}
                               disabled={deleting === tx.id}
                               className="p-1.5 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
@@ -775,6 +784,14 @@ export default function LedgerPage() {
       </div>}
 
       {/* Modals */}
+      {splitTx && (
+        <SplitTransactionModal
+          tx={splitTx}
+          onSaved={reload}
+          onClose={() => setSplitTx(null)}
+        />
+      )}
+
       {showAdd && (
         <AddTransactionModal
           propertyId={propertyId}

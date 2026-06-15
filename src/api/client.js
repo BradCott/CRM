@@ -147,6 +147,12 @@ export const categorizeTransactions   = (transactions)  => req('POST',   '/accou
 export const learnCategories          = (items)         => req('POST',   '/accounting/learn-categories', { items })
 export const getCategoryRules         = ()              => req('GET',    '/accounting/rules')
 export const deleteCategoryRule       = (id)            => req('DELETE', `/accounting/rules/${id}`)
+// Charge-type registry
+export const getCategories            = ()              => req('GET',    '/accounting/categories')
+export const createCategory           = (d)             => req('POST',   '/accounting/categories', d)
+export const deleteCategory           = (id)            => req('DELETE', `/accounting/categories/${id}`)
+// Split a transaction into multiple lines
+export const splitTransaction         = (id, splits)    => req('POST',   `/accounting/transactions/${id}/split`, { splits })
 export const reconcileTransaction     = (id, val)       => req('PATCH',  `/accounting/transactions/${id}/reconcile`, { reconciled: val })
 export const recordTransaction        = (id, d = {})    => req('PATCH',  `/accounting/transactions/${id}/record`, d)
 export const recordAllTransactions    = (propertyId)    => req('POST',   `/accounting/${propertyId}/transactions/record-all`)

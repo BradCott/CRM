@@ -2,20 +2,26 @@
 // Single source of truth used by the ledger, reports, and statement components.
 
 // ── Categories ────────────────────────────────────────────────────────────────
+// Built-in expense categories. 'Mortgage Interest' is a P&L expense (Schedule E
+// line 12); 'Mortgage Principal' is NOT a P&L expense (it pays down the loan
+// liability) so it lives in ALL_CATEGORIES but is excluded from PL_CATS.
 
-export const EXPENSE_CATEGORIES = [
-  'Mortgage', 'Repair', 'Insurance', 'Property Tax', 'Utilities',
+const BUILTIN_EXPENSE = [
+  'Mortgage', 'Mortgage Interest', 'Repair', 'Insurance', 'Property Tax', 'Utilities',
   'Management Fees', 'Legal & Professional', 'Advertising', 'Supplies',
-  'Travel', 'Commissions', 'Cleaning & Maintenance', 'HOA / CAM', 'Other',
+  'Travel', 'Commissions', 'Cleaning & Maintenance', 'HOA / CAM', 'Bank Charges', 'Other',
 ]
+// Non-P&L categories (balance-sheet movements) — selectable but excluded from P&L
+const NON_PL = ['Equity Contribution', 'Purchase', 'Loan', 'Sale', 'Mortgage Principal']
 
-export const ALL_CATEGORIES = [
-  'Rent', ...EXPENSE_CATEGORIES.filter(c => c !== 'Other'),
-  'Equity Contribution', 'Purchase', 'Loan', 'Sale', 'Other',
+// These are `let` + live ES-module bindings so hydrateCustomCategories() can
+// merge user-defined charge types in at runtime and every importer sees them.
+export let EXPENSE_CATEGORIES = [...BUILTIN_EXPENSE]
+export let ALL_CATEGORIES = [
+  'Rent', ...BUILTIN_EXPENSE.filter(c => c !== 'Other'),
+  'Equity Contribution', 'Purchase', 'Loan', 'Sale', 'Mortgage Principal', 'Other',
 ]
-
-// P&L includes rent + every operating expense category (not balance-sheet items)
-export const PL_CATS = new Set(['Rent', ...EXPENSE_CATEGORIES])
+export let PL_CATS = new Set(['Rent', ...BUILTIN_EXPENSE])
 
 export const CATEGORY_COLORS = {
   'Equity Contribution':    'bg-blue-100 text-blue-700',
@@ -23,6 +29,8 @@ export const CATEGORY_COLORS = {
   'Loan':                   'bg-teal-100 text-teal-700',
   'Rent':                   'bg-emerald-100 text-emerald-700',
   'Mortgage':               'bg-amber-100 text-amber-700',
+  'Mortgage Interest':      'bg-amber-100 text-amber-700',
+  'Mortgage Principal':     'bg-teal-100 text-teal-700',
   'Repair':                 'bg-orange-100 text-orange-700',
   'Sale':                   'bg-violet-100 text-violet-700',
   'Insurance':              'bg-sky-100 text-sky-700',
@@ -36,16 +44,40 @@ export const CATEGORY_COLORS = {
   'Commissions':            'bg-fuchsia-100 text-fuchsia-700',
   'Cleaning & Maintenance': 'bg-teal-100 text-teal-700',
   'HOA / CAM':              'bg-stone-100 text-stone-700',
+  'Bank Charges':           'bg-red-100 text-red-700',
   'Other':                  'bg-slate-100 text-slate-600',
 }
+
+const CUSTOM_COLOR = 'bg-slate-100 text-slate-600'
 
 // Friendly P&L display labels per category
 export const EXPENSE_LABELS = {
   'Mortgage':               'Mortgage / Debt Service',
+  'Mortgage Interest':      'Mortgage Interest',
   'Repair':                 'Repairs',
   'Other':                  'Other Expenses',
 }
 export function expenseLabel(cat) { return EXPENSE_LABELS[cat] || cat }
+
+/**
+ * Merge user-defined charge types (from the registry) into the live category
+ * lists. Call once at app startup. `custom` = [{ name, kind }].
+ */
+export function hydrateCustomCategories(custom = []) {
+  const expenseNames = custom.filter(c => c.kind !== 'income').map(c => c.name)
+  const incomeNames  = custom.filter(c => c.kind === 'income').map(c => c.name)
+
+  EXPENSE_CATEGORIES = [...BUILTIN_EXPENSE.filter(c => c !== 'Other'), ...expenseNames, 'Other']
+  ALL_CATEGORIES = [
+    'Rent', ...incomeNames,
+    ...BUILTIN_EXPENSE.filter(c => c !== 'Other'), ...expenseNames,
+    ...NON_PL, 'Other',
+  ]
+  PL_CATS = new Set(['Rent', ...incomeNames, ...EXPENSE_CATEGORIES])
+  for (const c of custom) {
+    if (!CATEGORY_COLORS[c.name]) CATEGORY_COLORS[c.name] = CUSTOM_COLOR
+  }
+}
 
 // ── Category guesser for bank imports ─────────────────────────────────────────
 
@@ -182,12 +214,12 @@ export const SCHEDULE_E_LINES = [
   { line: 9,  label: 'Insurance',                         categories: ['Insurance'] },
   { line: 10, label: 'Legal and other professional fees', categories: ['Legal & Professional'] },
   { line: 11, label: 'Management fees',                   categories: ['Management Fees'] },
-  { line: 12, label: 'Mortgage interest paid to banks',   categories: ['Mortgage'], note: 'Includes principal — give your lender\'s 1098 to your CPA for the interest split' },
+  { line: 12, label: 'Mortgage interest paid to banks',   categories: ['Mortgage Interest', 'Mortgage'], note: 'Split payments use the interest portion; whole "Mortgage" entries still include principal — confirm with your 1098' },
   { line: 14, label: 'Repairs',                           categories: ['Repair'] },
   { line: 15, label: 'Supplies',                          categories: ['Supplies'] },
   { line: 16, label: 'Taxes',                             categories: ['Property Tax'] },
   { line: 17, label: 'Utilities',                         categories: ['Utilities'] },
-  { line: 19, label: 'Other',                             categories: ['HOA / CAM', 'Other'] },
+  { line: 19, label: 'Other',                             categories: ['HOA / CAM', 'Bank Charges', 'Other'] },
 ]
 
 /**
@@ -240,7 +272,7 @@ export function computeCashFlow(transactions) {
     (t.source === 'Settlement Statement' && !['Loan', 'Equity Contribution'].includes(t.category))
   )
   const financingTxs = cash.filter(t =>
-    t.category === 'Loan' || t.category === 'Equity Contribution' || t.category === 'Mortgage'
+    ['Loan', 'Equity Contribution', 'Mortgage', 'Mortgage Principal'].includes(t.category)
   )
 
   const operating = sum(operatingTxs)

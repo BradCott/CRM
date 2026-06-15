@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BookOpen, Loader2, ArrowRight, TrendingUp, Home, BarChart2 } from 'lucide-react'
+import { BookOpen, Loader2, ArrowRight, TrendingUp, Home, BarChart2, Tag } from 'lucide-react'
 import { getAccountingSummary } from '../../api/client'
+import CategoryManager from './CategoryManager'
 
 function fmt$(v) {
   if (!v && v !== 0) return '$0'
@@ -24,6 +25,7 @@ export default function AccountingPage() {
   const [properties, setProperties] = useState([])
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState(null)
+  const [showCategories, setShowCategories] = useState(false)
 
   useEffect(() => {
     getAccountingSummary()
@@ -47,13 +49,22 @@ export default function AccountingPage() {
             <BookOpen className="w-5 h-5 text-blue-600" />
             <h1 className="text-xl font-semibold text-slate-900">Accounting</h1>
           </div>
-          <button
-            onClick={() => navigate('/accounting/reports')}
-            className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
-          >
-            <BarChart2 className="w-4 h-4" />
-            Portfolio Reports
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowCategories(true)}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+            >
+              <Tag className="w-4 h-4" />
+              Charge Types
+            </button>
+            <button
+              onClick={() => navigate('/accounting/reports')}
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
+            >
+              <BarChart2 className="w-4 h-4" />
+              Portfolio Reports
+            </button>
+          </div>
         </div>
         <p className="mt-1 text-sm text-slate-500">Per-property ledgers for your Knox portfolio</p>
       </header>
@@ -133,6 +144,8 @@ export default function AccountingPage() {
           </div>
         )}
       </div>
+
+      {showCategories && <CategoryManager onClose={() => setShowCategories(false)} />}
     </div>
   )
 }

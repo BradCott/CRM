@@ -6,9 +6,10 @@ import {
   createProperty, updateProperty, deleteProperty,
   getDeals, createDeal, updateDeal, patchDealStage, deleteDeal,
   closeDealApi, dropDealApi, restoreDealApi, linkDealProperty,
-  getImportStats,
+  getImportStats, getCategories, createCategory, deleteCategory,
 } from '../api/client'
 import { DEFAULT_STAGES } from '../utils/constants'
+import { hydrateCustomCategories } from '../utils/accounting'
 
 const AppContext = createContext(null)
 
@@ -24,6 +25,15 @@ export function AppProvider({ children }) {
   const [toast, setToast]                 = useState(null)
   const [loading, setLoading]             = useState(true)
   const [importStats, setImportStats]     = useState(null)
+  const [customCategories, setCustomCategories] = useState([])
+
+  const loadCategories = useCallback(async () => {
+    try {
+      const { custom } = await getCategories()
+      hydrateCustomCategories(custom)
+      setCustomCategories(custom)
+    } catch (e) { console.error('Failed to load categories:', e) }
+  }, [])
 
   const notify = useCallback((message, type = 'success') => {
     setToast({ message, type, id: Date.now() })
@@ -46,10 +56,11 @@ export function AppProvider({ children }) {
   }, [])
 
   useEffect(() => {
+    loadCategories()
     loadDropdowns()
       .catch(e => console.error('Failed to load data:', e))
       .finally(() => setLoading(false))
-  }, [loadDropdowns])
+  }, [loadDropdowns, loadCategories])
 
   const refreshStats = useCallback(async () => {
     const s = await getImportStats()
@@ -180,6 +191,20 @@ export function AppProvider({ children }) {
     } catch { /* optimistic update already applied */ }
   }, [])
 
+  // --- Charge-type registry ---
+  const addCategory = useCallback(async (data) => {
+    const row = await createCategory(data)
+    await loadCategories()
+    notify('Charge type added')
+    return row
+  }, [loadCategories, notify])
+
+  const removeCategory = useCallback(async (id) => {
+    await deleteCategory(id)
+    await loadCategories()
+    notify('Charge type removed')
+  }, [loadCategories, notify])
+
   // Called after CSV import to reload everything
   const reloadAll = useCallback(async () => {
     setLoading(true)
@@ -197,6 +222,7 @@ export function AppProvider({ children }) {
       propertyStates,
       deals, addDeal, editDeal, removeDeal, moveDeal, closeDeal, dropDeal, restoreDeal, linkPropertyToDeal,
       stages,
+      customCategories, addCategory, removeCategory,
       toast, notify,
       loading,
       importStats, refreshStats, reloadAll,

@@ -333,6 +333,15 @@ const migrations = [
   `ALTER TABLE accounting_transactions ADD COLUMN review_status TEXT DEFAULT 'recorded'`,
   `ALTER TABLE accounting_transactions ADD COLUMN external_id   TEXT`,
   `CREATE INDEX IF NOT EXISTS idx_tx_review ON accounting_transactions(property_id, review_status)`,
+  // Charge-type registry — user-defined categories on top of the built-ins
+  `CREATE TABLE IF NOT EXISTS custom_categories (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT NOT NULL UNIQUE,
+    kind       TEXT NOT NULL DEFAULT 'expense',
+    created_at TEXT DEFAULT (datetime('now'))
+  )`,
+  // Transaction splits — child lines grouped under a shared id
+  `ALTER TABLE accounting_transactions ADD COLUMN split_group TEXT`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

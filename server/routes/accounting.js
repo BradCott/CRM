@@ -8,14 +8,23 @@ import { categorizeBatch, learnRules } from '../utils/categorize.js'
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
 
-const CATEGORIES = [
-  'Equity Contribution', 'Purchase', 'Loan', 'Rent', 'Mortgage', 'Repair', 'Sale',
+const BUILTIN_CATEGORIES = [
+  'Equity Contribution', 'Purchase', 'Loan', 'Rent', 'Mortgage', 'Mortgage Interest',
+  'Mortgage Principal', 'Repair', 'Sale',
   // Schedule E-aligned expense categories
   'Insurance', 'Property Tax', 'Utilities', 'Management Fees', 'Legal & Professional',
   'Advertising', 'Supplies', 'Travel', 'Commissions', 'Cleaning & Maintenance', 'HOA / CAM',
-  'Other',
+  'Bank Charges', 'Other',
 ]
 const SOURCES    = ['Manual', 'Settlement Statement', 'Bank Statement', 'Excel Upload']
+
+/** Valid category = a built-in OR a user-defined custom category. */
+function isValidCategory(name) {
+  if (BUILTIN_CATEGORIES.includes(name)) return true
+  return !!db.prepare('SELECT 1 FROM custom_categories WHERE name = ?').get(name)
+}
+// Back-compat alias for existing `CATEGORIES.includes(x)` call sites
+const CATEGORIES = { includes: isValidCategory }
 
 // ── Portfolio Reports — all properties with full transaction + investor data ──
 
@@ -277,6 +286,74 @@ router.get('/:propertyId/distributions', (req, res) => {
 router.delete('/transactions/:id', (req, res) => {
   db.prepare('DELETE FROM accounting_transactions WHERE id = ?').run(req.params.id)
   res.status(204).end()
+})
+
+// ── Charge-type registry (custom categories) ──────────────────────────────────
+
+router.get('/categories', (_req, res) => {
+  const custom = db.prepare('SELECT id, name, kind FROM custom_categories ORDER BY name').all()
+  res.json({ builtin: BUILTIN_CATEGORIES, custom })
+})
+
+router.post('/categories', (req, res) => {
+  const name = (req.body?.name || '').trim()
+  const kind = req.body?.kind === 'income' ? 'income' : 'expense'
+  if (!name) return res.status(400).json({ error: 'name is required' })
+  if (isValidCategory(name)) return res.status(409).json({ error: 'That category already exists' })
+  const r = db.prepare('INSERT INTO custom_categories (name, kind) VALUES (?, ?)').run(name, kind)
+  res.status(201).json({ id: r.lastInsertRowid, name, kind })
+})
+
+router.delete('/categories/:id', (req, res) => {
+  const cat = db.prepare('SELECT name FROM custom_categories WHERE id = ?').get(req.params.id)
+  if (!cat) return res.status(404).json({ error: 'Not found' })
+  const { n } = db.prepare('SELECT COUNT(*) AS n FROM accounting_transactions WHERE category = ?').get(cat.name)
+  if (n > 0) return res.status(409).json({ error: `In use by ${n} transaction${n !== 1 ? 's' : ''} — recategorize them first` })
+  db.prepare('DELETE FROM custom_categories WHERE id = ?').run(req.params.id)
+  res.status(204).end()
+})
+
+// ── Split a transaction into multiple category lines ──────────────────────────
+// Replaces one transaction with N child lines (e.g. principal + interest) that
+// sum to the original amount and share a split_group id.
+
+router.post('/transactions/:id/split', (req, res) => {
+  const tx = db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id)
+  if (!tx) return res.status(404).json({ error: 'Transaction not found' })
+
+  const splits = Array.isArray(req.body?.splits) ? req.body.splits : []
+  if (splits.length < 2) return res.status(400).json({ error: 'Provide at least two split lines' })
+
+  for (const s of splits) {
+    if (s.amount === undefined || !s.category) return res.status(400).json({ error: 'Each split needs an amount and category' })
+    if (!isValidCategory(s.category)) return res.status(400).json({ error: `Invalid category: ${s.category}` })
+  }
+  const total = splits.reduce((sum, s) => sum + parseFloat(s.amount), 0)
+  if (Math.abs(total - Number(tx.amount)) > 0.01) {
+    return res.status(400).json({ error: `Splits total ${total.toFixed(2)} but the transaction is ${Number(tx.amount).toFixed(2)}` })
+  }
+
+  const groupId = `split-${tx.id}-${Date.now()}`
+  const insert = db.prepare(`
+    INSERT INTO accounting_transactions
+      (property_id, date, description, category, amount, source, vendor, review_status, external_id, split_group)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const run = db.transaction(() => {
+    splits.forEach((s, i) => {
+      insert.run(
+        tx.property_id, tx.date,
+        s.description?.trim() || `${tx.description} — ${s.category}`,
+        s.category, parseFloat(s.amount), tx.source, s.vendor ?? tx.vendor ?? null,
+        tx.review_status, i === 0 ? tx.external_id : null, groupId
+      )
+    })
+    db.prepare('DELETE FROM accounting_transactions WHERE id = ?').run(tx.id)
+  })
+  run()
+
+  const created = db.prepare('SELECT * FROM accounting_transactions WHERE split_group = ?').all(groupId)
+  res.status(201).json({ split_group: groupId, transactions: created })
 })
 
 // ── Record a reviewed transaction (needs_review → recorded) ───────────────────
