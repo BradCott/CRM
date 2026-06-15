@@ -167,6 +167,7 @@ export async function uploadAmortization(propertyId, file) {
 
 // In-app AI copilot
 export const askAssistant             = (messages, context) => req('POST', '/assistant/chat', { messages, context })
+export const executeAssistantAction   = (action)            => req('POST', '/assistant/execute', action)
 export const reconcileTransaction     = (id, val)       => req('PATCH',  `/accounting/transactions/${id}/reconcile`, { reconciled: val })
 export const recordTransaction        = (id, d = {})    => req('PATCH',  `/accounting/transactions/${id}/record`, d)
 export const recordAllTransactions    = (propertyId)    => req('POST',   `/accounting/${propertyId}/transactions/record-all`)

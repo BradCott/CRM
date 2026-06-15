@@ -1,14 +1,16 @@
 // Floating AI copilot — available app-wide, context-aware
 import { useState, useRef, useEffect } from 'react'
-import { Sparkles, X, Send, Loader2 } from 'lucide-react'
-import { askAssistant } from '../../api/client'
+import { Sparkles, X, Send, Loader2, Check, Trash2, AlertTriangle } from 'lucide-react'
+import { askAssistant, executeAssistantAction } from '../../api/client'
 import { useAssistant } from '../../context/AssistantContext'
+
+const DESTRUCTIVE = new Set(['delete_properties', 'delete_people'])
 
 const SUGGESTIONS = [
   'Help me handle this settlement statement',
-  'How do I split a mortgage payment into principal and interest?',
-  'What category should I use for an HOA fee?',
-  'How does the Needs Review workflow work?',
+  'Recategorize all Home Depot transactions on this property to Repair',
+  'Delete every Joe Hudson Collision property',
+  "Summarize this property's finances",
 ]
 
 // Minimal markdown: **bold**, bullet lines, paragraphs
@@ -71,13 +73,37 @@ export default function AssistantWidget() {
         registered,
         screen && `=== Text currently visible on the user's screen ===\n${screen}`,
       ].filter(Boolean).join('\n\n')
-      const { reply } = await askAssistant(next, context)
-      setMessages([...next, { role: 'assistant', content: reply }])
+      const { reply, actions } = await askAssistant(next, context)
+      const withStatus = (actions || []).map(a => ({ ...a, status: 'pending' }))
+      setMessages([...next, { role: 'assistant', content: reply, actions: withStatus }])
     } catch (e) {
       setMessages([...next, { role: 'assistant', content: `Sorry — I hit an error: ${e.message}` }])
     } finally {
       setLoading(false)
     }
+  }
+
+  async function runAction(msgIdx, actIdx) {
+    setMessages(prev => prev.map((m, i) => i !== msgIdx ? m : {
+      ...m, actions: m.actions.map((a, j) => j === actIdx ? { ...a, status: 'running' } : a),
+    }))
+    const action = messages[msgIdx].actions[actIdx]
+    try {
+      const { result } = await executeAssistantAction({ type: action.type, params: action.params })
+      setMessages(prev => prev.map((m, i) => i !== msgIdx ? m : {
+        ...m, actions: m.actions.map((a, j) => j === actIdx ? { ...a, status: 'done', result } : a),
+      }))
+    } catch (e) {
+      setMessages(prev => prev.map((m, i) => i !== msgIdx ? m : {
+        ...m, actions: m.actions.map((a, j) => j === actIdx ? { ...a, status: 'error', result: e.message } : a),
+      }))
+    }
+  }
+
+  function dismissAction(msgIdx, actIdx) {
+    setMessages(prev => prev.map((m, i) => i !== msgIdx ? m : {
+      ...m, actions: m.actions.map((a, j) => j === actIdx ? { ...a, status: 'dismissed' } : a),
+    }))
   }
 
   return (
@@ -130,14 +156,52 @@ export default function AssistantWidget() {
             )}
 
             {messages.map((m, i) => (
-              <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm ${
-                  m.role === 'user'
-                    ? 'bg-blue-600 text-white rounded-br-sm'
-                    : 'bg-slate-100 text-slate-800 rounded-bl-sm'
-                }`}>
-                  <div className="space-y-1 leading-relaxed">{renderText(m.content)}</div>
+              <div key={i}>
+                <div className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm ${
+                    m.role === 'user'
+                      ? 'bg-blue-600 text-white rounded-br-sm'
+                      : 'bg-slate-100 text-slate-800 rounded-bl-sm'
+                  }`}>
+                    <div className="space-y-1 leading-relaxed">{renderText(m.content)}</div>
+                  </div>
                 </div>
+
+                {/* Proposed actions — confirm before anything is changed */}
+                {m.actions?.map((a, j) => {
+                  const destructive = DESTRUCTIVE.has(a.type)
+                  return (
+                    <div key={j} className={`mt-2 rounded-xl border p-3 ${
+                      a.status === 'done' ? 'border-emerald-200 bg-emerald-50'
+                      : a.status === 'error' ? 'border-red-200 bg-red-50'
+                      : a.status === 'dismissed' ? 'border-slate-200 bg-slate-50 opacity-60'
+                      : destructive ? 'border-red-200 bg-red-50/50' : 'border-blue-200 bg-blue-50/50'
+                    }`}>
+                      <div className="flex items-start gap-2">
+                        {destructive
+                          ? <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
+                          : <Sparkles className="w-4 h-4 text-blue-500 shrink-0 mt-0.5" />}
+                        <p className="text-xs text-slate-700 flex-1">{a.summary}</p>
+                      </div>
+                      {a.status === 'pending' && (
+                        <div className="flex gap-2 mt-2 pl-6">
+                          <button onClick={() => runAction(i, j)}
+                            className={`flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-lg text-white transition-colors ${destructive ? 'bg-red-600 hover:bg-red-700' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                            {destructive ? <Trash2 className="w-3 h-3" /> : <Check className="w-3 h-3" />} Confirm
+                          </button>
+                          <button onClick={() => dismissAction(i, j)}
+                            className="text-xs font-medium px-3 py-1.5 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors">
+                            Dismiss
+                          </button>
+                        </div>
+                      )}
+                      {a.status === 'running' && <p className="text-xs text-slate-500 mt-1.5 pl-6 flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Working…</p>}
+                      {a.status === 'done' && <p className="text-xs text-emerald-700 font-medium mt-1.5 pl-6 flex items-center gap-1"><Check className="w-3 h-3" /> {a.result}</p>}
+                      {a.status === 'error' && <p className="text-xs text-red-700 mt-1.5 pl-6">{a.result}</p>}
+                      {a.status === 'dismissed' && <p className="text-xs text-slate-400 mt-1.5 pl-6">Dismissed</p>}
+                    </div>
+                  )
+                })}
               </div>
             ))}
 
