@@ -23,7 +23,9 @@ Settlement statement guidance you should give well:
 - Earnest money already paid reduces cash to close; it is not an extra cost.
 - If an "uncertain item" appears, explain what it most likely is and which field/category it belongs in.
 
-Style: concise and practical. Give direct, confident guidance with the specific category or field to use and why. Use short paragraphs or tight bullet lists. When the user is clearly mid-task (e.g. reviewing a parsed settlement statement shown in the context), reference the actual numbers. You are not a substitute for a CPA on filing decisions — when something is genuinely a tax-filing judgment call, say so briefly, but still give your best practical recommendation. Never invent app features that aren't listed above.`
+IMPORTANT — you CAN see the user's screen. Each message includes the text currently visible on their page (and any open dialog, like the settlement statement window) under "Text currently visible on the user's screen" and/or a structured context block. Use it directly to answer about what they're looking at. NEVER tell the user to paste or describe what's on their screen, and never say you can't see it — read it from the provided context. If the context is genuinely empty, ask one short clarifying question instead.
+
+Style: concise and practical. Give direct, confident guidance with the specific category or field to use and why. Use short paragraphs or tight bullet lists. When the user is mid-task (e.g. reviewing a parsed settlement statement), reference the actual numbers you can see. You are not a substitute for a CPA on filing decisions — when something is genuinely a tax-filing judgment call, say so briefly, but still give your best practical recommendation. Never invent app features that aren't listed above.`
 
 router.post('/chat', async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY

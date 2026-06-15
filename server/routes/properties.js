@@ -338,6 +338,16 @@ router.delete('/:id', (req, res) => {
   res.status(204).end()
 })
 
+// POST /api/properties/bulk-delete — { ids: [] }
+router.post('/bulk-delete', (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Boolean) : []
+  if (!ids.length) return res.status(400).json({ error: 'ids array required' })
+  const del = db.prepare('DELETE FROM properties WHERE id = ?')
+  const run = db.transaction((arr) => { for (const id of arr) del.run(id) })
+  run(ids)
+  res.json({ deleted: ids.length })
+})
+
 // POST /api/properties/:id/lease-data
 // Cowork automation endpoint — admin only.
 // Accepts a subset of lease fields and does a targeted UPDATE so that

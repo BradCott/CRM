@@ -4,7 +4,7 @@ import {
   Users, UserPlus, MoreHorizontal, Pencil, Trash2, Loader2,
   AlertCircle, ChevronLeft, ChevronRight, Settings2,
 } from 'lucide-react'
-import { getPeople } from '../../api/client'
+import { getPeople, bulkDeletePeople } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import TopBar from '../layout/TopBar'
 import Button from '../ui/Button'
@@ -174,6 +174,9 @@ export default function PeoplePage() {
   })
   const [openMenu, setOpenMenu]         = useState(null)
   const [showCustomizer, setShowCustomizer] = useState(false)
+  const [selected, setSelected]         = useState(() => new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [selectingAll, setSelectingAll] = useState(false)
 
   const [activeCols, setActiveCols]         = useState(() => loadSavedCols(STORAGE_KEY, DEFAULT_COLS, COLUMN_DEFS))
   const [panelCols, setPanelCols]           = useState(() => buildPanelCols(loadSavedCols(STORAGE_KEY, DEFAULT_COLS, COLUMN_DEFS), ALL_COLUMN_KEYS))
@@ -211,6 +214,52 @@ export default function PeoplePage() {
   }
   const handleDelete = async () => {
     await removePerson(deleteTarget.id); load(search, roleFilter, dncFilter, ownerTypeFilter, page)
+  }
+
+  // ── Bulk selection / delete ──────────────────────────────────────────────────
+  const toggleRow = (id) => setSelected(prev => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
+  const allOnPageSelected = rows.length > 0 && rows.every(r => selected.has(r.id))
+  const togglePage = () => setSelected(prev => {
+    const next = new Set(prev)
+    if (allOnPageSelected) rows.forEach(r => next.delete(r.id))
+    else rows.forEach(r => next.add(r.id))
+    return next
+  })
+  const clearSelection = () => setSelected(new Set())
+
+  const selectAllMatching = async () => {
+    setSelectingAll(true)
+    try {
+      const params = { limit: 100000, offset: 0 }
+      if (search)          params.search = search
+      if (roleFilter)      params.role = roleFilter
+      if (dncFilter !== '') params.do_not_contact = dncFilter
+      if (ownerTypeFilter) params.owner_type = ownerTypeFilter
+      const res = await getPeople(params)
+      setSelected(new Set(res.rows.map(r => r.id)))
+    } finally { setSelectingAll(false) }
+  }
+
+  const handleBulkDelete = async () => {
+    const ids = [...selected]
+    if (!ids.length) return
+    if (!window.confirm(`Permanently delete ${ids.length} ${ids.length === 1 ? 'person' : 'people'}? This cannot be undone.`)) return
+    setBulkDeleting(true)
+    try {
+      await bulkDeletePeople(ids)
+      clearSelection()
+      const newTotal = total - ids.length
+      const lastPage = Math.max(0, Math.ceil(newTotal / PAGE_SIZE) - 1)
+      const goPage = Math.min(page, lastPage)
+      setPage(goPage)
+      await load(search, roleFilter, dncFilter, ownerTypeFilter, goPage)
+    } finally {
+      setBulkDeleting(false)
+    }
   }
 
   // Column customizer
@@ -293,10 +342,37 @@ export default function PeoplePage() {
           <EmptyState icon={Users} title="No people found" description="Import your Salesforce data or add people manually." action="New person" onAction={() => setShowForm(true)} />
         ) : (
           <>
+            {selected.size > 0 && (
+              <div className="flex items-center justify-between mb-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl">
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="font-semibold text-blue-800">{selected.size} selected</span>
+                  <button onClick={clearSelection} className="text-blue-600 hover:text-blue-800 text-xs">Clear</button>
+                  {selected.size < total && (
+                    <button onClick={selectAllMatching} disabled={selectingAll}
+                      className="text-blue-600 hover:text-blue-800 text-xs underline disabled:opacity-50">
+                      {selectingAll ? 'Selecting…' : `Select all ${total.toLocaleString()} matching`}
+                    </button>
+                  )}
+                </div>
+                <button
+                  onClick={handleBulkDelete}
+                  disabled={bulkDeleting}
+                  className="flex items-center gap-1.5 text-sm font-medium text-white bg-red-600 px-3 py-1.5 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                >
+                  {bulkDeleting
+                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Deleting…</>
+                    : <><Trash2 className="w-3.5 h-3.5" /> Delete {selected.size}</>}
+                </button>
+              </div>
+            )}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
+                    <th className="px-4 py-3 w-10">
+                      <input type="checkbox" checked={allOnPageSelected} onChange={togglePage}
+                        className="rounded border-slate-300 cursor-pointer" title="Select all on this page" />
+                    </th>
                     {activeCols.map(key => (
                       <th key={key} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">
                         {COLUMN_DEFS[key].label}
@@ -308,9 +384,13 @@ export default function PeoplePage() {
                 <tbody>
                   {rows.map((p, i) => (
                     <tr key={p.id}
-                      className={`border-b border-slate-100 last:border-0 hover:bg-blue-50/40 transition-colors cursor-pointer ${i%2===0?'bg-white':'bg-slate-50/40'}`}
+                      className={`border-b border-slate-100 last:border-0 hover:bg-blue-50/40 transition-colors cursor-pointer ${selected.has(p.id) ? 'bg-blue-50/60' : i%2===0?'bg-white':'bg-slate-50/40'}`}
                       onClick={() => { setDetailId(p.id); setShowCustomizer(false) }}
                     >
+                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                        <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleRow(p.id)}
+                          className="rounded border-slate-300 cursor-pointer" />
+                      </td>
                       {activeCols.map(key => COLUMN_DEFS[key].td(p, key))}
                       <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                         <div className="relative">

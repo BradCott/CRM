@@ -148,4 +148,14 @@ router.delete('/:id', (req, res) => {
   res.status(204).end()
 })
 
+// POST /api/people/bulk-delete — { ids: [] }
+router.post('/bulk-delete', (req, res) => {
+  const ids = Array.isArray(req.body?.ids) ? req.body.ids.map(Number).filter(Boolean) : []
+  if (!ids.length) return res.status(400).json({ error: 'ids array required' })
+  const del = db.prepare('DELETE FROM people WHERE id = ?')
+  const run = db.transaction((arr) => { for (const id of arr) del.run(id) })
+  run(ids)
+  res.json({ deleted: ids.length })
+})
+
 export default router

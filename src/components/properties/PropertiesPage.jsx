@@ -5,7 +5,7 @@ import {
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown,
   AlertCircle, Settings2, Upload, Mail, ShieldAlert, Check,
 } from 'lucide-react'
-import { getProperties } from '../../api/client'
+import { getProperties, bulkDeleteProperties } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import TopBar from '../layout/TopBar'
 import Button from '../ui/Button'
@@ -300,6 +300,9 @@ export default function PropertiesPage() {
   })
   const [openMenu, setOpenMenu]         = useState(null)
   const [showCustomizer, setShowCustomizer] = useState(false)
+  const [selected, setSelected]         = useState(() => new Set())
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [selectingAll, setSelectingAll] = useState(false)
 
   const [activeCols, setActiveCols]         = useState(() => loadSavedCols(STORAGE_KEY, DEFAULT_COLS, COLUMN_DEFS))
   const [panelCols, setPanelCols]           = useState(() => buildPanelCols(loadSavedCols(STORAGE_KEY, DEFAULT_COLS, COLUMN_DEFS), ALL_COLUMN_KEYS))
@@ -343,6 +346,53 @@ export default function PropertiesPage() {
   }
   const handleDelete = async () => {
     await removeProperty(deleteTarget.id); load(search, tenantFilters, stateFilters, needsReviewFilter, page, sortCol, sortDir)
+  }
+
+  // ── Bulk selection / delete ──────────────────────────────────────────────────
+  const toggleRow = (id) => setSelected(prev => {
+    const next = new Set(prev)
+    next.has(id) ? next.delete(id) : next.add(id)
+    return next
+  })
+  const allOnPageSelected = rows.length > 0 && rows.every(r => selected.has(r.id))
+  const togglePage = () => setSelected(prev => {
+    const next = new Set(prev)
+    if (allOnPageSelected) rows.forEach(r => next.delete(r.id))
+    else rows.forEach(r => next.add(r.id))
+    return next
+  })
+  const clearSelection = () => setSelected(new Set())
+
+  // Select every property matching the current filters (across all pages)
+  const selectAllMatching = async () => {
+    setSelectingAll(true)
+    try {
+      const params = { portfolio: '0', limit: 100000, offset: 0 }
+      if (search)              params.search = search
+      if (tenantFilters.length) params.tenants = tenantFilters.join(',')
+      if (stateFilters.length)  params.states  = stateFilters.join(',')
+      if (needsReviewFilter)    params.needsReview = '1'
+      const res = await getProperties(params)
+      setSelected(new Set(res.rows.map(r => r.id)))
+    } finally { setSelectingAll(false) }
+  }
+
+  const handleBulkDelete = async () => {
+    const ids = [...selected]
+    if (!ids.length) return
+    if (!window.confirm(`Permanently delete ${ids.length} propert${ids.length === 1 ? 'y' : 'ies'}? This cannot be undone.`)) return
+    setBulkDeleting(true)
+    try {
+      await bulkDeleteProperties(ids)
+      clearSelection()
+      const newTotal = total - ids.length
+      const lastPage = Math.max(0, Math.ceil(newTotal / PAGE_SIZE) - 1)
+      const goPage = Math.min(page, lastPage)
+      setPage(goPage)
+      await load(search, tenantFilters, stateFilters, needsReviewFilter, goPage, sortCol, sortDir)
+    } finally {
+      setBulkDeleting(false)
+    }
   }
 
   // Column customizer
@@ -444,10 +494,37 @@ export default function PropertiesPage() {
           <EmptyState icon={Building2} title="No properties found" description="Import your Salesforce data or add properties manually." action="New property" onAction={() => setShowForm(true)} />
         ) : (
           <>
+            {selected.size > 0 && (
+              <div className="flex items-center justify-between mb-3 px-4 py-2.5 bg-blue-50 border border-blue-200 rounded-xl">
+                <div className="flex items-center gap-3 text-sm">
+                  <span className="font-semibold text-blue-800">{selected.size} selected</span>
+                  <button onClick={clearSelection} className="text-blue-600 hover:text-blue-800 text-xs">Clear</button>
+                  {selected.size < total && (
+                    <button onClick={selectAllMatching} disabled={selectingAll}
+                      className="text-blue-600 hover:text-blue-800 text-xs underline disabled:opacity-50">
+                      {selectingAll ? 'Selecting…' : `Select all ${total.toLocaleString()} matching`}
+                    </button>
+                  )}
+                </div>
+                <button
+                  onClick={handleBulkDelete}
+                  disabled={bulkDeleting}
+                  className="flex items-center gap-1.5 text-sm font-medium text-white bg-red-600 px-3 py-1.5 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                >
+                  {bulkDeleting
+                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Deleting…</>
+                    : <><Trash2 className="w-3.5 h-3.5" /> Delete {selected.size}</>}
+                </button>
+              </div>
+            )}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
+                    <th className="px-4 py-3 w-10">
+                      <input type="checkbox" checked={allOnPageSelected} onChange={togglePage}
+                        className="rounded border-slate-300 cursor-pointer" title="Select all on this page" />
+                    </th>
                     {activeCols.map(key => {
                       const isActive = sortCol === key
                       return (
@@ -473,7 +550,11 @@ export default function PropertiesPage() {
                 <tbody>
                   {rows.map((p, i) => (
                     <tr key={p.id} onClick={() => { setDetailId(p.id); setShowCustomizer(false) }}
-                      className={`border-b border-slate-100 last:border-0 hover:bg-blue-50/40 transition-colors cursor-pointer ${i%2===0?'bg-white':'bg-slate-50/40'}`}>
+                      className={`border-b border-slate-100 last:border-0 hover:bg-blue-50/40 transition-colors cursor-pointer ${selected.has(p.id) ? 'bg-blue-50/60' : i%2===0?'bg-white':'bg-slate-50/40'}`}>
+                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                        <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleRow(p.id)}
+                          className="rounded border-slate-300 cursor-pointer" />
+                      </td>
                       {activeCols.map(key => COLUMN_DEFS[key].td(p, key))}
                       <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                         <div className="relative">

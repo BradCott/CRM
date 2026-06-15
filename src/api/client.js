@@ -31,6 +31,7 @@ export const getPerson    = (id)     => req('GET',    `/people/${id}`)
 export const createPerson = (data)   => req('POST',   '/people', data)
 export const updatePerson = (id, d)  => req('PUT',    `/people/${id}`, d)
 export const deletePerson = (id)     => req('DELETE', `/people/${id}`)
+export const bulkDeletePeople = (ids) => req('POST', '/people/bulk-delete', { ids })
 
 // Properties — paginated
 export const getProperties   = (params = {}) => {
@@ -44,6 +45,7 @@ export const getProperty     = (id)     => req('GET',    `/properties/${id}`)
 export const createProperty  = (data)   => req('POST',   '/properties', data)
 export const updateProperty  = (id, d)  => req('PUT',    `/properties/${id}`, d)
 export const deleteProperty        = (id)     => req('DELETE', `/properties/${id}`)
+export const bulkDeleteProperties  = (ids)    => req('POST', '/properties/bulk-delete', { ids })
 export const togglePortfolio       = (id, val) => req('PATCH',  `/properties/${id}/portfolio`, { is_portfolio: val })
 
 // Deals

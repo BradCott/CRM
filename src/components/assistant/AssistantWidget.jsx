@@ -31,6 +31,19 @@ function renderText(text) {
   })
 }
 
+// Capture what's visible on screen so the copilot can "see" the page. Prefers
+// the top-most open modal/dialog (e.g. the settlement statement window).
+function captureScreen() {
+  const overlays = [...document.querySelectorAll('.fixed.inset-0')]
+    .filter(el => el.offsetParent !== null && (el.innerText || '').trim().length > 0)
+  const target = overlays.length ? overlays[overlays.length - 1]
+    : document.querySelector('main') || document.body
+  const text = (target?.innerText || '')
+    .replace(/\s*\n\s*\n\s*/g, '\n')
+    .trim()
+  return text.slice(0, 7000)
+}
+
 export default function AssistantWidget() {
   const { getAssistantContext } = useAssistant()
   const [open, setOpen]       = useState(false)
@@ -51,7 +64,14 @@ export default function AssistantWidget() {
     setInput('')
     setLoading(true)
     try {
-      const { reply } = await askAssistant(next, getAssistantContext())
+      // Combine page-registered structured context with a live screen snapshot
+      const registered = getAssistantContext()
+      const screen = captureScreen()
+      const context = [
+        registered,
+        screen && `=== Text currently visible on the user's screen ===\n${screen}`,
+      ].filter(Boolean).join('\n\n')
+      const { reply } = await askAssistant(next, context)
       setMessages([...next, { role: 'assistant', content: reply }])
     } catch (e) {
       setMessages([...next, { role: 'assistant', content: `Sorry — I hit an error: ${e.message}` }])
@@ -66,7 +86,7 @@ export default function AssistantWidget() {
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-5 right-5 z-40 flex items-center gap-2 px-4 py-3 rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 transition-colors"
+          className="fixed bottom-5 right-5 z-[60] flex items-center gap-2 px-4 py-3 rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 transition-colors"
           title="Ask the Knox copilot"
         >
           <Sparkles className="w-5 h-5" />
@@ -76,7 +96,7 @@ export default function AssistantWidget() {
 
       {/* Panel */}
       {open && (
-        <div className="fixed bottom-5 right-5 z-40 w-[400px] max-w-[calc(100vw-2rem)] h-[560px] max-h-[calc(100vh-2.5rem)] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col">
+        <div className="fixed bottom-5 right-5 z-[60] w-[400px] max-w-[calc(100vw-2rem)] h-[560px] max-h-[calc(100vh-2.5rem)] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col">
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center">
