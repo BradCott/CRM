@@ -781,8 +781,20 @@ Return ONLY a valid JSON object in exactly this format — every field is requir
   "total_closing_costs": number or null,
   "broker_name": "string or null",
   "broker_commission": number or null,
-  "uncertain_items": []
+  "uncertain_items": [],
+  "line_items": [
+    { "description": "exact label from the statement", "amount": number, "treatment": "one of the allowed treatments" }
+  ]
 }
+
+LINE ITEMS — this is the most important part. "line_items" must contain EVERY individual money line on the settlement statement (the purchase price, every fee, every credit, every proration, the loan, earnest money, cash to close — all of it), each with:
+- "description": the exact label text from the statement (e.g. "Consulting Fee to Knox Capital", "Phase II Environmental", "Lender's Title Policy", "County Recording")
+- "amount": the dollar amount as a POSITIVE number
+- "treatment": your best guess of how it should be recorded, chosen from EXACTLY this list:
+  "Purchase Price", "Seller Credit", "Buyer Closing Cost", "Seller Closing Cost", "Loan", "1031 Exchange", "Earnest Money", "Cash to Close", "Tax Proration Credit", "Rent Proration Credit", "Insurance Credit", "CAM Credit", "Buyer Taxes Paid", "Ignore"
+Treatment guidance: the purchase price → "Purchase Price"; the new mortgage → "Loan"; 1031/QI deposit → "1031 Exchange"; earnest money already paid → "Earnest Money"; cash due at closing → "Cash to Close"; any buyer-side fee (title, escrow, recording, survey, appraisal, environmental/Phase I/II, flood, origination, consulting/acquisition fee paid to the buyer's own company, inspection, etc.) → "Buyer Closing Cost"; broker commission or any fee that is the seller's responsibility → "Seller Closing Cost"; rent/tax/insurance/CAM prorations credited to the buyer → the matching "... Credit"; back/current property taxes the buyer pays → "Buyer Taxes Paid"; seller credit/concession to buyer → "Seller Credit". When unsure, prefer "Buyer Closing Cost". Do not invent amounts; only include lines that actually appear.
+
+The other named fields above should still be filled as before (they are a roll-up summary), but the per-line "line_items" list is what the user edits.
 
 Field extraction rules:
 - All amounts as POSITIVE numbers (the sign/direction is handled by the journal entry logic)
@@ -987,6 +999,18 @@ async function parseSettlementStatement(buffer, apiKey) {
           reason:      typeof item.reason    === 'string' ? item.reason.trim()    : null,
         }))
         .filter(item => item.amount !== null && item.amount > 0)
+    })(),
+    line_items: (() => {
+      const VALID = new Set(['Purchase Price','Seller Credit','Buyer Closing Cost','Seller Closing Cost','Loan','1031 Exchange','Earnest Money','Cash to Close','Tax Proration Credit','Rent Proration Credit','Insurance Credit','CAM Credit','Buyer Taxes Paid','Ignore'])
+      if (!Array.isArray(raw.line_items)) return []
+      return raw.line_items
+        .filter(it => it && typeof it.description === 'string' && it.description.trim())
+        .map(it => ({
+          description: String(it.description).trim(),
+          amount:      cleanNum(it.amount),
+          treatment:   VALID.has(it.treatment) ? it.treatment : 'Buyer Closing Cost',
+        }))
+        .filter(it => it.amount !== null && it.amount > 0)
     })(),
   }
 }

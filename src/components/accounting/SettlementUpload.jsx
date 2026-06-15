@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useAssistant } from '../../context/AssistantContext'
 import { X, Upload, Loader2, CheckCircle, AlertCircle, AlertTriangle, Copy, Check, Users } from 'lucide-react'
 import Button from '../ui/Button'
@@ -10,6 +10,80 @@ const $fmt = v =>
   v != null && v !== '' && isFinite(Number(v)) && Number(v) !== 0
     ? '$' + Math.abs(Math.round(Number(v))).toLocaleString()
     : '—'
+
+// ── Line-item treatments — how each settlement line is recorded ───────────────
+
+const TREATMENTS = [
+  'Purchase Price', 'Buyer Closing Cost', 'Seller Closing Cost', 'Seller Credit',
+  'Loan', '1031 Exchange', 'Earnest Money', 'Cash to Close',
+  'Tax Proration Credit', 'Rent Proration Credit', 'Insurance Credit', 'CAM Credit',
+  'Buyer Taxes Paid', 'Ignore',
+]
+
+// Treatment → which roll-up field it aggregates into. (Seller Closing Cost / Ignore = excluded)
+const TREATMENT_FIELD = {
+  'Purchase Price':        'purchase_price',
+  'Seller Credit':         'seller_closing_credit',
+  'Buyer Closing Cost':    'total_closing_costs',
+  'Buyer Taxes Paid':      'buyer_taxes_paid',
+  'Loan':                  'loan_amount',
+  '1031 Exchange':         'exchange_proceeds',
+  'Earnest Money':         'earnest_money',
+  'Cash to Close':         'cash_to_close',
+  'Tax Proration Credit':  'tax_credits',
+  'Rent Proration Credit': 'prorated_rent',
+  'Insurance Credit':      'insurance_credit',
+  'CAM Credit':            'cam_credit',
+}
+
+const MONEY_FIELD_KEYS = [
+  'purchase_price', 'seller_closing_credit', 'total_closing_costs', 'buyer_taxes_paid',
+  'loan_amount', 'exchange_proceeds', 'earnest_money', 'cash_to_close',
+  'tax_credits', 'prorated_rent', 'insurance_credit', 'cam_credit',
+  // specific fee fields are no longer separately booked — closing costs roll into total_closing_costs
+  'loan_origination_fee', 'appraisal_fee', 'title_and_closing_fees', 'endorsements_fee',
+  'recording_fees', 'survey_fee', 'environmental_fees', 'flood_determination_fee', 'acquisition_fee',
+]
+
+/** Recompute the roll-up money fields by summing line items per treatment. */
+function deriveFields(baseFields, lineItems) {
+  const money = Object.fromEntries(MONEY_FIELD_KEYS.map(k => [k, 0]))
+  for (const li of lineItems) {
+    const f = TREATMENT_FIELD[li.treatment]
+    if (f) money[f] += Number(li.amount) || 0
+  }
+  return { ...baseFields, ...money }
+}
+
+/** Build editable line items from the AI's rigid fields (fallback when the AI returns no line_items). */
+function synthesizeLineItems(d) {
+  const items = []
+  const add = (description, amount, treatment) => { if (Number(amount)) items.push({ description, amount: Number(amount), treatment }) }
+  add('Purchase Price / Total Consideration', d.purchase_price, 'Purchase Price')
+  add('Seller Closing Credit', d.seller_closing_credit, 'Seller Credit')
+  add('Loan Proceeds', d.loan_amount, 'Loan')
+  add('1031 Exchange Proceeds', d.exchange_proceeds, '1031 Exchange')
+  add('Earnest Money Deposit', d.earnest_money, 'Earnest Money')
+  add('Loan Origination Fee', d.loan_origination_fee, 'Buyer Closing Cost')
+  add('Appraisal Fee', d.appraisal_fee, 'Buyer Closing Cost')
+  add('Title & Closing Fees', d.title_and_closing_fees, 'Buyer Closing Cost')
+  add('Title Endorsements', d.endorsements_fee, 'Buyer Closing Cost')
+  add('Recording Fees', d.recording_fees, 'Buyer Closing Cost')
+  add('Survey Fee', d.survey_fee, 'Buyer Closing Cost')
+  add('Environmental (Phase I/II)', d.environmental_fees, 'Buyer Closing Cost')
+  add('Flood Determination', d.flood_determination_fee, 'Buyer Closing Cost')
+  add('Acquisition / Consulting Fee', d.acquisition_fee, 'Buyer Closing Cost')
+  const anyFee = ['loan_origination_fee','appraisal_fee','title_and_closing_fees','endorsements_fee','recording_fees','survey_fee','environmental_fees','flood_determination_fee','acquisition_fee'].some(k => Number(d[k]))
+  if (!anyFee) add('Closing Costs (total)', d.total_closing_costs, 'Buyer Closing Cost')
+  add('Buyer Taxes Paid at Closing', d.buyer_taxes_paid, 'Buyer Taxes Paid')
+  add('Prorated Rent Credit', d.prorated_rent, 'Rent Proration Credit')
+  add('Tax Proration Credit', d.tax_credits, 'Tax Proration Credit')
+  add('Insurance Credit', d.insurance_credit, 'Insurance Credit')
+  add('CAM / Maintenance Credit', d.cam_credit, 'CAM Credit')
+  add('Cash to Close', d.cash_to_close, 'Cash to Close')
+  for (const u of (d.uncertain_items || [])) add(u.description, u.amount, 'Buyer Closing Cost')
+  return items
+}
 
 // ── Journal entry builder ─────────────────────────────────────────────────────
 //
@@ -190,23 +264,25 @@ function StmtRow({ label, hint, value, sub, strong, indent, sign }) {
   )
 }
 
-function ReconstructedStatement({ fields }) {
+const TREATMENT_ORDER = [
+  'Purchase Price', 'Seller Credit', 'Buyer Closing Cost', 'Buyer Taxes Paid',
+  'Loan', '1031 Exchange', 'Earnest Money', 'Tax Proration Credit',
+  'Rent Proration Credit', 'Insurance Credit', 'CAM Credit', 'Cash to Close',
+  'Seller Closing Cost', 'Ignore',
+]
+
+function ReconstructedStatement({ lineItems, fields }) {
   const n = k => Number(fields[k]) || 0
 
-  const costRows = CLOSING_COST_ITEMS.filter(([k]) => n(k) !== 0)
-  const itemizedCosts = costRows.reduce((s, [k]) => s + n(k), 0)
-  const statedCosts   = n('total_closing_costs')
-  const otherCosts    = statedCosts - itemizedCosts          // unitemized remainder (incl. assigned items)
-  const overItemized  = itemizedCosts > statedCosts + 1      // named fees exceed the total → likely double-count
+  const groups = TREATMENT_ORDER
+    .map(t => ({ t, lines: lineItems.filter(li => li.treatment === t) }))
+    .filter(g => g.lines.length)
+  const subtotal = lines => lines.reduce((s, l) => s + (Number(l.amount) || 0), 0)
 
   const netPP = n('purchase_price') - n('seller_closing_credit')
-
-  const creditRows = CREDIT_ITEMS.filter(([k]) => n(k) !== 0)
-  const totalCredits = creditRows.reduce((s, [k]) => s + n(k), 0)
-
-  // Cash to close = what the buyer owes − what's credited
-  const owes = netPP + statedCosts + n('buyer_taxes_paid')
-  const expectedCTC = owes - totalCredits
+  const credits = n('loan_amount') + n('exchange_proceeds') + n('earnest_money')
+    + n('tax_credits') + n('prorated_rent') + n('insurance_credit') + n('cam_credit')
+  const expectedCTC = netPP + n('total_closing_costs') + n('buyer_taxes_paid') - credits
   const statedCTC   = n('cash_to_close')
   const ctcGap      = statedCTC - expectedCTC
   const ctcMatch    = Math.abs(ctcGap) < 2 || statedCTC === 0
@@ -215,67 +291,110 @@ function ReconstructedStatement({ fields }) {
     <div className="border border-slate-200 rounded-xl overflow-hidden">
       <div className="px-4 py-2.5 bg-slate-800 text-white">
         <p className="text-xs font-semibold uppercase tracking-wide">Reconstructed Settlement Statement</p>
-        <p className="text-[10px] text-slate-300 mt-0.5">Every line item the AI pulled, and how each total adds up. Hover the ⓘ on any line. For review only.</p>
+        <p className="text-[10px] text-slate-300 mt-0.5">Every line, grouped by how it's being recorded. Edit any line above to change how it's grouped here. Review only.</p>
       </div>
 
-      <div className="grid md:grid-cols-2 gap-x-6 gap-y-1 px-4 py-3">
-
-        {/* Purchase */}
+      <div className="px-4 py-3 grid md:grid-cols-2 gap-x-6">
         <div>
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Purchase</p>
-          <StmtRow label="Total Consideration" hint="Contract purchase price / total consideration" value={n('purchase_price')} />
-          {n('seller_closing_credit') !== 0 && (
-            <StmtRow label="Less: Seller Closing Credit" hint="Credit from the seller — reduces your net price" value={n('seller_closing_credit')} sign="-" indent />
-          )}
-          <StmtRow label="Net Purchase Price" value={netPP} strong />
-        </div>
-
-        {/* Closing costs — itemized with reconciliation */}
-        <div>
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Closing Costs — itemized</p>
-          {costRows.length === 0 && otherCosts <= 1 && <p className="text-[11px] text-slate-400 py-1">No itemized fees were extracted.</p>}
-          {costRows.map(([k, label, hint]) => (
-            <StmtRow key={k} label={label} hint={hint} value={n(k)} indent />
-          ))}
-          {otherCosts > 1 && (
-            <StmtRow label="Other / unitemized closing costs" hint="Closing costs in the statement total that aren't broken out into a named fee above — including any flagged items you assigned to Buyer Closing Costs." value={otherCosts} indent />
-          )}
-          <StmtRow label="Total Closing Costs" value={statedCosts} strong />
-          {overItemized && (
-            <div className="mt-1 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] bg-amber-50 text-amber-700">
-              <AlertTriangle className="w-3 h-3 shrink-0" /> Itemized fees exceed the total by {money(itemizedCosts - statedCosts)} — an item may be double-counted, or the total is too low.
+          {groups.map(g => (
+            <div key={g.t} className="mb-2">
+              <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-0.5">{g.t}</p>
+              {g.lines.map((l, i) => (
+                <StmtRow key={i} label={l.description} value={l.amount} indent />
+              ))}
+              {g.lines.length > 1 && <StmtRow label={`${g.t} subtotal`} value={subtotal(g.lines)} strong />}
             </div>
-          )}
-        </div>
-
-        {/* Credits & financing */}
-        <div className="mt-2">
-          <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Credits & Financing (reduce cash to close)</p>
-          {creditRows.length === 0 && <p className="text-[11px] text-slate-400 py-1">None extracted.</p>}
-          {creditRows.map(([k, label, hint]) => (
-            <StmtRow key={k} label={label} hint={hint} value={n(k)} indent />
           ))}
-          <StmtRow label="Total Credits" value={totalCredits} strong />
         </div>
 
         {/* Cash to close reconciliation */}
-        <div className="mt-2">
+        <div>
           <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1">Cash to Close — reconciliation</p>
-          <StmtRow label="Net Purchase Price" value={netPP} indent />
-          <StmtRow label="+ Total Closing Costs" value={statedCosts} indent />
-          {n('buyer_taxes_paid') !== 0 && <StmtRow label="+ Buyer Taxes Paid at Closing" hint="Back/current taxes the buyer pays at closing (not part of closing costs)" value={n('buyer_taxes_paid')} indent />}
-          <StmtRow label="− Total Credits & Financing" value={totalCredits} sign="-" indent />
+          <StmtRow label="Net Purchase Price" hint="Purchase price minus any seller credit" value={netPP} indent />
+          <StmtRow label="+ Total Closing Costs (buyer)" value={n('total_closing_costs')} indent />
+          {n('buyer_taxes_paid') !== 0 && <StmtRow label="+ Buyer Taxes Paid at Closing" value={n('buyer_taxes_paid')} indent />}
+          <StmtRow label="− Loan, exchange, earnest & prorations" hint="Everything that reduces the cash you bring to closing" value={credits} sign="-" indent />
           <StmtRow label="Expected Cash to Close" value={expectedCTC} strong />
-          <div className={`mt-1 flex items-center gap-1.5 px-2 py-1.5 rounded-lg text-[11px] ${ctcMatch ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+          <div className={`mt-1.5 flex items-start gap-1.5 px-2 py-1.5 rounded-lg text-[11px] ${ctcMatch ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
             {statedCTC === 0
-              ? <><AlertCircle className="w-3 h-3 shrink-0" /> No cash-to-close was extracted — expected {money(expectedCTC)}</>
+              ? <><AlertCircle className="w-3 h-3 shrink-0 mt-0.5" /> No "Cash to Close" line — expected about {money(expectedCTC)}. Add or fix a line above.</>
               : ctcMatch
-                ? <><Check className="w-3 h-3 shrink-0" /> Matches the statement's cash to close ({money(statedCTC)})</>
-                : <><AlertTriangle className="w-3 h-3 shrink-0" /> Statement says {money(statedCTC)} — off by {money(Math.abs(ctcGap))}. A credit or fee is likely mis-keyed.</>
+                ? <><Check className="w-3 h-3 shrink-0 mt-0.5" /> Balances — matches the statement's cash to close ({money(statedCTC)})</>
+                : <><AlertTriangle className="w-3 h-3 shrink-0 mt-0.5" /> Off by {money(Math.abs(ctcGap))}: statement says {money(statedCTC)}, the lines add up to {money(expectedCTC)}. Re-check a line's amount or treatment above.</>
             }
           </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+// ── Editable line-item table — change how every settlement line is recorded ───
+
+function LineItemsEditor({ lineItems, setLineItems }) {
+  const update = (i, field, val) => setLineItems(prev => prev.map((li, j) =>
+    j === i ? { ...li, [field]: field === 'amount' ? (val === '' ? '' : Number(val)) : val } : li))
+  const remove = i => setLineItems(prev => prev.filter((_, j) => j !== i))
+  const add = () => setLineItems(prev => [...prev, { description: '', amount: '', treatment: 'Buyer Closing Cost' }])
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-2">
+        <div>
+          <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Line Items</h3>
+          <p className="text-[11px] text-slate-400">The AI guessed how to record each line — change any of them. Everything rolls up automatically.</p>
+        </div>
+        <button onClick={add} className="text-xs font-medium text-blue-600 hover:text-blue-800 border border-blue-200 hover:bg-blue-50 rounded-lg px-2.5 py-1.5 transition-colors">+ Add line</button>
+      </div>
+
+      <div className="border border-slate-200 rounded-xl overflow-hidden">
+        <table className="w-full text-xs border-collapse">
+          <thead>
+            <tr className="bg-slate-50 border-b border-slate-200">
+              <th className="text-left px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide">Description</th>
+              <th className="text-right px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide w-28">Amount</th>
+              <th className="text-left px-3 py-2 font-semibold text-slate-500 uppercase tracking-wide w-44">Record as</th>
+              <th className="w-8" />
+            </tr>
+          </thead>
+          <tbody>
+            {lineItems.length === 0 && (
+              <tr><td colSpan={4} className="px-3 py-4 text-center text-slate-400">No line items — click "Add line" to enter them.</td></tr>
+            )}
+            {lineItems.map((li, i) => {
+              const excluded = li.treatment === 'Seller Closing Cost' || li.treatment === 'Ignore'
+              return (
+                <tr key={i} className={`border-b border-slate-100 ${excluded ? 'opacity-50' : ''}`}>
+                  <td className="px-2 py-1.5">
+                    <input type="text" value={li.description}
+                      onChange={e => update(i, 'description', e.target.value)}
+                      placeholder="Line description"
+                      className="w-full text-xs border border-transparent hover:border-slate-200 focus:border-blue-300 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-200" />
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <input type="number" value={li.amount}
+                      onChange={e => update(i, 'amount', e.target.value)}
+                      className="w-full text-xs text-right tabular-nums border border-transparent hover:border-slate-200 focus:border-blue-300 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-200" />
+                  </td>
+                  <td className="px-2 py-1.5">
+                    <select value={li.treatment}
+                      onChange={e => update(i, 'treatment', e.target.value)}
+                      className="w-full text-xs border border-slate-200 rounded px-1.5 py-1 bg-white outline-none focus:ring-2 focus:ring-blue-300">
+                      {TREATMENTS.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </td>
+                  <td className="px-1 py-1.5 text-center">
+                    <button onClick={() => remove(i)} className="text-slate-300 hover:text-red-500"><X className="w-3.5 h-3.5" /></button>
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-[10px] text-slate-400 mt-1.5">
+        "Buyer Closing Cost" capitalizes into your cost basis. "Seller Closing Cost" and "Ignore" are left out of your books.
+      </p>
     </div>
   )
 }
@@ -456,7 +575,7 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
   const [copied, setCopied]           = useState(false)
   const [dragOver, setDragOver]       = useState(false)
   const [investors, setInvestors]     = useState([])
-  const [uncertainItems, setUncertainItems] = useState([])
+  const [lineItems, setLineItems]     = useState([])
   const [emdOutsideLLC, setEmdOutsideLLC]   = useState(false)
   const [emdEquityAccount, setEmdEquityAccount] = useState('')
 
@@ -465,13 +584,8 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
 
   const setField = useCallback((key, val) => setFields(prev => ({ ...prev, [key]: val })), [])
 
-  function assignUncertainItem(idx, category, amount) {
-    const fieldKey = FIELD_MAP[category]
-    if (fieldKey) {
-      setFields(prev => ({ ...prev, [fieldKey]: (Number(prev[fieldKey]) || 0) + amount }))
-    }
-    setUncertainItems(prev => prev.filter((_, i) => i !== idx))
-  }
+  // Roll-up money fields are derived from the editable line items
+  const derived = useMemo(() => fields ? deriveFields(fields, lineItems) : null, [fields, lineItems])
 
   useEffect(() => {
     getInvestors(propertyId)
@@ -483,20 +597,15 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
   const { setAssistantContext } = useAssistant()
   useEffect(() => {
     if (!fields) { setAssistantContext(''); return }
-    const lines = Object.entries(fields)
-      .filter(([, v]) => v !== null && v !== undefined && v !== '' && v !== 0)
-      .map(([k, v]) => `  ${k}: ${v}`)
-      .join('\n')
-    const uncertain = uncertainItems.length
-      ? '\nUncertain items flagged (need a decision):\n' +
-        uncertainItems.map(u => `  - "${u.description}" $${u.amount} — guess: ${u.suggestion || '?'} (${u.reason || ''})`).join('\n')
-      : ''
+    const items = lineItems.length
+      ? lineItems.map(li => `  - "${li.description}" $${li.amount} → recorded as ${li.treatment}`).join('\n')
+      : '(none)'
     setAssistantContext(
       `The user is reviewing a parsed SETTLEMENT STATEMENT for property "${propertyName}".\n` +
-      `Extracted fields:\n${lines}${uncertain}`
+      `Line items (each can be re-assigned by the user):\n${items}`
     )
     return () => setAssistantContext('')
-  }, [fields, uncertainItems, propertyName, setAssistantContext])
+  }, [fields, lineItems, propertyName, setAssistantContext])
 
   async function handleFile(file) {
     if (!file) return
@@ -505,7 +614,9 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
     try {
       const data = await uploadSettlement(propertyId, file)
       setFields({ ...data, depreciation_expense: 0 })
-      setUncertainItems(Array.isArray(data.uncertain_items) ? data.uncertain_items : [])
+      setLineItems(Array.isArray(data.line_items) && data.line_items.length
+        ? data.line_items
+        : synthesizeLineItems(data))
       setStep('review')
     } catch (err) {
       setError(err.message)
@@ -513,19 +624,19 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
     }
   }
 
-  const sellerCr       = fields ? (Number(fields.seller_closing_credit) || 0) : 0
-  const pp             = fields ? (Number(fields.purchase_price)        || 0) : 0
+  const sellerCr       = derived ? (Number(derived.seller_closing_credit) || 0) : 0
+  const pp             = derived ? (Number(derived.purchase_price)        || 0) : 0
   const netPurchasePrice = pp - sellerCr
-  const totalCostBasis   = fields
-    ? netPurchasePrice + (Number(fields.total_closing_costs) || 0)
+  const totalCostBasis   = derived
+    ? netPurchasePrice + (Number(derived.total_closing_costs) || 0)
     : 0
 
-  const journal = fields
-    ? buildJournal(fields, buildingPct, landPct, investors, emdOutsideLLC, emdEquityAccount, propertyName)
+  const journal = derived
+    ? buildJournal(derived, buildingPct, landPct, investors, emdOutsideLLC, emdEquityAccount, propertyName)
     : null
 
   async function handleSave() {
-    if (!fields) return
+    if (!derived) return
     setStep('saving')
     setError(null)
     try {
@@ -534,27 +645,20 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
       const bPct    = (Number(buildingPct) || 90) / 100
       const lPct    = (Number(landPct)     || 10) / 100
 
+      // Closing costs are capitalized into the building/land basis (cb already
+      // includes total_closing_costs); financing, prorations and cash post separately.
       const txs = [
-        cb > 0                           && { description: 'Building Value',               category: 'Purchase', amount: -(cb * bPct) },
-        cb > 0                           && { description: 'Land Value',                   category: 'Purchase', amount: -(cb * lPct) },
-        fields.loan_amount               && { description: 'Loan Proceeds',                category: 'Loan',     amount:  Number(fields.loan_amount) },
-        fields.earnest_money             && { description: 'Earnest Money Deposit',        category: 'Purchase', amount: -Number(fields.earnest_money) },
-        fields.cash_to_close             && { description: 'Cash to Close',                category: 'Purchase', amount: -Number(fields.cash_to_close) },
-        fields.loan_origination_fee      && { description: 'Loan Origination Fee',         category: 'Purchase', amount: -Number(fields.loan_origination_fee) },
-        fields.appraisal_fee             && { description: 'Appraisal Fee',                category: 'Purchase', amount: -Number(fields.appraisal_fee) },
-        fields.title_and_closing_fees    && { description: 'Title and Closing Fees',       category: 'Purchase', amount: -Number(fields.title_and_closing_fees) },
-        fields.endorsements_fee          && { description: 'Title Endorsements',           category: 'Purchase', amount: -Number(fields.endorsements_fee) },
-        fields.recording_fees            && { description: 'Recording Fees',               category: 'Purchase', amount: -Number(fields.recording_fees) },
-        fields.survey_fee                && { description: 'Survey Fee',                   category: 'Purchase', amount: -Number(fields.survey_fee) },
-        fields.environmental_fees        && { description: 'Environmental / Phase I Fees', category: 'Purchase', amount: -Number(fields.environmental_fees) },
-        fields.flood_determination_fee   && { description: 'Flood Determination Fee',      category: 'Purchase', amount: -Number(fields.flood_determination_fee) },
-        fields.acquisition_fee           && { description: 'Knox Capital Acquisition Fee', category: 'Purchase', amount: -Number(fields.acquisition_fee) },
-        fields.buyer_taxes_paid          && { description: 'Property Taxes Paid at Closing', category: 'Purchase', amount: -Number(fields.buyer_taxes_paid) },
-        fields.prorated_rent             && { description: 'Prorated Rent Credit',         category: 'Rent',     amount:  Number(fields.prorated_rent) },
-        fields.tax_credits               && { description: 'Property Tax Proration',       category: 'Other',    amount:  Number(fields.tax_credits) },
-        fields.insurance_credit          && { description: 'Insurance Proration Credit',   category: 'Other',    amount:  Number(fields.insurance_credit) },
-        fields.cam_credit                && { description: 'CAM / Maintenance Credit',     category: 'Other',    amount:  Number(fields.cam_credit) },
-        fields.exchange_proceeds         && { description: '1031 Exchange Proceeds',       category: 'Loan',     amount:  Number(fields.exchange_proceeds) },
+        cb > 0                            && { description: 'Building Value',          category: 'Purchase', amount: -(cb * bPct) },
+        cb > 0                            && { description: 'Land Value',              category: 'Purchase', amount: -(cb * lPct) },
+        derived.loan_amount               && { description: 'Loan Proceeds',           category: 'Loan',     amount:  Number(derived.loan_amount) },
+        derived.exchange_proceeds         && { description: '1031 Exchange Proceeds',  category: 'Loan',     amount:  Number(derived.exchange_proceeds) },
+        derived.earnest_money             && { description: 'Earnest Money Deposit',   category: 'Purchase', amount: -Number(derived.earnest_money) },
+        derived.cash_to_close             && { description: 'Cash to Close',           category: 'Purchase', amount: -Number(derived.cash_to_close) },
+        derived.buyer_taxes_paid          && { description: 'Property Taxes Paid at Closing', category: 'Purchase', amount: -Number(derived.buyer_taxes_paid) },
+        derived.prorated_rent             && { description: 'Prorated Rent Credit',    category: 'Rent',     amount:  Number(derived.prorated_rent) },
+        derived.tax_credits               && { description: 'Property Tax Proration',  category: 'Other',    amount:  Number(derived.tax_credits) },
+        derived.insurance_credit          && { description: 'Insurance Proration Credit', category: 'Other', amount:  Number(derived.insurance_credit) },
+        derived.cam_credit                && { description: 'CAM / Maintenance Credit', category: 'Other',   amount:  Number(derived.cam_credit) },
       ].filter(Boolean).map(t => ({ ...t, date, source: 'Settlement Statement' }))
 
       if (txs.length > 0) await createTransactions(propertyId, txs)
@@ -563,7 +667,7 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
         entry_type: 'acquisition',
         entry_date: date,
         label:      propertyName || fields.property_address || 'Acquisition',
-        content:    buildClipboardText(journal, fields, date, propertyName),
+        content:    buildClipboardText(journal, derived, date, propertyName),
       })
 
       onSaved()
@@ -575,8 +679,8 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
   }
 
   function handleCopy() {
-    if (!journal || !fields) return
-    navigator.clipboard.writeText(buildClipboardText(journal, fields, fields.settlement_date, propertyName)).then(() => {
+    if (!journal || !derived) return
+    navigator.clipboard.writeText(buildClipboardText(journal, derived, fields.settlement_date, propertyName)).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
     })
@@ -670,41 +774,41 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
               )}
 
               {/* Uncertain items review panel */}
-              <UncertainItemsPanel items={uncertainItems} onAssign={assignUncertainItem} />
+              {/* Editable line items — the heart of the review */}
+              <LineItemsEditor lineItems={lineItems} setLineItems={setLineItems} />
 
               <div className="grid grid-cols-2 gap-6">
 
                 {/* ── LEFT: Extracted Fields ── */}
                 <div className="space-y-4">
 
-                  {/* Purchase price & basis */}
+                  {/* Derived summary — rolls up from the line items above */}
                   <div>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Purchase & Cost Basis</h3>
+                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Summary (from line items)</h3>
                     <div className="bg-slate-50 rounded-xl px-4 py-2">
-                      <Field label="Total Consideration" value={fields.purchase_price} onChange={v => setField('purchase_price', v)} />
-                      <Field label="Seller Closing Credit" value={fields.seller_closing_credit} onChange={v => setField('seller_closing_credit', v)} hint="reduces net purchase price" />
-                      {/* Net purchase price — computed */}
                       <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
                         <span className="text-xs text-slate-500">Net Purchase Price</span>
                         <span className="text-sm font-medium text-slate-700 tabular-nums">{$fmt(netPurchasePrice)}</span>
                       </div>
-                      <Field label="Total Closing Costs" value={fields.total_closing_costs} onChange={v => setField('total_closing_costs', v)} />
-                      {/* Total Cost Basis — computed */}
+                      <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
+                        <span className="text-xs text-slate-500">Total Closing Costs (buyer)</span>
+                        <span className="text-sm font-medium text-slate-700 tabular-nums">{$fmt(derived?.total_closing_costs)}</span>
+                      </div>
+                      <div className="flex items-center justify-between py-1.5 border-b border-slate-100">
+                        <span className="text-xs text-slate-500">Loan Amount</span>
+                        <span className="text-sm font-medium text-slate-700 tabular-nums">{$fmt(derived?.loan_amount)}</span>
+                      </div>
+                      <div className="flex items-center justify-between py-1.5">
+                        <span className="text-xs text-slate-500">Cash to Close</span>
+                        <span className="text-sm font-medium text-slate-700 tabular-nums">{$fmt(derived?.cash_to_close)}</span>
+                      </div>
                       <div className="flex items-center justify-between py-2 border-t-2 border-slate-200 mt-0.5">
                         <span className="text-xs font-semibold text-slate-700">Total Cost Basis</span>
                         <span className="text-sm font-bold text-slate-900 tabular-nums">{$fmt(totalCostBasis)}</span>
                       </div>
                     </div>
-                  </div>
-
-                  {/* Financing & cash */}
-                  <div>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Financing & Cash</h3>
-                    <div className="bg-slate-50 rounded-xl px-4 py-2">
-                      <TextField label="Lender Name" value={fields.lender_name} onChange={v => setField('lender_name', v)} hint="QB liability account" />
-                      <Field label="Loan Amount" value={fields.loan_amount} onChange={v => setField('loan_amount', v)} />
-                      <Field label="Cash to Close" value={fields.cash_to_close} onChange={v => setField('cash_to_close', v)} />
-                      <Field label="Earnest Money Deposit" value={fields.earnest_money} onChange={v => setField('earnest_money', v)} />
+                    <div className="mt-2">
+                      <TextField label="Lender Name" value={fields.lender_name} onChange={v => setField('lender_name', v)} hint="QuickBooks mortgage liability account" />
                     </div>
                   </div>
 
@@ -738,18 +842,6 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
                           </div>
                         </div>
                       )}
-                    </div>
-                  </div>
-
-                  {/* Credits from seller */}
-                  <div>
-                    <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Prorations & Credits</h3>
-                    <div className="bg-slate-50 rounded-xl px-4 py-2">
-                      <Field label="1031 Exchange Proceeds" value={fields.exchange_proceeds} onChange={v => setField('exchange_proceeds', v)} hint="QI deposit applied to purchase" />
-                      <Field label="Tax Proration Credit" value={fields.tax_credits} onChange={v => setField('tax_credits', v)} />
-                      <Field label="Prorated Rent Credit" value={fields.prorated_rent} onChange={v => setField('prorated_rent', v)} />
-                      <Field label="Insurance Credit" value={fields.insurance_credit} onChange={v => setField('insurance_credit', v)} />
-                      <Field label="CAM / Maintenance Credit" value={fields.cam_credit} onChange={v => setField('cam_credit', v)} />
                     </div>
                   </div>
 
@@ -876,7 +968,7 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
                 </div>
               </div>
               {/* Reconstructed settlement statement — full width, review only */}
-              <ReconstructedStatement fields={fields} />
+              <ReconstructedStatement lineItems={lineItems} fields={derived} />
             </div>
           )}
         </div>
