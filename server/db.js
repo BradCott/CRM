@@ -315,6 +315,9 @@ const migrations = [
     key   TEXT PRIMARY KEY,
     value TEXT
   )`,
+  // Drive-imported LOIs were created with an invalid 'lead' stage that maps to
+  // no pipeline column — flip them to 'loi' so they actually appear on the board.
+  `UPDATE deals SET stage = 'loi' WHERE source = 'drive_loi' AND stage = 'lead'`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

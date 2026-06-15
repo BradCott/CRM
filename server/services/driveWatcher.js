@@ -3,6 +3,7 @@ import { Readable } from 'node:stream'
 import mammoth from 'mammoth'
 import db from '../db.js'
 import { getAuthedClient } from './googleClient.js'
+import { parseLOIText } from './loiParser.js'
 
 const FOLDER_NAME = 'LOIs'
 
@@ -240,32 +241,65 @@ export async function diagnoseDrive() {
 }
 
 async function createDealFromLOI(filename, text, fileId) {
-  // Extract price from text (e.g. "$1,200,000" or "1.2M")
-  let offerPrice = null
-  const priceMatch = text.match(/\$[\d,]+(?:\.\d+)?(?:\s*[Mm]illion)?|\d+(?:\.\d+)?\s*[Mm]illion/i)
-  if (priceMatch) {
-    const raw = priceMatch[0].replace(/[$,\s]/g, '')
-    if (/million/i.test(raw)) {
-      offerPrice = parseFloat(raw) * 1_000_000
-    } else {
-      offerPrice = parseFloat(raw)
+  const title = filename.replace(/\.[^.]+$/, '').trim()
+
+  // Dedupe — don't recreate a deal we already imported from this LOI
+  const existing = db.prepare(
+    `SELECT id FROM deals WHERE source = 'drive_loi' AND title = ?`
+  ).get(title)
+  if (existing) {
+    console.log(`[driveWatcher] LOI "${title}" already imported (deal ${existing.id}) — skipping`)
+    return
+  }
+
+  // Parse with the same AI extractor the manual upload uses; fall back to a
+  // basic price regex if the API key is missing or the call fails.
+  let f = {}
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (apiKey) {
+    try {
+      f = await parseLOIText(text, apiKey)
+    } catch (err) {
+      console.error(`[driveWatcher] AI parse failed for "${title}":`, err.message)
     }
   }
 
-  // Use filename (without extension) as deal title
-  const title = filename.replace(/\.[^.]+$/, '').trim()
+  if (f.purchase_price == null) {
+    const priceMatch = text.match(/\$[\d,]+(?:\.\d+)?(?:\s*[Mm]illion)?|\d+(?:\.\d+)?\s*[Mm]illion/i)
+    if (priceMatch) {
+      const raw = priceMatch[0].replace(/[$,\s]/g, '')
+      f.purchase_price = /million/i.test(raw) ? parseFloat(raw) * 1_000_000 : parseFloat(raw)
+    }
+  }
 
-  // Check for a matching property by address keywords
+  // Link to a market property by exact address if we can
   let propertyId = null
-  const addressMatch = text.match(/\d+\s+[A-Za-z0-9\s]+(?:St|Ave|Blvd|Dr|Rd|Way|Lane|Ln|Ct|Court|Pkwy|Parkway|Hwy|Highway)[.,\s]/i)
-  if (addressMatch) {
-    const addr = addressMatch[0].trim().replace(/[,.]$/, '')
-    const prop = db.prepare(`SELECT id FROM properties WHERE address LIKE ? LIMIT 1`).get(`%${addr.split(' ').slice(0, 3).join('%')}%`)
+  if (f.address) {
+    const prop = db.prepare(
+      `SELECT id FROM properties WHERE LOWER(TRIM(address)) = LOWER(TRIM(?)) LIMIT 1`
+    ).get(f.address)
     if (prop) propertyId = prop.id
   }
 
-  db.prepare(`
-    INSERT INTO deals (title, property_id, stage, offer_price, source, notes)
-    VALUES (?, ?, 'lead', ?, 'drive_loi', ?)
-  `).run(title, propertyId, offerPrice, `Auto-created from Google Drive LOI: ${filename}`)
+  // Estimate a DD deadline from today + due-diligence days (best guess for visibility)
+  let ddDeadline = null
+  if (f.due_diligence_days) {
+    ddDeadline = new Date(Date.now() + f.due_diligence_days * 86_400_000).toISOString().slice(0, 10)
+  }
+
+  const r = db.prepare(`
+    INSERT INTO deals
+      (title, property_id, stage, purchase_price, offer_price, close_date,
+       address, city, state, tenant, cap_rate, due_diligence_days, dd_deadline,
+       earnest_money, source, notes, created_at, updated_at)
+    VALUES (?, ?, 'loi', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'drive_loi', ?, datetime('now'), datetime('now'))
+  `).run(
+    title, propertyId,
+    f.purchase_price ?? null, f.purchase_price ?? null, f.close_date ?? null,
+    f.address ?? null, f.city ?? null, f.state ?? null, f.tenant ?? null,
+    f.cap_rate ?? null, f.due_diligence_days ?? null, ddDeadline,
+    f.earnest_money ?? null,
+    `Auto-created from Google Drive LOI: ${filename}`
+  )
+  console.log(`[driveWatcher] Created LOI deal ${r.lastInsertRowid}: "${title}"`)
 }

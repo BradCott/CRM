@@ -10,12 +10,15 @@ export default function SettingsPage() {
   const [diag, setDiag]       = useState(null)
   const [diagLoading, setDiagLoading] = useState(false)
 
-  async function handleTestNow() {
+  async function handleTestNow(reset = false) {
     setDiagLoading(true)
     setMsg(null)
     try {
-      const result = await runDriveWatcher()
+      const result = await runDriveWatcher(reset)
       setDiag(result)
+      if (result.dealsCreated > 0) {
+        setMsg({ type: 'success', text: `Imported ${result.dealsCreated} deal${result.dealsCreated > 1 ? 's' : ''} into the pipeline.` })
+      }
     } catch (err) {
       setMsg({ type: 'error', text: err.message })
     } finally {
@@ -118,7 +121,7 @@ export default function SettingsPage() {
                     </p>
                   </div>
                   <button
-                    onClick={handleTestNow}
+                    onClick={() => handleTestNow(false)}
                     disabled={diagLoading}
                     className="flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 px-3 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors shrink-0 disabled:opacity-50"
                   >
@@ -130,6 +133,20 @@ export default function SettingsPage() {
 
                 {diag && (
                   <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-slate-500">
+                        {diag.dealsCreated > 0
+                          ? `${diag.dealsCreated} deal(s) imported.`
+                          : 'No new deals — already imported, or folder empty.'}
+                      </p>
+                      <button
+                        onClick={() => handleTestNow(true)}
+                        disabled={diagLoading}
+                        className="text-xs text-slate-400 hover:text-slate-700 underline disabled:opacity-50"
+                      >
+                        Re-scan last 7 days
+                      </button>
+                    </div>
                     {['LOIs', 'notes'].map(key => {
                       const f = diag.folders?.[key]
                       if (!f) return null
