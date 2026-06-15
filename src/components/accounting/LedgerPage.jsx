@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, recordAllTransactions } from '../../api/client'
+import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins } from 'lucide-react'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, recordAllTransactions, updateTransaction } from '../../api/client'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
 import AddTransactionModal from './AddTransactionModal'
@@ -65,6 +65,9 @@ export default function LedgerPage() {
   const [reviewCats, setReviewCats]         = useState({})     // tx.id → category override
   const [recordingId, setRecordingId]       = useState(null)
   const [recordingAll, setRecordingAll]     = useState(false)
+  const [editingId, setEditingId]           = useState(null)   // tx.id being edited inline
+  const [editForm, setEditForm]             = useState(null)
+  const [savingEdit, setSavingEdit]         = useState(false)
 
   const reload = useCallback(() => {
     setLoading(true)
@@ -126,6 +129,41 @@ export default function LedgerPage() {
       await reload()
     } finally {
       setRecordingAll(false)
+    }
+  }
+
+  function startEdit(tx) {
+    setEditingId(tx.id)
+    setEditForm({
+      date: tx.date, description: tx.description, category: tx.category,
+      amount: String(tx.amount), vendor: tx.vendor || '',
+    })
+  }
+
+  function cancelEdit() {
+    setEditingId(null)
+    setEditForm(null)
+  }
+
+  async function saveEdit() {
+    const amt = parseFloat(editForm.amount)
+    if (!editForm.date || !editForm.description.trim() || !isFinite(amt)) return
+    setSavingEdit(true)
+    try {
+      await updateTransaction(editingId, {
+        date:        editForm.date,
+        description: editForm.description.trim(),
+        category:    editForm.category,
+        amount:      amt,
+        vendor:      editForm.vendor.trim() || null,
+      })
+      setEditingId(null)
+      setEditForm(null)
+      await reload()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setSavingEdit(false)
     }
   }
 
@@ -586,9 +624,64 @@ export default function LedgerPage() {
                     const srcConfig = SOURCE_LABELS[tx.source]     || SOURCE_LABELS['Manual']
                     const isPos     = Number(tx.amount) >= 0
                     const pending   = tx.review_status === 'needs_review'
+                    const editing   = editingId === tx.id
+
+                    // ── Inline edit mode: every field editable ──────────────────
+                    if (editing) {
+                      return (
+                        <tr key={tx.id} className="bg-blue-50/60">
+                          <td className="px-3 pl-5 py-2 border-b border-blue-100">
+                            <input type="date" value={editForm.date}
+                              onChange={e => setEditForm(f => ({ ...f, date: e.target.value }))}
+                              className="text-xs border border-slate-300 rounded px-2 py-1 w-full focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                          </td>
+                          <td className="px-3 py-2 border-b border-blue-100">
+                            <input type="text" value={editForm.description}
+                              onChange={e => setEditForm(f => ({ ...f, description: e.target.value }))}
+                              placeholder="Description"
+                              className="text-xs border border-slate-300 rounded px-2 py-1 w-full mb-1 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                            <input type="text" value={editForm.vendor}
+                              onChange={e => setEditForm(f => ({ ...f, vendor: e.target.value }))}
+                              placeholder="Vendor / payee"
+                              className="text-xs border border-slate-300 rounded px-2 py-1 w-full focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                          </td>
+                          <td className="px-3 py-2 border-b border-blue-100">
+                            <select value={editForm.category}
+                              onChange={e => setEditForm(f => ({ ...f, category: e.target.value }))}
+                              className="text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
+                              {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                          </td>
+                          <td className="px-3 py-2 border-b border-blue-100 text-right">
+                            <input type="number" step="0.01" value={editForm.amount}
+                              onChange={e => setEditForm(f => ({ ...f, amount: e.target.value }))}
+                              title="Positive = money in, negative = money out"
+                              className="text-xs border border-slate-300 rounded px-2 py-1 w-24 text-right tabular-nums focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                          </td>
+                          <td className="px-3 py-2 border-b border-blue-100 text-[10px] text-slate-400">
+                            + in / − out
+                          </td>
+                          <td className="border-b border-blue-100" />
+                          <td className="px-4 py-2 pr-6 border-b border-blue-100">
+                            <div className="flex items-center gap-1 justify-end">
+                              <button onClick={saveEdit} disabled={savingEdit}
+                                className="p-1.5 rounded text-emerald-600 hover:bg-emerald-100 transition-colors disabled:opacity-50" title="Save">
+                                {savingEdit ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                              </button>
+                              <button onClick={cancelEdit}
+                                className="p-1.5 rounded text-slate-400 hover:bg-slate-100 transition-colors" title="Cancel">
+                                <X className="w-4 h-4" />
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    }
 
                     return (
-                      <tr key={tx.id} className={pending ? 'bg-amber-50/50' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}>
+                      <tr key={tx.id}
+                        onDoubleClick={() => startEdit(tx)}
+                        className={`group cursor-default ${pending ? 'bg-amber-50/50' : i % 2 === 0 ? 'bg-white' : 'bg-slate-50/60'}`}>
                         <td className="px-4 pl-6 py-3 border-b border-slate-100 text-slate-500 whitespace-nowrap text-xs">
                           {fmtDate(tx.date)}
                         </td>
@@ -652,9 +745,16 @@ export default function LedgerPage() {
                               </button>
                             )}
                             <button
+                              onClick={() => startEdit(tx)}
+                              className="p-1.5 rounded text-slate-300 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+                              title="Edit transaction"
+                            >
+                              <Pencil className="w-3.5 h-3.5" />
+                            </button>
+                            <button
                               onClick={() => handleDelete(tx.id)}
                               disabled={deleting === tx.id}
-                              className="p-1.5 rounded text-slate-200 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
+                              className="p-1.5 rounded text-slate-300 hover:text-red-500 hover:bg-red-50 transition-colors disabled:opacity-40"
                               title={pending ? 'Exclude (delete)' : 'Delete'}
                             >
                               {deleting === tx.id
