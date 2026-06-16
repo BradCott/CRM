@@ -247,6 +247,19 @@ export const bulkImportInvestors = (file) => {
   return req('POST', '/investors/bulk-import', fd)
 }
 
+// Allocations import (preview + confirm)
+export const previewAllocations = (file) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return req('POST', '/investors/allocations/preview', fd)
+}
+export const importAllocations = (file, mapping) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  fd.append('mapping', JSON.stringify(mapping))
+  return req('POST', '/investors/allocations/import', fd)
+}
+
 // Legacy alias kept for any existing code
 export const getInvestor = (id) => req('GET', `/investors/${id}`)
 

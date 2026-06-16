@@ -95,6 +95,146 @@ function findProperty({ city, keyword } = {}) {
   return null
 }
 
+// ── General allocations importer (preview + confirm) ──────────────────────────
+
+const normAlnum = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+
+/** Portfolio properties for matching + the mapping dropdown. */
+function portfolioProperties() {
+  return db.prepare(`
+    SELECT p.id, p.address, p.city, p.state, t.name AS tenant
+    FROM properties p LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE p.is_portfolio = 1
+    ORDER BY p.city, p.address
+  `).all()
+}
+
+/** Parse the "Investor Allocations" matrix generically (rows = investors, cols = properties). */
+function parseAllocations(workbook) {
+  const sheetName = workbook.SheetNames.find(n => n.toLowerCase().includes('allocat'))
+  if (!sheetName) return { error: 'No sheet whose name contains "Allocations" was found' }
+  const raw = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null })
+  if (raw.length < 2) return { error: 'The allocations sheet is empty' }
+
+  const header = raw[0] || []
+  const columns = []
+  for (let c = 1; c < header.length; c++) {
+    const label = cellStr(header[c])
+    if (!label) continue
+    if (SKIP_COLUMNS.some(s => label.toLowerCase().includes(s))) continue
+    columns.push({ index: c, label })
+  }
+
+  const investors = []
+  for (let r = 1; r < raw.length; r++) {
+    const row = raw[r] || []
+    const name = cellStr(row[0])
+    if (!name) continue
+    const low = name.toLowerCase()
+    if (low === 'total' || low === 'jmb' || low.includes('total equity')) continue
+    const cells = {}
+    let total = 0
+    for (const col of columns) {
+      const amt = cellNum(row[col.index])
+      if (amt) { cells[col.index] = amt; total += amt }
+    }
+    if (total > 0) investors.push({ name, cells, total })
+  }
+  return { sheetName, columns, investors }
+}
+
+/** Best-guess a portfolio property for a column label (city +3, tenant +2). */
+function autoMatchColumn(label, props) {
+  const L = (label || '').toLowerCase()
+  const Lal = normAlnum(label)
+  let best = null, bestScore = 0
+  for (const p of props) {
+    let score = 0
+    const city = (p.city || '').toLowerCase()
+    const tenant = (p.tenant || '').toLowerCase()
+    if (city && (L.includes(city) || (normAlnum(city) && Lal.includes(normAlnum(city))))) score += 3
+    if (tenant) {
+      const tAl = normAlnum(tenant)
+      if (tAl && (Lal.includes(tAl) || tAl.includes(Lal))) score += 2
+      else if (L.split(/\W+/).some(w => w.length > 2 && tenant.includes(w))) score += 1
+    }
+    if (score > bestScore) { bestScore = score; best = p }
+  }
+  return bestScore >= 2 ? best.id : null
+}
+
+// POST /api/investors/allocations/preview — parse + auto-match, no writes
+router.post('/allocations/preview', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  try {
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const parsed = parseAllocations(wb)
+    if (parsed.error) return res.status(400).json({ error: parsed.error })
+    const props = portfolioProperties()
+    res.json({
+      sheetName: parsed.sheetName,
+      columns: parsed.columns.map(c => ({ ...c, matchedPropertyId: autoMatchColumn(c.label, props) })),
+      investors: parsed.investors.map(i => ({ name: i.name, total: i.total, positions: Object.keys(i.cells).length })),
+      properties: props.map(p => ({
+        id: p.id,
+        label: `${p.address}${p.city ? `, ${p.city}` : ''}${p.state ? `, ${p.state}` : ''}${p.tenant ? ` — ${p.tenant}` : ''}`,
+      })),
+    })
+  } catch (e) {
+    console.error('[investors] allocations preview:', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// POST /api/investors/allocations/import — create investors + upsert equity links
+router.post('/allocations/import', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  let mapping = {}
+  try { mapping = JSON.parse(req.body.mapping || '{}') } catch {}
+  try {
+    const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+    const parsed = parseAllocations(wb)
+    if (parsed.error) return res.status(400).json({ error: parsed.error })
+
+    // Match against existing master investors by normalized name
+    const existing = db.prepare('SELECT id, name FROM investors').all()
+    const byNorm = new Map(existing.map(r => [normalizeName(r.name), r.id]))
+
+    const createInvestor = db.prepare('INSERT INTO investors (name, is_incomplete) VALUES (?, 0)')
+    const upsertLink = db.prepare(`
+      INSERT INTO investor_property_links (investor_id, property_id, contribution, preferred_return_rate)
+      VALUES (?, ?, ?, 15)
+      ON CONFLICT(investor_id, property_id) DO UPDATE SET contribution = excluded.contribution
+    `)
+
+    let investorsCreated = 0, investorsMatched = 0, linksUpserted = 0, skipped = 0
+    const run = db.transaction(() => {
+      for (const inv of parsed.investors) {
+        const norm = normalizeName(inv.name)
+        let id = byNorm.get(norm)
+        if (id) investorsMatched++
+        else {
+          id = createInvestor.run(inv.name).lastInsertRowid
+          byNorm.set(norm, id)
+          investorsCreated++
+        }
+        for (const [colIdx, amount] of Object.entries(inv.cells)) {
+          const propId = mapping[colIdx]
+          if (!propId) { skipped++; continue }
+          upsertLink.run(id, Number(propId), amount)
+          linksUpserted++
+        }
+      }
+    })
+    run()
+
+    res.json({ ok: true, investorsCreated, investorsMatched, linksUpserted, skipped })
+  } catch (e) {
+    console.error('[investors] allocations import:', e.message)
+    res.status(500).json({ error: e.message })
+  }
+})
+
 /** Main bulk-import orchestration — reads ONLY the "Investor Allocataions" sheet. */
 function runBulkImport(workbook) {
   const summary = {

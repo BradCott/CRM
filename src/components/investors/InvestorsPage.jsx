@@ -6,6 +6,7 @@ import {
   XCircle, Info,
 } from 'lucide-react'
 import { getCRMInvestors, createInvestor, updateInvestor, deleteInvestorRecord, bulkImportInvestors } from '../../api/client'
+import AllocationsImportModal from './AllocationsImportModal'
 import TopBar from '../layout/TopBar'
 import Button from '../ui/Button'
 import Modal from '../ui/Modal'
@@ -112,7 +113,7 @@ export default function InvestorsPage() {
               {ENTITY_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
             </select>
             <Button variant="secondary" onClick={() => setShowBulkImport(true)}>
-              <Upload className="w-4 h-4" /> Bulk Import
+              <Upload className="w-4 h-4" /> Import Allocations
             </Button>
             <Button onClick={() => { setEditTarget(null); setShowForm(true) }}>
               <Plus className="w-4 h-4" /> Add Investor
@@ -261,8 +262,9 @@ export default function InvestorsPage() {
       {openMenu && <div className="fixed inset-0 z-0" onClick={() => setOpenMenu(null)} />}
 
       {showBulkImport && (
-        <BulkImportModal
-          onClose={() => { setShowBulkImport(false); load(search, entityFilter, page) }}
+        <AllocationsImportModal
+          onClose={() => setShowBulkImport(false)}
+          onDone={() => load(search, entityFilter, page)}
         />
       )}
     </div>
