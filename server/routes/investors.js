@@ -129,9 +129,12 @@ function parseAllocations(workbook) {
   for (let r = 1; r < raw.length; r++) {
     const row = raw[r] || []
     const name = cellStr(row[0])
+    // Stop at the totals row — everything below it (address legend etc.) is not investor data
+    if (name) {
+      const low = name.toLowerCase()
+      if (low.startsWith('total') || low.includes('grand total') || low.includes('percentage')) break
+    }
     if (!name) continue
-    const low = name.toLowerCase()
-    if (low === 'total' || low === 'jmb' || low.includes('total equity')) continue
     const cells = {}
     let total = 0
     for (const col of columns) {
