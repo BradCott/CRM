@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle, Download, Database } from 'lucide-react'
-import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, getBackupInfo, backupDbUrl, exportJsonUrl } from '../../api/client'
+import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl } from '../../api/client'
 import Button from '../ui/Button'
 
 export default function SettingsPage() {
@@ -213,20 +213,24 @@ export default function SettingsPage() {
               </div>
 
               <div className="flex flex-wrap gap-2">
+                <a href={exportExcelUrl} download
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors">
+                  <Download className="w-4 h-4" /> Export to Excel (.xlsx)
+                </a>
                 <a href={backupDbUrl} download
-                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
-                  <Download className="w-4 h-4" /> Download full backup (.db)
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 border border-slate-200 hover:bg-slate-50 rounded-lg transition-colors">
+                  <Download className="w-4 h-4" /> Full backup (.db)
                 </a>
                 <a href={exportJsonUrl} download
                   className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 border border-slate-200 hover:bg-slate-50 rounded-lg transition-colors">
-                  <Download className="w-4 h-4" /> Export all data (.json)
+                  <Download className="w-4 h-4" /> Data (.json)
                 </a>
               </div>
 
               <p className="text-xs text-slate-400 leading-relaxed">
-                The <strong>.db</strong> file is a complete, restorable SQLite database — save it somewhere safe (Google Drive, external disk).
-                The <strong>.json</strong> file is human-readable and openable in any text editor or imported elsewhere.
-                Do this periodically; both files contain all data, so store them securely.
+                <strong>Excel</strong> is the easiest to read — one tab per data type, with a "Properties + Owners" tab listing every property next to its owner.
+                The <strong>.db</strong> file is a complete, restorable database backup (store it safely — it can't be opened directly).
+                The <strong>.json</strong> file is a plain-text copy. Do this periodically and keep the file somewhere secure.
               </p>
             </div>
           </Card>

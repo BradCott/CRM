@@ -132,6 +132,7 @@ export const getTreasury                   = () => req('GET', '/dashboard/treasu
 export const getBackupInfo    = ()     => req('GET', '/admin/backup/info')
 export const backupDbUrl      = '/api/admin/backup'
 export const exportJsonUrl    = '/api/admin/export-json'
+export const exportExcelUrl   = '/api/admin/export-excel'
 
 export const getGoogleStatus  = ()     => req('GET',    '/auth/google/status')
 export const disconnectGoogle = ()     => req('DELETE', '/auth/google')
