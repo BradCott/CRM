@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle } from 'lucide-react'
-import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher } from '../../api/client'
+import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle, Download, Database } from 'lucide-react'
+import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, getBackupInfo, backupDbUrl, exportJsonUrl } from '../../api/client'
 import Button from '../ui/Button'
 
 export default function SettingsPage() {
@@ -9,6 +9,9 @@ export default function SettingsPage() {
   const [msg, setMsg]         = useState(null)
   const [diag, setDiag]       = useState(null)
   const [diagLoading, setDiagLoading] = useState(false)
+  const [backupInfo, setBackupInfo] = useState(null)
+
+  useEffect(() => { getBackupInfo().then(setBackupInfo).catch(() => {}) }, [])
 
   async function handleTestNow(reset = false) {
     setDiagLoading(true)
@@ -191,6 +194,41 @@ export default function SettingsPage() {
                 </Button>
               </div>
             )}
+          </Card>
+
+          {/* Data & Backup */}
+          <Card title="Data & Backup" subtitle="Download a complete copy of all CRM data to keep an off-site backup.">
+            <div className="space-y-4">
+              <div className="flex items-start gap-3 p-4 bg-slate-50 rounded-xl border border-slate-100">
+                <Database className="w-4 h-4 text-slate-500 mt-0.5 shrink-0" />
+                <div className="text-sm text-slate-600">
+                  <p className="font-medium text-slate-800 mb-0.5">Everything in one file</p>
+                  <p className="text-xs leading-relaxed">
+                    Includes every property, person, deal, investor, accounting transaction, campaign — all tables.
+                    {backupInfo && (
+                      <> Currently <strong>{backupInfo.totalRows.toLocaleString()}</strong> records across {backupInfo.tableCount} tables.</>
+                    )}
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                <a href={backupDbUrl} download
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-lg transition-colors">
+                  <Download className="w-4 h-4" /> Download full backup (.db)
+                </a>
+                <a href={exportJsonUrl} download
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-700 border border-slate-200 hover:bg-slate-50 rounded-lg transition-colors">
+                  <Download className="w-4 h-4" /> Export all data (.json)
+                </a>
+              </div>
+
+              <p className="text-xs text-slate-400 leading-relaxed">
+                The <strong>.db</strong> file is a complete, restorable SQLite database — save it somewhere safe (Google Drive, external disk).
+                The <strong>.json</strong> file is human-readable and openable in any text editor or imported elsewhere.
+                Do this periodically; both files contain all data, so store them securely.
+              </p>
+            </div>
           </Card>
 
           {/* Chrome Extension */}

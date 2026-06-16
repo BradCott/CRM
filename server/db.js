@@ -695,4 +695,5 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_properties_year_purchased  ON properties(year_purchased);
 `)
 
+export { DB_PATH, DATA_DIR }
 export default db

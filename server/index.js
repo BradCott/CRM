@@ -25,6 +25,7 @@ import managementRouter     from './routes/management.js'
 import handwryttenRouter   from './routes/handwrytten.js'
 import playsRouter          from './routes/plays.js'
 import assistantRouter      from './routes/assistant.js'
+import backupRouter         from './routes/backup.js'
 
 import { requireAuth, requireWrite, requireRole } from './middleware/auth.js'
 
@@ -54,6 +55,7 @@ app.use('/api/auth', authRouter)
 // ── Protected API routes (requireAuth applied per-route, not globally) ────────
 // Admin-only
 app.use('/api/admin/users',      requireAuth, requireRole('admin'), usersRouter)
+app.use('/api/admin',            requireAuth, requireRole('admin'), backupRouter)
 
 // Admin + full_agent only
 app.use('/api/accounting',       requireAuth, requireRole('admin', 'full_agent'), requireWrite, accountingRouter)
