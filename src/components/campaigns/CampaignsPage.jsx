@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, Fragment } from 'react'
 import { Mail, Loader2, ChevronDown, ChevronRight, CheckCircle, AlertCircle, Clock } from 'lucide-react'
 import { getHandwryttenCampaigns, getHandwryttenSends } from '../../api/client'
 import TopBar from '../layout/TopBar'
@@ -100,22 +100,34 @@ function CampaignRow({ campaign }) {
                   </thead>
                   <tbody>
                     {sends.map(s => (
-                      <tr key={s.id} className="border-b border-slate-50">
-                        <td className="px-3 py-2 text-slate-800 font-medium">{s.contact_name || '—'}</td>
-                        <td className="px-3 py-2 text-slate-500">
-                          {[s.contact_city, s.contact_state].filter(Boolean).join(', ') || '—'}
-                        </td>
-                        <td className="px-3 py-2 text-slate-500">
-                          {s.tenant_brand_name && (
-                            <span className="text-xs bg-blue-50 text-blue-700 font-semibold px-1.5 py-0.5 rounded-full mr-1">
-                              {s.tenant_brand_name}
-                            </span>
-                          )}
-                          {s.property_city && `${s.property_city}, ${s.property_state}`}
-                        </td>
-                        <td className="px-3 py-2"><StatusBadge status={s.status} /></td>
-                        <td className="px-3 py-2 text-slate-400 font-mono">{s.handwrytten_order_id || '—'}</td>
-                      </tr>
+                      <Fragment key={s.id}>
+                        <tr className={s.status === 'failed' ? '' : 'border-b border-slate-50'}>
+                          <td className="px-3 py-2 text-slate-800 font-medium">{s.contact_name || '—'}</td>
+                          <td className="px-3 py-2 text-slate-500">
+                            {[s.contact_city, s.contact_state].filter(Boolean).join(', ') || '—'}
+                          </td>
+                          <td className="px-3 py-2 text-slate-500">
+                            {s.tenant_brand_name && (
+                              <span className="text-xs bg-blue-50 text-blue-700 font-semibold px-1.5 py-0.5 rounded-full mr-1">
+                                {s.tenant_brand_name}
+                              </span>
+                            )}
+                            {s.property_city && `${s.property_city}, ${s.property_state}`}
+                          </td>
+                          <td className="px-3 py-2"><StatusBadge status={s.status} /></td>
+                          <td className="px-3 py-2 text-slate-400 font-mono">{s.handwrytten_order_id || '—'}</td>
+                        </tr>
+                        {s.status === 'failed' && s.error_message && (
+                          <tr className="border-b border-slate-50">
+                            <td colSpan={5} className="px-3 pb-2">
+                              <div className="flex items-start gap-1.5 text-[11px] text-red-700 bg-red-50 border border-red-100 rounded-lg px-2.5 py-1.5">
+                                <AlertCircle className="w-3 h-3 mt-0.5 shrink-0" />
+                                <span className="break-words">{s.error_message}</span>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
                     ))}
                   </tbody>
                 </table>
