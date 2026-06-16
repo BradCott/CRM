@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Download, Save, Trash2, BookmarkCheck, ChevronUp, ChevronDown, SlidersHorizontal, X } from 'lucide-react'
+import { Download, Save, Trash2, BookmarkCheck, ChevronUp, ChevronDown, SlidersHorizontal, X, Loader2 } from 'lucide-react'
 import MultiSelect from '../ui/MultiSelect'
 import {
   getFilterOptions, getReports, exportReportUrl,
@@ -173,11 +173,18 @@ export default function ReportsPage() {
       <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200 bg-white shrink-0">
         <div>
           <h1 className="text-xl font-bold text-slate-900">Reports</h1>
-          {total > 0 && (
-            <p className="text-sm text-slate-500 mt-0.5">
-              {total.toLocaleString()} properties
-            </p>
-          )}
+          <p className="text-sm mt-0.5 flex items-center gap-1.5">
+            {loading ? (
+              <span className="flex items-center gap-1.5 text-slate-400">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Counting…
+              </span>
+            ) : (
+              <span className="text-slate-500">
+                <span className="font-semibold text-slate-800">{total.toLocaleString()}</span>{' '}
+                propert{total === 1 ? 'y' : 'ies'}{hasFilters ? ' match your filters' : ''}
+              </span>
+            )}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           {hasFilters && (
