@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { X, Mail, Loader2, CheckCircle, AlertCircle, ChevronRight, Users, Search } from 'lucide-react'
 import {
   getHandwryttenCards,
@@ -16,7 +16,8 @@ const DEFAULT_TEMPLATE =
   `Even if you're just curious what it might be worth, I'm happy to run numbers. ` +
   `Call, text, or email anytime.`
 
-const CHAR_MAX  = 1000
+const CHAR_MAX  = 500   // Handwrytten card limit (applies to the final, merged message + signature)
+const SIG_SUFFIX = ' <sig:1427BC offset=1>'   // appended server-side to every letter
 const COST_LOW  = 3.00
 const COST_HIGH = 4.00
 
@@ -396,7 +397,20 @@ export default function BulkSendModal({ onClose, onDone }) {
     }
   }
 
-  const overLimit = message.length > CHAR_MAX
+  // The real limit applies to the FINAL message: merge fields expanded + signature.
+  // Compute the worst-case length across recipients so no single letter exceeds 500.
+  const { finalMaxLen, overBy } = useMemo(() => {
+    const sample = recipients.slice(0, 1000)
+    const lengths = sample.length
+      ? sample.map(r => applyMerge(message, r, {
+          tenant_brand_name: r.tenant, city: r.property_city, state: r.property_state,
+        }).length + SIG_SUFFIX.length)
+      : [message.length + SIG_SUFFIX.length]
+    const max = Math.max(...lengths)
+    return { finalMaxLen: max, overBy: Math.max(0, max - CHAR_MAX) }
+  }, [message, recipients])
+
+  const overLimit = finalMaxLen > CHAR_MAX
 
   // Active filter summary for display
   const activeFilterCount = [
@@ -619,8 +633,8 @@ export default function BulkSendModal({ onClose, onDone }) {
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Message Template</label>
-                  <span className={`text-xs font-medium ${message.length > CHAR_MAX ? 'text-red-600' : 'text-slate-400'}`}>
-                    {message.length}/{CHAR_MAX}
+                  <span className={`text-xs font-medium ${overLimit ? 'text-red-600' : finalMaxLen > CHAR_MAX - 40 ? 'text-amber-600' : 'text-slate-400'}`}>
+                    {finalMaxLen}/{CHAR_MAX} sent
                   </span>
                 </div>
                 <textarea
@@ -631,6 +645,16 @@ export default function BulkSendModal({ onClose, onDone }) {
                     overLimit ? 'border-red-300 bg-red-50' : 'border-slate-200'
                   }`}
                 />
+                {overLimit ? (
+                  <div className="mt-1.5 flex items-start gap-1.5 text-xs text-red-700 bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5">
+                    <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+                    <span><span className="font-semibold">{overBy} character{overBy !== 1 ? 's' : ''} over the 500 limit.</span> This counts the longest letter once names, tenant, city and the signature are filled in. Trim about {overBy} characters to send.</span>
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-slate-400 mt-1">
+                    Counts the longest letter with merge fields and signature filled in. Limit is 500 (Handwrytten card max).
+                  </p>
+                )}
                 <p className="text-xs text-slate-400 mt-1">
                   Merge fields: <code className="bg-slate-100 px-1 rounded">{'{first_name}'}</code>{' '}
                   <code className="bg-slate-100 px-1 rounded">{'{tenant}'}</code>{' '}
