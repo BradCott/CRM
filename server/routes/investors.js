@@ -126,13 +126,14 @@ function parseAllocations(workbook) {
   }
 
   const investors = []
+  let stopRow = raw.length
   for (let r = 1; r < raw.length; r++) {
     const row = raw[r] || []
     const name = cellStr(row[0])
-    // Stop at the totals row — everything below it (address legend etc.) is not investor data
+    // Stop at the totals row — everything below it (address legend etc.) is not investor matrix data
     if (name) {
       const low = name.toLowerCase()
-      if (low.startsWith('total') || low.includes('grand total') || low.includes('percentage')) break
+      if (low.startsWith('total') || low.includes('grand total') || low.includes('percentage')) { stopRow = r; break }
     }
     if (!name) continue
     const cells = {}
@@ -143,7 +144,10 @@ function parseAllocations(workbook) {
     }
     if (total > 0) investors.push({ name, cells, total })
   }
-  return { sheetName, columns, investors }
+
+  // The block below the totals row is an address legend (name / street / city-state-zip)
+  const legend = parseAddressLegend(raw, stopRow + 1)
+  return { sheetName, columns, investors, legend }
 }
 
 /** Best-guess a portfolio property for a column label (city +3, tenant +2). */
@@ -166,6 +170,56 @@ function autoMatchColumn(label, props) {
   return bestScore >= 2 ? best.id : null
 }
 
+/** Parse the address legend below the matrix into { name, address, city, state, zip } entries. */
+function parseAddressLegend(raw, startRow) {
+  const isCityState = s => /,\s*[A-Z]{2}\b/.test(s)
+  const looksStreet = s => /^\d/.test(s) ||
+    /\b(st|street|ave|avenue|rd|road|ln|lane|dr|drive|ct|court|blvd|way|circle|cir|place|pl|unit|ste|suite|trail|hwy|pkwy|apt)\b/i.test(s)
+  const entries = []
+  let cur = null
+  for (let r = startRow; r < raw.length; r++) {
+    const s = cellStr((raw[r] || [])[0])
+    if (!s) continue
+    if (isCityState(s)) {
+      if (cur) {
+        const m = s.match(/^(.*?),\s*([A-Za-z]{2})\b\s*(\d{5})?/)
+        if (m) { cur.city = m[1].trim(); cur.state = m[2].toUpperCase(); cur.zip = m[3] || null }
+        else cur.city = s
+      }
+    } else if (looksStreet(s)) {
+      if (cur) cur.address = cur.address ? `${cur.address}, ${s}` : s
+    } else {
+      cur = { name: s, address: null, city: null, state: null, zip: null }
+      entries.push(cur)
+    }
+  }
+  return entries.filter(e => e.address || e.city)
+}
+
+/** Guess entity type from a name. */
+function deriveEntityType(name) {
+  const n = (name || '').toLowerCase()
+  if (/\btrust\b/.test(n)) return 'Trust'
+  if (/\b(llc|inc|incorporated|corp|company|investments?|capital|holdings|partners|group|consolidated|brothers|properties|ventures|development)\b/.test(n)) return 'LLC'
+  return 'Individual'
+}
+
+const ENTITY_STOP = new Set(['the','llc','inc','incorporated','corp','company','co','investment','investments','capital','holdings','partners','group','consolidated','design','development','brothers','revocable','joint','family','trust','and','ventures','properties','re'])
+function nameTokens(name) {
+  return normalizeName(name).split(/\s+/).filter(w => w && !ENTITY_STOP.has(w))
+}
+/** Match a legend entry name to one of the imported investors by shared significant tokens. */
+function matchLegendToInvestor(legendName, investors) {
+  const lt = new Set(nameTokens(legendName))
+  if (lt.size === 0) return null
+  let best = null, bestScore = 0
+  for (const inv of investors) {
+    const overlap = nameTokens(inv.name).filter(w => lt.has(w)).length
+    if (overlap > bestScore) { bestScore = overlap; best = inv }
+  }
+  return bestScore >= 1 ? best : null
+}
+
 // POST /api/investors/allocations/preview — parse + auto-match, no writes
 router.post('/allocations/preview', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
@@ -174,8 +228,13 @@ router.post('/allocations/preview', upload.single('file'), (req, res) => {
     const parsed = parseAllocations(wb)
     if (parsed.error) return res.status(400).json({ error: parsed.error })
     const props = portfolioProperties()
+    let addressMatches = 0
+    for (const e of parsed.legend) {
+      if (matchLegendToInvestor(e.name, parsed.investors) && (e.address || e.city)) addressMatches++
+    }
     res.json({
       sheetName: parsed.sheetName,
+      addressMatches,
       columns: parsed.columns.map(c => ({ ...c, matchedPropertyId: autoMatchColumn(c.label, props) })),
       investors: parsed.investors.map(i => ({ name: i.name, total: i.total, positions: Object.keys(i.cells).length })),
       properties: props.map(p => ({
@@ -203,24 +262,33 @@ router.post('/allocations/import', upload.single('file'), (req, res) => {
     const existing = db.prepare('SELECT id, name FROM investors').all()
     const byNorm = new Map(existing.map(r => [normalizeName(r.name), r.id]))
 
-    const createInvestor = db.prepare('INSERT INTO investors (name, is_incomplete) VALUES (?, 0)')
+    const createInvestor = db.prepare('INSERT INTO investors (name, entity_type, is_incomplete) VALUES (?, ?, 0)')
     const upsertLink = db.prepare(`
       INSERT INTO investor_property_links (investor_id, property_id, contribution, preferred_return_rate)
       VALUES (?, ?, ?, 15)
       ON CONFLICT(investor_id, property_id) DO UPDATE SET contribution = excluded.contribution
     `)
+    // Fill address fields only where empty (don't clobber existing data)
+    const updAddr = db.prepare(`
+      UPDATE investors SET
+        address = COALESCE(address, ?), city = COALESCE(city, ?),
+        state = COALESCE(state, ?), zip = COALESCE(zip, ?)
+      WHERE id = ?
+    `)
 
-    let investorsCreated = 0, investorsMatched = 0, linksUpserted = 0, skipped = 0
+    let investorsCreated = 0, investorsMatched = 0, linksUpserted = 0, skipped = 0, addressesApplied = 0
+    const imported = []
     const run = db.transaction(() => {
       for (const inv of parsed.investors) {
         const norm = normalizeName(inv.name)
         let id = byNorm.get(norm)
         if (id) investorsMatched++
         else {
-          id = createInvestor.run(inv.name).lastInsertRowid
+          id = createInvestor.run(inv.name, deriveEntityType(inv.name)).lastInsertRowid
           byNorm.set(norm, id)
           investorsCreated++
         }
+        imported.push({ id, name: inv.name })
         for (const [colIdx, amount] of Object.entries(inv.cells)) {
           const propId = mapping[colIdx]
           if (!propId) { skipped++; continue }
@@ -228,10 +296,19 @@ router.post('/allocations/import', upload.single('file'), (req, res) => {
           linksUpserted++
         }
       }
+
+      // Enrich with mailing addresses from the legend
+      for (const entry of parsed.legend) {
+        const m = matchLegendToInvestor(entry.name, imported)
+        if (m && (entry.address || entry.city)) {
+          updAddr.run(entry.address, entry.city, entry.state, entry.zip, m.id)
+          addressesApplied++
+        }
+      }
     })
     run()
 
-    res.json({ ok: true, investorsCreated, investorsMatched, linksUpserted, skipped })
+    res.json({ ok: true, investorsCreated, investorsMatched, linksUpserted, skipped, addressesApplied })
   } catch (e) {
     console.error('[investors] allocations import:', e.message)
     res.status(500).json({ error: e.message })

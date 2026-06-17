@@ -143,6 +143,11 @@ export default function AllocationsImportModal({ onClose, onDone }) {
                     {unmappedCount} column{unmappedCount !== 1 ? 's are' : ' is'} unmapped — those contributions will be skipped. Add the property to your portfolio first if you want to include it.
                   </p>
                 )}
+                {preview.addressMatches > 0 && (
+                  <p className="text-xs text-emerald-600 mt-1.5">
+                    Mailing addresses from the sheet will be attached to {preview.addressMatches} of these investors.
+                  </p>
+                )}
               </div>
 
               {/* Investor list */}
@@ -170,8 +175,11 @@ export default function AllocationsImportModal({ onClose, onDone }) {
                 <Stat label="Matched existing" value={result.investorsMatched} />
                 <Stat label="Equity positions" value={result.linksUpserted} color="text-emerald-700" />
               </div>
+              {result.addressesApplied > 0 && (
+                <p className="text-xs text-slate-500 mt-4">{result.addressesApplied} mailing address{result.addressesApplied !== 1 ? 'es' : ''} attached from the sheet.</p>
+              )}
               {result.skipped > 0 && (
-                <p className="text-xs text-amber-600 mt-4">{result.skipped} contribution{result.skipped !== 1 ? 's' : ''} skipped (unmapped columns).</p>
+                <p className="text-xs text-amber-600 mt-1">{result.skipped} contribution{result.skipped !== 1 ? 's' : ''} skipped (unmapped columns).</p>
               )}
             </div>
           )}
