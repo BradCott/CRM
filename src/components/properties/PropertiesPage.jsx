@@ -186,6 +186,14 @@ const COLUMN_DEFS = {
     label: 'Year Built',
     td(p, k) { return <td key={k} className="px-4 py-3 text-slate-700">{p.year_built||<span className="text-slate-300">—</span>}</td> },
   },
+  date_added: {
+    label: 'Date Added',
+    td(p, k) { return <td key={k} className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{fmtDate(p.created_at?.slice(0,10))||<span className="text-slate-300">—</span>}</td> },
+  },
+  last_updated: {
+    label: 'Last Updated',
+    td(p, k) { return <td key={k} className="px-4 py-3 text-xs text-slate-500 whitespace-nowrap">{fmtDate(p.updated_at?.slice(0,10))||<span className="text-slate-300">—</span>}</td> },
+  },
 }
 
 // ── Multi-Select Dropdown ─────────────────────────────────────────────────────
@@ -274,6 +282,7 @@ const PRESET_VIEWS = [
   { id: 'prospecting', label: 'Prospecting', cols: ['address','tenant','state','owner','owner_address','lease_end','list_price'] },
   { id: 'financials',  label: 'Financials',  cols: ['address','tenant','cap_rate','noi','annual_rent','list_price'] },
   { id: 'research',    label: 'Research',    cols: ['address','tenant','property_type','year_built','building_size','state'] },
+  { id: 'timeline',    label: 'Timeline',    cols: ['address','tenant','owner','date_added','last_updated'] },
 ]
 
 // ── Main component ────────────────────────────────────────────────────────────

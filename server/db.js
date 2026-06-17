@@ -384,6 +384,44 @@ const migrations = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_sched_property ON loan_schedules(property_id)`,
   `CREATE INDEX IF NOT EXISTS idx_sched_rows ON loan_schedule_rows(schedule_id, due_date)`,
+
+  // ── "Date added" / "last updated" tracking on people + properties ───────────
+  // Columns added without a default (SQLite forbids expression defaults in ALTER
+  // ADD COLUMN). Existing rows are backfilled once; new rows + every update are
+  // auto-stamped by triggers below, so no insert/update route needs to change.
+  `ALTER TABLE people     ADD COLUMN created_at TEXT`,
+  `ALTER TABLE people     ADD COLUMN updated_at TEXT`,
+  `ALTER TABLE properties ADD COLUMN created_at TEXT`,
+  `ALTER TABLE properties ADD COLUMN updated_at TEXT`,
+  `UPDATE people     SET created_at = datetime('now'), updated_at = datetime('now') WHERE created_at IS NULL`,
+  `UPDATE properties SET created_at = datetime('now'), updated_at = datetime('now') WHERE created_at IS NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_people_created     ON people(created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_people_updated     ON people(updated_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_properties_created ON properties(created_at)`,
+  `CREATE INDEX IF NOT EXISTS idx_properties_updated ON properties(updated_at)`,
+  // Stamp created_at/updated_at on insert when not supplied.
+  `CREATE TRIGGER IF NOT EXISTS people_stamp_insert AFTER INSERT ON people
+     BEGIN
+       UPDATE people SET created_at = COALESCE(NEW.created_at, datetime('now')),
+                         updated_at = COALESCE(NEW.updated_at, datetime('now'))
+       WHERE id = NEW.id;
+     END`,
+  `CREATE TRIGGER IF NOT EXISTS properties_stamp_insert AFTER INSERT ON properties
+     BEGIN
+       UPDATE properties SET created_at = COALESCE(NEW.created_at, datetime('now')),
+                             updated_at = COALESCE(NEW.updated_at, datetime('now'))
+       WHERE id = NEW.id;
+     END`,
+  // Bump updated_at on every update (recursive_triggers is OFF, so the inner
+  // UPDATE here does not re-fire the trigger).
+  `CREATE TRIGGER IF NOT EXISTS people_stamp_update AFTER UPDATE ON people
+     BEGIN
+       UPDATE people SET updated_at = datetime('now') WHERE id = NEW.id;
+     END`,
+  `CREATE TRIGGER IF NOT EXISTS properties_stamp_update AFTER UPDATE ON properties
+     BEGIN
+       UPDATE properties SET updated_at = datetime('now') WHERE id = NEW.id;
+     END`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

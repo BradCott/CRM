@@ -412,6 +412,14 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
           </Section>
         )}
 
+        {(data.created_at || data.updated_at) && (
+          <p className="px-1 pt-4 text-xs text-slate-400">
+            {data.created_at && <>Added {new Date(String(data.created_at).replace(' ', 'T') + 'Z').toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</>}
+            {data.created_at && data.updated_at && ' · '}
+            {data.updated_at && <>Last updated {new Date(String(data.updated_at).replace(' ', 'T') + 'Z').toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })}</>}
+          </p>
+        )}
+
         {/* Bottom padding */}
         <div className="h-8" />
       </div>

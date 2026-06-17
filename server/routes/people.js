@@ -41,10 +41,30 @@ router.get('/', (req, res) => {
     params.push(owner_type)
   }
 
+  // Date-added / last-updated range filters (YYYY-MM-DD). "Before" is inclusive.
+  const dateRanges = [
+    ['addedAfter',    'p.created_at', '>='],
+    ['addedBefore',   'p.created_at', '<'],
+    ['updatedAfter',  'p.updated_at', '>='],
+    ['updatedBefore', 'p.updated_at', '<'],
+  ]
+  for (const [key, col, op] of dateRanges) {
+    const v = req.query[key]
+    if (!v) continue
+    if (op === '<') { conditions.push(`${col} < date(?, '+1 day')`); params.push(v) }
+    else            { conditions.push(`${col} >= date(?)`);          params.push(v) }
+  }
+
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
 
+  // Sorting — whitelisted columns only
+  const SORT_MAP = { name: 'p.name', date_added: 'p.created_at', last_updated: 'p.updated_at' }
+  const sortExpr  = SORT_MAP[req.query.sortCol] || 'p.name'
+  const direction = req.query.sortDir === 'desc' ? 'DESC' : 'ASC'
+  const orderBy   = `ORDER BY ${sortExpr} ${direction}`
+
   const total = db.prepare(`SELECT COUNT(*) AS n FROM people p ${where}`).get(...params).n
-  const rows  = db.prepare(`${BASE_SELECT} ${where} ORDER BY p.name LIMIT ? OFFSET ?`).all(...params, parseInt(limit), parseInt(offset))
+  const rows  = db.prepare(`${BASE_SELECT} ${where} ${orderBy} LIMIT ? OFFSET ?`).all(...params, parseInt(limit), parseInt(offset))
 
   res.json({ total, rows })
 })

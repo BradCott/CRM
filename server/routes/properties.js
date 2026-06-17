@@ -56,6 +56,26 @@ const SORT_MAP = {
   list_price:     'CAST(p.list_price AS REAL)',
   building_size:  'CAST(p.building_size AS REAL)',
   year_built:     'CAST(p.year_built AS INTEGER)',
+  date_added:     'p.created_at',
+  last_updated:   'p.updated_at',
+}
+
+// Apply created_at / updated_at range filters from query params.
+// Accepts addedAfter / addedBefore / updatedAfter / updatedBefore (YYYY-MM-DD).
+// "Before" is treated as inclusive of the whole day.
+function applyDateFilters(query, conditions, params) {
+  const ranges = [
+    ['addedAfter',    'p.created_at', '>='],
+    ['addedBefore',   'p.created_at', '<'],
+    ['updatedAfter',  'p.updated_at', '>='],
+    ['updatedBefore', 'p.updated_at', '<'],
+  ]
+  for (const [key, col, op] of ranges) {
+    const v = query[key]
+    if (!v) continue
+    if (op === '<') { conditions.push(`${col} < date(?, '+1 day')`); params.push(v) }
+    else            { conditions.push(`${col} >= date(?)`);          params.push(v) }
+  }
 }
 
 // GET /api/properties?search=&tenants=CVS,Walgreens&states=TN,GA&needsReview=1&limit=50&offset=0&sortCol=address&sortDir=asc
@@ -112,6 +132,8 @@ router.get('/', (req, res) => {
     conditions.push(`p.is_portfolio = ?`)
     params.push(req.query.portfolio === '1' ? 1 : 0)
   }
+
+  applyDateFilters(req.query, conditions, params)
 
   const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
 

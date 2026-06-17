@@ -16,6 +16,10 @@ const DEFAULT_FILTERS = {
   owner_type: '',   // '' | 'person' | 'company'
   dnc: '',          // '' | 'exclude' | 'only'
   has_email: '',    // '' | '1'
+  added_after: '',
+  added_before: '',
+  updated_after: '',
+  updated_before: '',
   search: '',
 }
 
@@ -35,6 +39,8 @@ const COL_DEFS = [
   { key: 'list_price',     label: 'List Price',     sortable: true },
   { key: 'annual_rent',    label: 'Ann. Rent',      sortable: true },
   { key: 'owner_name',     label: 'Owner',          sortable: true },
+  { key: 'date_added',     label: 'Added',          sortable: true },
+  { key: 'last_updated',   label: 'Updated',        sortable: true },
 ]
 
 function filtersToParams(f) {
@@ -48,8 +54,17 @@ function filtersToParams(f) {
   if (f.owner_type)            p.owner_type = f.owner_type
   if (f.dnc)                   p.dnc = f.dnc
   if (f.has_email === '1')     p.has_email = '1'
+  if (f.added_after)           p.added_after = f.added_after
+  if (f.added_before)          p.added_before = f.added_before
+  if (f.updated_after)         p.updated_after = f.updated_after
+  if (f.updated_before)        p.updated_before = f.updated_before
   if (f.search)                p.search = f.search
   return p
+}
+
+function fmtDate(iso) {
+  if (!iso) return null
+  return new Date(String(iso).replace(' ', 'T') + 'Z').toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
 }
 
 function fmt(val, key) {
@@ -58,6 +73,7 @@ function fmt(val, key) {
   if (key === 'noi' || key === 'list_price' || key === 'annual_rent') {
     return `$${Number(val).toLocaleString()}`
   }
+  if (key === 'date_added' || key === 'last_updated') return fmtDate(val) || <span className="text-slate-300">—</span>
   return val
 }
 
@@ -361,6 +377,46 @@ export default function ReportsPage() {
             </div>
           </div>
 
+          {/* Date Added range */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Date Added</label>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="date"
+                value={filters.added_after}
+                onChange={e => setFilter('added_after', e.target.value)}
+                className="px-2 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+              <span className="text-slate-400 text-sm">–</span>
+              <input
+                type="date"
+                value={filters.added_before}
+                onChange={e => setFilter('added_before', e.target.value)}
+                className="px-2 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+          </div>
+
+          {/* Last Updated range */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Last Updated</label>
+            <div className="flex items-center gap-1.5">
+              <input
+                type="date"
+                value={filters.updated_after}
+                onChange={e => setFilter('updated_after', e.target.value)}
+                className="px-2 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+              <span className="text-slate-400 text-sm">–</span>
+              <input
+                type="date"
+                value={filters.updated_before}
+                onChange={e => setFilter('updated_before', e.target.value)}
+                className="px-2 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </div>
+          </div>
+
           {/* Search */}
           <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
             <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Search</label>
@@ -435,6 +491,8 @@ export default function ReportsPage() {
                   </span>
                   {row.do_not_contact ? <span className="ml-1 text-xs text-red-400">DNC</span> : null}
                 </td>
+                <td className="px-3 py-2 text-slate-500 whitespace-nowrap text-xs">{fmt(row.date_added, 'date_added')}</td>
+                <td className="px-3 py-2 text-slate-500 whitespace-nowrap text-xs">{fmt(row.last_updated, 'last_updated')}</td>
               </tr>
             ))}
           </tbody>

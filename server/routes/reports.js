@@ -18,6 +18,8 @@ const SORT_COLS = {
   noi:              'p.noi',
   list_price:       'p.list_price',
   annual_rent:      'p.annual_rent',
+  date_added:       'p.created_at',
+  last_updated:     'p.updated_at',
 }
 
 function buildWhere(q) {
@@ -49,6 +51,12 @@ function buildWhere(q) {
   // Year purchased range
   if (q.year_purchased_min) { conditions.push(`p.year_purchased >= ?`); params.push(parseInt(q.year_purchased_min)) }
   if (q.year_purchased_max) { conditions.push(`p.year_purchased <= ?`); params.push(parseInt(q.year_purchased_max)) }
+
+  // Date added / last updated ranges (YYYY-MM-DD). "Before" is inclusive of the day.
+  if (q.added_after)    { conditions.push(`p.created_at >= date(?)`);            params.push(q.added_after) }
+  if (q.added_before)   { conditions.push(`p.created_at < date(?, '+1 day')`);   params.push(q.added_before) }
+  if (q.updated_after)  { conditions.push(`p.updated_at >= date(?)`);            params.push(q.updated_after) }
+  if (q.updated_before) { conditions.push(`p.updated_at < date(?, '+1 day')`);   params.push(q.updated_before) }
 
   // Owner type: 'person' = individual, 'company' = business
   if (q.owner_type === 'person') {
@@ -86,6 +94,8 @@ const BASE_SELECT = `
     p.taxes, p.insurance,
     p.roof_year, p.hvac_year, p.parking_lot,
     p.notes AS property_notes,
+    p.created_at AS date_added,
+    p.updated_at AS last_updated,
     t.name  AS tenant_brand,
     o.id    AS owner_id,
     o.name  AS owner_name,
@@ -146,6 +156,7 @@ router.get('/export', (req, res) => {
     'Cap Rate (%)','NOI','List Price','Purchase Price','Taxes','Insurance',
     'Roof Year','HVAC Year','Parking Lot',
     'Property Notes',
+    'Date Added','Last Updated',
   ]
 
   const ROLE_LABEL = { owner: 'Individual', owner_company: 'Company', broker: 'Broker', tenant_contact: 'Tenant Contact' }
@@ -169,6 +180,8 @@ router.get('/export', (req, res) => {
     r.cap_rate, r.noi, r.list_price, r.purchase_price, r.taxes, r.insurance,
     r.roof_year, r.hvac_year, r.parking_lot,
     r.property_notes,
+    r.date_added ? String(r.date_added).slice(0, 10) : '',
+    r.last_updated ? String(r.last_updated).slice(0, 10) : '',
   ].map(esc).join(','))
 
   const csv = [headers.join(','), ...csvRows].join('\n')

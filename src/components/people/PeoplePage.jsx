@@ -24,6 +24,11 @@ const STORAGE_KEY = 'people_columns_v1'
 const ROLE_LABELS = { owner:'Owner', owner_company:'Owner Co.', broker:'Broker', tenant_contact:'Tenant' }
 const ROLE_COLORS = { owner:'bg-blue-50 text-blue-700', owner_company:'bg-violet-50 text-violet-700', broker:'bg-amber-50 text-amber-700', tenant_contact:'bg-slate-100 text-slate-600' }
 
+function fmtDate(iso) {
+  if (!iso) return null
+  return new Date(String(iso).replace(' ', 'T') + 'Z').toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })
+}
+
 // ── Column definitions ────────────────────────────────────────────────────────
 const COLUMN_DEFS = {
   name: {
@@ -139,6 +144,18 @@ const COLUMN_DEFS = {
       )
     },
   },
+  date_added: {
+    label: 'Date Added',
+    td(p, k) {
+      return <td key={k} className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{fmtDate(p.created_at) || <span className="text-slate-300">—</span>}</td>
+    },
+  },
+  last_updated: {
+    label: 'Last Updated',
+    td(p, k) {
+      return <td key={k} className="px-4 py-3 text-slate-500 text-xs whitespace-nowrap">{fmtDate(p.updated_at) || <span className="text-slate-300">—</span>}</td>
+    },
+  },
 }
 
 const ALL_COLUMN_KEYS = Object.keys(COLUMN_DEFS)
@@ -149,6 +166,7 @@ const PRESET_VIEWS = [
   { id: 'outreach',   label: 'Outreach',     cols: ['name','role','phone','email','dnc','location'] },
   { id: 'owners',     label: 'Owners',       cols: ['name','owner_type','company','location','phone'] },
   { id: 'full',       label: 'Full Details', cols: ['name','role','owner_type','sub_label','company','phone','email','location'] },
+  { id: 'timeline',   label: 'Timeline',     cols: ['name','role','location','date_added','last_updated'] },
 ]
 
 // ── Main component ────────────────────────────────────────────────────────────
@@ -163,7 +181,14 @@ export default function PeoplePage() {
   const [roleFilter, setRole]   = useState('')
   const [dncFilter, setDnc]     = useState('')
   const [ownerTypeFilter, setOwnerType] = useState('')
+  const [dateFilter, setDateFilter] = useState({ addedAfter: '', addedBefore: '', updatedAfter: '', updatedBefore: '' })
+  const [sort, setSort] = useState({ col: 'name', dir: 'asc' })
   const [fetching, setFetching] = useState(false)
+
+  // Date filters + sort are read from a ref so every existing reload path picks
+  // them up without threading extra args through each caller.
+  const extraRef = useRef({ dateFilter, sort })
+  extraRef.current = { dateFilter, sort }
 
   const [showForm, setShowForm]         = useState(false)
   const [editTarget, setEditTarget]     = useState(null)
@@ -193,12 +218,23 @@ export default function PeoplePage() {
       if (role)       params.role = role
       if (dnc !== '') params.do_not_contact = dnc
       if (ownerType) params.owner_type = ownerType
+      const { dateFilter: df, sort: so } = extraRef.current
+      for (const key of ['addedAfter', 'addedBefore', 'updatedAfter', 'updatedBefore']) {
+        if (df[key]) params[key] = df[key]
+      }
+      params.sortCol = so.col
+      params.sortDir = so.dir
       const res = await getPeople(params)
       setRows(res.rows); setTotal(res.total)
     } finally { setFetching(false) }
   }, [])
 
   useEffect(() => { load(search, roleFilter, dncFilter, ownerTypeFilter, page) }, [page, roleFilter, dncFilter, ownerTypeFilter]) // eslint-disable-line
+  // Reload from page 0 when date filters or sort change
+  useEffect(() => { setPage(0); load(search, roleFilter, dncFilter, ownerTypeFilter, 0) }, [dateFilter, sort]) // eslint-disable-line
+
+  const setDate = (key, val) => setDateFilter(d => ({ ...d, [key]: val }))
+  const hasDateFilter = Object.values(dateFilter).some(Boolean)
 
   const handleSearch = (val) => {
     setSearch(val); clearTimeout(searchTimer.current)
@@ -239,6 +275,10 @@ export default function PeoplePage() {
       if (roleFilter)      params.role = roleFilter
       if (dncFilter !== '') params.do_not_contact = dncFilter
       if (ownerTypeFilter) params.owner_type = ownerTypeFilter
+      const { dateFilter: df } = extraRef.current
+      for (const key of ['addedAfter', 'addedBefore', 'updatedAfter', 'updatedBefore']) {
+        if (df[key]) params[key] = df[key]
+      }
       const res = await getPeople(params)
       setSelected(new Set(res.rows.map(r => r.id)))
     } finally { setSelectingAll(false) }
@@ -336,6 +376,53 @@ export default function PeoplePage() {
       />
 
       <div className="flex-1 overflow-auto p-6 scrollbar-thin">
+        {/* Date filters + sort */}
+        <div className="flex flex-wrap items-end gap-3 mb-4">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Date Added</label>
+            <div className="flex items-center gap-1.5">
+              <input type="date" value={dateFilter.addedAfter} onChange={e => setDate('addedAfter', e.target.value)}
+                className="px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              <span className="text-slate-400 text-sm">–</span>
+              <input type="date" value={dateFilter.addedBefore} onChange={e => setDate('addedBefore', e.target.value)}
+                className="px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Last Updated</label>
+            <div className="flex items-center gap-1.5">
+              <input type="date" value={dateFilter.updatedAfter} onChange={e => setDate('updatedAfter', e.target.value)}
+                className="px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400" />
+              <span className="text-slate-400 text-sm">–</span>
+              <input type="date" value={dateFilter.updatedBefore} onChange={e => setDate('updatedBefore', e.target.value)}
+                className="px-2 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            </div>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">Sort by</label>
+            <select
+              value={`${sort.col}:${sort.dir}`}
+              onChange={e => { const [col, dir] = e.target.value.split(':'); setSort({ col, dir }) }}
+              className="px-2 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+            >
+              <option value="name:asc">Name (A–Z)</option>
+              <option value="name:desc">Name (Z–A)</option>
+              <option value="date_added:desc">Date Added (newest)</option>
+              <option value="date_added:asc">Date Added (oldest)</option>
+              <option value="last_updated:desc">Last Updated (newest)</option>
+              <option value="last_updated:asc">Last Updated (oldest)</option>
+            </select>
+          </div>
+          {hasDateFilter && (
+            <button
+              onClick={() => setDateFilter({ addedAfter: '', addedBefore: '', updatedAfter: '', updatedBefore: '' })}
+              className="px-3 py-1.5 text-sm text-slate-500 hover:text-slate-800 border border-slate-200 rounded-lg hover:bg-slate-50"
+            >
+              Clear dates
+            </button>
+          )}
+        </div>
+
         {fetching && rows.length === 0 ? (
           <div className="flex items-center justify-center h-48"><Loader2 className="w-6 h-6 text-slate-400 animate-spin" /></div>
         ) : rows.length === 0 ? (
