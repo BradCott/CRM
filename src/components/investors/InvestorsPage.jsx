@@ -135,7 +135,7 @@ export default function InvestorsPage() {
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
-                    {['Name', 'Entity Type', 'Email', 'Phone', 'Total Invested', '# Properties', 'Pref Return %', ''].map(h => (
+                    {['Name', 'Entity Type', 'Email', 'Phone', 'Total Invested', '# Properties', ''].map(h => (
                       <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
                   </tr>
@@ -174,11 +174,6 @@ export default function InvestorsPage() {
                       </td>
                       <td className="px-4 py-3 text-slate-700 tabular-nums text-center">
                         {inv.num_properties > 0 ? inv.num_properties : <span className="text-slate-300">—</span>}
-                      </td>
-                      <td className="px-4 py-3 text-slate-700 tabular-nums">
-                        {inv.avg_preferred_return_rate != null
-                          ? `${Number(inv.avg_preferred_return_rate).toFixed(1)}%`
-                          : <span className="text-slate-300">—</span>}
                       </td>
                       <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                         <div className="relative">
