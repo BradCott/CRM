@@ -20,6 +20,23 @@ db.exec(`PRAGMA journal_mode = WAL`)
 db.exec(`PRAGMA foreign_keys = ON`)
 db.exec(`PRAGMA synchronous = NORMAL`)
 
+// node:sqlite's DatabaseSync has no better-sqlite3-style .transaction() helper.
+// Polyfill it so `const run = db.transaction(fn); run(args)` works: wraps the
+// call in BEGIN/COMMIT, rolling back on error.
+if (typeof db.transaction !== 'function') {
+  db.transaction = (fn) => (...args) => {
+    db.exec('BEGIN')
+    try {
+      const result = fn(...args)
+      db.exec('COMMIT')
+      return result
+    } catch (err) {
+      try { db.exec('ROLLBACK') } catch (_) {}
+      throw err
+    }
+  }
+}
+
 db.exec(`
   CREATE TABLE IF NOT EXISTS tenant_brands (
     id    INTEGER PRIMARY KEY AUTOINCREMENT,
