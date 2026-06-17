@@ -10,7 +10,7 @@ const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
 
 const BUILTIN_CATEGORIES = [
-  'Equity Contribution', 'Purchase', 'Loan', 'Rent', 'Mortgage', 'Mortgage Interest',
+  'Equity Contribution', 'Purchase', 'Loan', 'Loan Payment', 'Rent', 'Mortgage', 'Mortgage Interest',
   'Mortgage Principal', 'Repair', 'Sale',
   // Schedule E-aligned expense categories
   'Insurance', 'Property Tax', 'Utilities', 'Management Fees', 'Legal & Professional',
@@ -416,9 +416,10 @@ router.get('/categories', (_req, res) => {
   res.json({ builtin: BUILTIN_CATEGORIES, custom })
 })
 
+const CATEGORY_KINDS = ['income', 'expense', 'liability', 'asset', 'equity']
 router.post('/categories', (req, res) => {
   const name = (req.body?.name || '').trim()
-  const kind = req.body?.kind === 'income' ? 'income' : 'expense'
+  const kind = CATEGORY_KINDS.includes(req.body?.kind) ? req.body.kind : 'expense'
   if (!name) return res.status(400).json({ error: 'name is required' })
   if (isValidCategory(name)) return res.status(409).json({ error: 'That category already exists' })
   const r = db.prepare('INSERT INTO custom_categories (name, kind) VALUES (?, ?)').run(name, kind)

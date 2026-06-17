@@ -19,6 +19,7 @@ import Distributions from './Distributions'
 import PlaidConnect from './PlaidConnect'
 import SplitTransactionModal from './SplitTransactionModal'
 import AmortizationCard from './AmortizationCard'
+import CategorySelect from './CategorySelect'
 import { CATEGORY_COLORS } from '../../utils/accounting'
 
 const SOURCE_LABELS = {
@@ -654,11 +655,9 @@ export default function LedgerPage() {
                               className="text-xs border border-slate-300 rounded px-2 py-1 w-full focus:outline-none focus:ring-1 focus:ring-blue-400" />
                           </td>
                           <td className="px-3 py-2 border-b border-blue-100">
-                            <select value={editForm.category}
-                              onChange={e => setEditForm(f => ({ ...f, category: e.target.value }))}
-                              className="text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white">
-                              {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                            </select>
+                            <CategorySelect value={editForm.category}
+                              onChange={v => setEditForm(f => ({ ...f, category: v }))}
+                              className="text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400 bg-white" />
                           </td>
                           <td className="px-3 py-2 border-b border-blue-100 text-right">
                             <input type="number" step="0.01" value={editForm.amount}
@@ -699,13 +698,11 @@ export default function LedgerPage() {
                         </td>
                         <td className="px-4 py-3 border-b border-slate-100">
                           {pending ? (
-                            <select
+                            <CategorySelect
                               value={reviewCats[tx.id] ?? tx.category}
-                              onChange={e => setReviewCats(prev => ({ ...prev, [tx.id]: e.target.value }))}
+                              onChange={v => setReviewCats(prev => ({ ...prev, [tx.id]: v }))}
                               className="text-xs border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                            >
-                              {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                            </select>
+                            />
                           ) : (
                             <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${catStyle}`}>
                               {tx.category}

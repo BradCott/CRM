@@ -11,15 +11,16 @@ const BUILTIN_EXPENSE = [
   'Management Fees', 'Legal & Professional', 'Advertising', 'Supplies',
   'Travel', 'Commissions', 'Cleaning & Maintenance', 'HOA / CAM', 'Bank Charges', 'Other',
 ]
-// Non-P&L categories (balance-sheet movements) — selectable but excluded from P&L
-const NON_PL = ['Equity Contribution', 'Purchase', 'Loan', 'Sale', 'Mortgage Principal']
+// Non-P&L categories (balance-sheet movements) — selectable but excluded from P&L.
+// "Loan Payment" = paying down a note (a liability), not a P&L expense.
+const NON_PL = ['Equity Contribution', 'Purchase', 'Loan', 'Loan Payment', 'Sale', 'Mortgage Principal']
 
 // These are `let` + live ES-module bindings so hydrateCustomCategories() can
 // merge user-defined charge types in at runtime and every importer sees them.
 export let EXPENSE_CATEGORIES = [...BUILTIN_EXPENSE]
 export let ALL_CATEGORIES = [
   'Rent', ...BUILTIN_EXPENSE.filter(c => c !== 'Other'),
-  'Equity Contribution', 'Purchase', 'Loan', 'Sale', 'Mortgage Principal', 'Other',
+  ...NON_PL, 'Other',
 ]
 export let PL_CATS = new Set(['Rent', ...BUILTIN_EXPENSE])
 
@@ -27,6 +28,7 @@ export const CATEGORY_COLORS = {
   'Equity Contribution':    'bg-blue-100 text-blue-700',
   'Purchase':               'bg-red-100 text-red-700',
   'Loan':                   'bg-teal-100 text-teal-700',
+  'Loan Payment':           'bg-teal-100 text-teal-700',
   'Rent':                   'bg-emerald-100 text-emerald-700',
   'Mortgage':               'bg-amber-100 text-amber-700',
   'Mortgage Interest':      'bg-amber-100 text-amber-700',
@@ -64,16 +66,18 @@ export function expenseLabel(cat) { return EXPENSE_LABELS[cat] || cat }
  * lists. Call once at app startup. `custom` = [{ name, kind }].
  */
 export function hydrateCustomCategories(custom = []) {
-  const expenseNames = custom.filter(c => c.kind !== 'income').map(c => c.name)
+  // kind: 'income' / 'expense' → P&L; 'liability' / 'asset' / 'equity' → balance sheet (non-P&L)
   const incomeNames  = custom.filter(c => c.kind === 'income').map(c => c.name)
+  const expenseNames = custom.filter(c => c.kind === 'expense').map(c => c.name)
+  const otherNames   = custom.filter(c => !['income', 'expense'].includes(c.kind)).map(c => c.name)
 
   EXPENSE_CATEGORIES = [...BUILTIN_EXPENSE.filter(c => c !== 'Other'), ...expenseNames, 'Other']
   ALL_CATEGORIES = [
     'Rent', ...incomeNames,
     ...BUILTIN_EXPENSE.filter(c => c !== 'Other'), ...expenseNames,
-    ...NON_PL, 'Other',
+    ...NON_PL, ...otherNames, 'Other',
   ]
-  PL_CATS = new Set(['Rent', ...incomeNames, ...EXPENSE_CATEGORIES])
+  PL_CATS = new Set(['Rent', ...incomeNames, ...EXPENSE_CATEGORIES])   // otherNames excluded → not in P&L
   for (const c of custom) {
     if (!CATEGORY_COLORS[c.name]) CATEGORY_COLORS[c.name] = CUSTOM_COLOR
   }

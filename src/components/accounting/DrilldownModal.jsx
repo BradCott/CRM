@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { X, Pencil, Check, XCircle, Trash2, Loader2 } from 'lucide-react'
 import { updateTransaction, deleteTransaction, learnCategories } from '../../api/client'
-import { ALL_CATEGORIES } from '../../utils/accounting'
+import CategorySelect from './CategorySelect'
 
 function fmt$(n) {
   if (n === null || n === undefined) return '—'
@@ -64,10 +64,8 @@ function EditRow({ tx, onSaved, onDeleted }) {
         </td>
         <td className="px-3 py-2">
           <div className="space-y-1">
-            <select value={form.category} onChange={set('category')}
-              className="text-xs border border-slate-300 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400">
-              {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-            </select>
+            <CategorySelect value={form.category} onChange={v => setForm(p => ({ ...p, category: v }))}
+              className="text-xs border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400" />
             <input type="text" value={form.vendor} onChange={set('vendor')} placeholder="Vendor"
               className="text-xs border border-slate-300 rounded px-2 py-1 w-full focus:outline-none focus:ring-1 focus:ring-blue-400" />
           </div>

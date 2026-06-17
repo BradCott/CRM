@@ -2,7 +2,8 @@ import { useState, useRef } from 'react'
 import { X, Upload, Loader2, CheckCircle, AlertCircle } from 'lucide-react'
 import Button from '../ui/Button'
 import { uploadBankStatement, createTransactions, categorizeTransactions, learnCategories } from '../../api/client'
-import { ALL_CATEGORIES as CATEGORIES, guessCategory } from '../../utils/accounting'
+import { guessCategory } from '../../utils/accounting'
+import CategorySelect from './CategorySelect'
 
 function fmt$(v) {
   if (v === null || v === undefined) return '—'
@@ -206,13 +207,11 @@ export default function BankStatementReview({ propertyId, onSaved, onClose }) {
                           />
                         </td>
                         <td className="py-2 pr-3">
-                          <select
+                          <CategorySelect
                             value={row.category}
-                            onChange={e => updateRow(row._key, 'category', e.target.value)}
+                            onChange={v => updateRow(row._key, 'category', v)}
                             className="text-xs border border-slate-200 rounded px-2 py-1 bg-white text-slate-700 outline-none focus:ring-1 focus:ring-blue-300"
-                          >
-                            {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-                          </select>
+                          />
                         </td>
                         <td className={`py-2 text-right font-semibold tabular-nums text-sm whitespace-nowrap ${
                           Number(row.amount) >= 0 ? 'text-emerald-600' : 'text-red-600'

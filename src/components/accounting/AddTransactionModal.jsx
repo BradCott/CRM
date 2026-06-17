@@ -3,7 +3,7 @@ import { X } from 'lucide-react'
 import { Input, Select } from '../ui/Input'
 import Button from '../ui/Button'
 import { createTransactions } from '../../api/client'
-import { ALL_CATEGORIES } from '../../utils/accounting'
+import CategorySelect from './CategorySelect'
 
 const EMPTY = {
   date:        new Date().toISOString().slice(0, 10),
@@ -79,9 +79,14 @@ export default function AddTransactionModal({ propertyId, onSaved, onClose }) {
             placeholder="e.g. Monthly rent payment"
           />
 
-          <Select label="Category" value={form.category} onChange={set('category')}>
-            {ALL_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
-          </Select>
+          <div>
+            <label className="block text-xs font-medium text-slate-600 mb-1">Category</label>
+            <CategorySelect
+              value={form.category}
+              onChange={v => setForm(f => ({ ...f, category: v }))}
+              className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+            />
+          </div>
 
           <Input
             label="Vendor / Payee (optional)"
