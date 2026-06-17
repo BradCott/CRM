@@ -790,9 +790,19 @@ Return ONLY a valid JSON object in exactly this format — every field is requir
 LINE ITEMS — this is the most important part. "line_items" must contain EVERY individual money line on the settlement statement (the purchase price, every fee, every credit, every proration, the loan, earnest money, cash to close — all of it), each with:
 - "description": the exact label text from the statement (e.g. "Consulting Fee to Knox Capital", "Phase II Environmental", "Lender's Title Policy", "County Recording")
 - "amount": the dollar amount as a POSITIVE number
-- "treatment": your best guess of how it should be recorded, chosen from EXACTLY this list:
+- "treatment": chosen from EXACTLY this list:
   "Purchase Price", "Seller Credit", "Buyer Closing Cost", "Seller Closing Cost", "Loan", "1031 Exchange", "Earnest Money", "Cash to Close", "Tax Proration Credit", "Rent Proration Credit", "Insurance Credit", "CAM Credit", "Buyer Taxes Paid", "Ignore"
-Treatment guidance: the purchase price → "Purchase Price"; the new mortgage → "Loan"; 1031/QI deposit → "1031 Exchange"; earnest money already paid → "Earnest Money"; cash due at closing → "Cash to Close"; any buyer-side fee (title, escrow, recording, survey, appraisal, environmental/Phase I/II, flood, origination, consulting/acquisition fee paid to the buyer's own company, inspection, etc.) → "Buyer Closing Cost"; broker commission or any fee that is the seller's responsibility → "Seller Closing Cost"; rent/tax/insurance/CAM prorations credited to the buyer → the matching "... Credit"; back/current property taxes the buyer pays → "Buyer Taxes Paid"; seller credit/concession to buyer → "Seller Credit". When unsure, prefer "Buyer Closing Cost". Do not invent amounts; only include lines that actually appear.
+
+BUYER vs SELLER — READ THE COLUMNS, this is critical. Our user is the BUYER. The statement separates the two sides and you MUST honor which column a charge sits in:
+- HUD-1 / ALTA: the LEFT money column is the Borrower/Buyer ("Paid From Borrower's Funds", "Borrower" column); the RIGHT money column is the Seller ("Paid From Seller's Funds", "Seller" column). Borrower = our buyer.
+- First American Title and similar: columns are explicitly labeled "Buyer Charge" / "Buyer Credit" and "Seller Charge" / "Seller Credit".
+- A charge in the BUYER/Borrower column → a buyer treatment ("Buyer Closing Cost", or the specific one like "Loan"/"Earnest Money"/"Cash to Close"/a credit).
+- A charge in the SELLER column → "Seller Closing Cost" (or "Seller Credit" if it is a credit TO the buyer). Do this EVEN for title, escrow, recording, transfer tax, or commission lines — if it is in the seller's column it is the seller's cost, never a buyer cost.
+- Real estate / broker commission is almost always a SELLER cost → "Seller Closing Cost" unless it is clearly in the buyer's column.
+- Many fees appear on BOTH sides (buyer and seller each pay their own title, escrow, recording, transfer tax). Include BOTH as separate line items — tag the buyer-column one "Buyer Closing Cost" and the seller-column one "Seller Closing Cost", and disambiguate the description (e.g. "Owner's Title Policy (Seller)" vs "Lender's Title Policy (Buyer)").
+- Include EVERY seller-side line too, so the full statement is reconstructed for review — just mark them "Seller Closing Cost"/"Seller Credit". If the statement only shows the buyer side, only include the buyer lines that appear; never invent seller lines.
+
+Treatment guidance (within the correct side): purchase price → "Purchase Price"; the new mortgage → "Loan"; 1031/QI deposit → "1031 Exchange"; earnest money already paid → "Earnest Money"; cash due at closing → "Cash to Close"; buyer-side fees (title, escrow, recording, survey, appraisal, environmental/Phase I/II, flood, origination, consulting/acquisition fee, inspection, etc.) → "Buyer Closing Cost"; rent/tax/insurance/CAM prorations credited to the buyer → the matching "... Credit"; back/current property taxes the buyer pays → "Buyer Taxes Paid"; a seller credit/concession given to the buyer → "Seller Credit". When a BUYER-column item is unclear, prefer "Buyer Closing Cost"; when a SELLER-column item is unclear, use "Seller Closing Cost". Do not invent amounts; only include lines that actually appear.
 
 The other named fields above should still be filled as before (they are a roll-up summary), but the per-line "line_items" list is what the user edits.
 
@@ -825,8 +835,8 @@ Field extraction rules:
 - "exchange_proceeds": 1031 exchange proceeds deposited to escrow by a Qualified Intermediary (QI). Look for entries from "Investment Property Exchange", "Qualified Intermediary", "QI", "1031 Exchange", or similar in the Buyer Credit column. Return the amount as a positive number. If none, null.
 - "broker_name": Name of the real estate broker or brokerage receiving a commission at closing (e.g. "Marcus & Millichap", "CBRE", or an individual broker's name). Look for "Commission", "Broker Fee", "Real Estate Commission" line items. If multiple brokers, the buyer-side broker. If none visible, null.
 - "broker_commission": Total real estate commission paid at closing as a positive number. Sum buyer-side and seller-side if both shown on this statement. If none, null.
-- "total_closing_costs": Settlement/closing charges only — the actual fees paid at closing, NOT including the purchase price or earnest money reimbursements.
-  - For HUD-1: use line 103 "Settlement charges to borrower" exactly.
+- "total_closing_costs": BUYER-side settlement/closing charges only — the actual fees the buyer pays at closing. NEVER include any seller-column charge here, and exclude the purchase price and earnest money reimbursements.
+  - For HUD-1: use line 103 "Settlement charges to borrower" exactly (borrower = buyer; ignore the seller column).
   - For First American Title: sum ONLY the fee/charge line items in the Buyer Charge column. EXCLUDE: (1) the "Total Consideration" / purchase price line, (2) any earnest money reimbursement disbursements paid back to the buyer or their principals at closing (lines labeled "EM Reimbursement", "Earnest Money Reimbursement", or similar). Include: loan fees, appraisal, title/escrow fees, endorsements, recording, environmental, survey, inspection, acquisition fees, and any other third-party closing charges.
   - Do NOT use the printed "Totals" row — that includes the purchase price. Sum the individual fee lines instead.
 
