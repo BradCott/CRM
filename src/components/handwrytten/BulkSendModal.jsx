@@ -4,6 +4,7 @@ import {
   getHandwryttenCards,
   getHandwryttenFonts,
   sendHandwryttenBulk,
+  createHandwryttenDrip,
   getProperties,
 } from '../../api/client'
 import { useApp } from '../../context/AppContext'
@@ -257,6 +258,12 @@ export default function BulkSendModal({ onClose, onDone }) {
   const [sending,       setSending]       = useState(false)
   const [sendError,     setSendError]     = useState(null)
 
+  // ── Drip (throttled send) state ──────────────────────────────────────────────
+  const [sendMode,      setSendMode]      = useState('now')   // 'now' | 'drip'
+  const [batchSize,     setBatchSize]     = useState(50)
+  const [intervalDays,  setIntervalDays]  = useState(1)
+  const [dripResult,    setDripResult]    = useState(null)
+
   // Load cards/fonts when entering preview step
   useEffect(() => {
     if (step !== 'preview' || cards.length > 0) return
@@ -336,10 +343,12 @@ export default function BulkSendModal({ onClose, onDone }) {
       }
       const uniqueOwners    = Object.values(ownerFirstProp)
       const dedupRemoved    = withOwner.length - uniqueOwners.length
-      const noAddress       = uniqueOwners.filter(p => !p.owner_address || !p.owner_city || !p.owner_state).length
-      const readyToSend     = uniqueOwners.length - noAddress
+      const dncCount        = uniqueOwners.filter(p => p.owner_do_not_contact).length
+      const withContact     = uniqueOwners.filter(p => !p.owner_do_not_contact)
+      const noAddress       = withContact.filter(p => !p.owner_address || !p.owner_city || !p.owner_state).length
+      const readyToSend     = withContact.length - noAddress
 
-      setBreakdown({ totalFiltered, needsReviewCount, noOwner, dedupRemoved, noAddress, readyToSend })
+      setBreakdown({ totalFiltered, needsReviewCount, noOwner, dedupRemoved, dncCount, noAddress, readyToSend })
 
       // ── Build final list ──────────────────────────────────────────────────
       const seen = new Set()
@@ -347,6 +356,7 @@ export default function BulkSendModal({ onClose, onDone }) {
       for (const p of filtered) {
         if (!p.owner_id) continue
         if (seen.has(p.owner_id)) continue
+        if (p.owner_do_not_contact) continue   // never mail do-not-contact owners
         if (!p.owner_address || !p.owner_city || !p.owner_state) continue
         seen.add(p.owner_id)
         list.push({
@@ -387,6 +397,31 @@ export default function BulkSendModal({ onClose, onDone }) {
         font:    selectedFont,
       })
       setSendResult(result)
+      setStep('done')
+      onDone?.()
+    } catch (err) {
+      setSendError(err.message)
+      setStep('preview')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  async function handleScheduleDrip() {
+    setSending(true)
+    setSendError(null)
+    try {
+      const result = await createHandwryttenDrip({
+        name:          filterTenant.trim() || (filterStates.length ? filterStates.join('/') : 'Mail campaign'),
+        recipients:    recipients.map(r => ({ contact_id: r.contact_id, property_id: r.property_id })),
+        message,
+        card_id:       selectedCard,
+        font:          selectedFont,
+        batch_size:    Math.max(1, parseInt(batchSize, 10) || 50),
+        interval_days: Math.max(1, parseInt(intervalDays, 10) || 1),
+        filters:       { states: filterStates, tenant: filterTenant, ownerTypes: filterOwnerTypes },
+      })
+      setDripResult(result)
       setStep('done')
       onDone?.()
     } catch (err) {
@@ -576,6 +611,12 @@ export default function BulkSendModal({ onClose, onDone }) {
                       </span>
                     </div>
                     <div className="flex justify-between items-center px-3 py-2">
+                      <span className="text-slate-500">− Owner on do-not-contact list</span>
+                      <span className={`font-semibold ${breakdown.dncCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                        {breakdown.dncCount > 0 ? `−${breakdown.dncCount.toLocaleString()}` : '0'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center px-3 py-2">
                       <span className="text-slate-500">− Owner missing mailing address</span>
                       <span className={`font-semibold ${breakdown.noAddress > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
                         {breakdown.noAddress > 0 ? `−${breakdown.noAddress.toLocaleString()}` : '0'}
@@ -730,6 +771,59 @@ export default function BulkSendModal({ onClose, onDone }) {
                 <p className="text-xs text-slate-400 mt-1">This is the name that appears as the sender on every letter.</p>
               </div>
 
+              {/* Send mode: all-at-once vs throttled drip */}
+              <div>
+                <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2 block">Sending</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => setSendMode('now')}
+                    className={`text-left rounded-xl border-2 px-3 py-2.5 transition-all ${
+                      sendMode === 'now' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <p className="text-sm font-semibold text-slate-800">Send all now</p>
+                    <p className="text-xs text-slate-500">All {recipients.length} go out today</p>
+                  </button>
+                  <button
+                    onClick={() => setSendMode('drip')}
+                    className={`text-left rounded-xl border-2 px-3 py-2.5 transition-all ${
+                      sendMode === 'drip' ? 'border-blue-500 bg-blue-50' : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <p className="text-sm font-semibold text-slate-800">Drip over time</p>
+                    <p className="text-xs text-slate-500">Spread out automatically</p>
+                  </button>
+                </div>
+
+                {sendMode === 'drip' && (
+                  <div className="mt-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+                    <div className="flex flex-wrap items-center gap-2 text-sm text-slate-700">
+                      <span>Send</span>
+                      <input
+                        type="number" min="1" value={batchSize}
+                        onChange={e => setBatchSize(e.target.value)}
+                        className="w-16 text-sm text-center border border-slate-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <span>letter{batchSize == 1 ? '' : 's'} every</span>
+                      <input
+                        type="number" min="1" value={intervalDays}
+                        onChange={e => setIntervalDays(e.target.value)}
+                        className="w-16 text-sm text-center border border-slate-300 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <span>day{intervalDays == 1 ? '' : 's'} until complete.</span>
+                    </div>
+                    {recipients.length > 0 && batchSize >= 1 && intervalDays >= 1 && (
+                      <p className="text-xs text-slate-500 mt-2">
+                        {recipients.length} letters → ~{Math.ceil(recipients.length / Math.max(1, batchSize))} batch{Math.ceil(recipients.length / Math.max(1, batchSize)) !== 1 ? 'es' : ''} over about{' '}
+                        <span className="font-semibold text-slate-700">
+                          {(Math.ceil(recipients.length / Math.max(1, batchSize)) - 1) * Math.max(1, intervalDays)} day{(Math.ceil(recipients.length / Math.max(1, batchSize)) - 1) * Math.max(1, intervalDays) !== 1 ? 's' : ''}
+                        </span>. First batch goes out immediately. Pause, resume, or cancel anytime from Campaigns.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
               {sendError && (
                 <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 rounded-xl px-3 py-2.5">
                   <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
@@ -744,12 +838,15 @@ export default function BulkSendModal({ onClose, onDone }) {
                 <span className="text-xs text-slate-400">
                   {recipients.length} letters · est. ${(recipients.length * COST_LOW).toFixed(0)}–${(recipients.length * COST_HIGH).toFixed(0)}
                 </span>
-                <Button
-                  onClick={handleSend}
-                  disabled={recipients.length === 0 || overLimit}
-                >
-                  <Mail className="w-4 h-4" /> Send {recipients.length} Letter{recipients.length !== 1 ? 's' : ''}
-                </Button>
+                {sendMode === 'drip' ? (
+                  <Button onClick={handleScheduleDrip} disabled={recipients.length === 0 || overLimit || sending}>
+                    {sending ? <><Loader2 className="w-4 h-4 animate-spin" /> Scheduling…</> : <><Mail className="w-4 h-4" /> Start Drip ({batchSize}/{intervalDays}d)</>}
+                  </Button>
+                ) : (
+                  <Button onClick={handleSend} disabled={recipients.length === 0 || overLimit}>
+                    <Mail className="w-4 h-4" /> Send {recipients.length} Letter{recipients.length !== 1 ? 's' : ''}
+                  </Button>
+                )}
               </div>
             </div>
           </>
@@ -764,6 +861,31 @@ export default function BulkSendModal({ onClose, onDone }) {
               Please wait — this may take a moment for large batches.
             </p>
           </div>
+        )}
+
+        {/* ── STEP: DONE (drip scheduled) ──────────────────────────────────── */}
+        {step === 'done' && dripResult && (
+          <>
+            <div className="flex-1 overflow-y-auto px-6 py-8 text-center">
+              <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
+              <h3 className="text-lg font-bold text-slate-900">Drip Campaign Started</h3>
+              <p className="text-sm text-slate-500 mt-1 max-w-sm mx-auto">
+                {dripResult.total.toLocaleString()} letters queued — sending {dripResult.batch_size} every {dripResult.interval_days} day{dripResult.interval_days !== 1 ? 's' : ''}.
+                The first batch is going out now.
+              </p>
+              {dripResult.removed_dnc > 0 && (
+                <p className="text-xs text-amber-600 mt-2">
+                  {dripResult.removed_dnc} do-not-contact or duplicate recipient{dripResult.removed_dnc !== 1 ? 's were' : ' was'} skipped.
+                </p>
+              )}
+              <p className="text-xs text-slate-400 mt-4">
+                Track progress, pause, resume, or cancel from the Campaigns page.
+              </p>
+            </div>
+            <div className="flex justify-end px-6 py-4 border-t border-slate-100">
+              <Button onClick={onClose}>Done</Button>
+            </div>
+          </>
         )}
 
         {/* ── STEP: DONE ───────────────────────────────────────────────────── */}

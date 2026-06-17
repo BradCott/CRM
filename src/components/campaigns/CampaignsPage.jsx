@@ -1,6 +1,9 @@
 import { useState, useEffect, useCallback, Fragment } from 'react'
-import { Mail, Loader2, ChevronDown, ChevronRight, CheckCircle, AlertCircle, Clock } from 'lucide-react'
-import { getHandwryttenCampaigns, getHandwryttenSends } from '../../api/client'
+import { Mail, Loader2, ChevronDown, ChevronRight, CheckCircle, AlertCircle, Clock, Pause, Play, X, Pencil, Droplet } from 'lucide-react'
+import {
+  getHandwryttenCampaigns, getHandwryttenSends,
+  getHandwryttenDrips, updateHandwryttenDrip, cancelHandwryttenDrip,
+} from '../../api/client'
 import TopBar from '../layout/TopBar'
 
 function fmtDate(iso) {
@@ -140,6 +143,129 @@ function CampaignRow({ campaign }) {
   )
 }
 
+// ── Active / past drip campaigns ──────────────────────────────────────────────
+
+const DRIP_STATUS = {
+  active:    { cls: 'bg-blue-50 text-blue-700',   label: 'Active'    },
+  paused:    { cls: 'bg-amber-50 text-amber-700',  label: 'Paused'    },
+  complete:  { cls: 'bg-green-50 text-green-700',  label: 'Complete'  },
+  cancelled: { cls: 'bg-slate-100 text-slate-500', label: 'Cancelled' },
+}
+
+function DripCard({ drip, onChange }) {
+  const [busy, setBusy]       = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [batch, setBatch]     = useState(drip.batch_size)
+  const [interval, setInterval] = useState(drip.interval_days)
+
+  const done    = drip.sent_count + drip.failed_count
+  const pct     = drip.total_count > 0 ? Math.round((done / drip.total_count) * 100) : 0
+  const st      = DRIP_STATUS[drip.status] || DRIP_STATUS.active
+  const live    = drip.status === 'active' || drip.status === 'paused'
+
+  async function act(fn) {
+    setBusy(true)
+    try { await fn(); await onChange() } catch (e) { alert(e.message) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Droplet className="w-4 h-4 text-blue-500 shrink-0" />
+            <p className="text-sm font-semibold text-slate-800 truncate">{drip.name || 'Mail campaign'}</p>
+            <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${st.cls}`}>{st.label}</span>
+          </div>
+          <p className="text-xs text-slate-500 mt-1 line-clamp-1">{drip.message_template}</p>
+        </div>
+        {live && (
+          <div className="flex items-center gap-1 shrink-0">
+            {drip.status === 'active' ? (
+              <button title="Pause" disabled={busy} onClick={() => act(() => updateHandwryttenDrip(drip.id, { status: 'paused' }))}
+                className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100">
+                <Pause className="w-4 h-4" />
+              </button>
+            ) : (
+              <button title="Resume" disabled={busy} onClick={() => act(() => updateHandwryttenDrip(drip.id, { status: 'active' }))}
+                className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50">
+                <Play className="w-4 h-4" />
+              </button>
+            )}
+            <button title="Edit pace" disabled={busy} onClick={() => setEditing(v => !v)}
+              className="p-1.5 rounded-lg text-slate-500 hover:bg-slate-100">
+              <Pencil className="w-4 h-4" />
+            </button>
+            <button title="Cancel remaining" disabled={busy}
+              onClick={() => { if (window.confirm('Cancel this drip? Remaining letters will not be sent.')) act(() => cancelHandwryttenDrip(drip.id)) }}
+              className="p-1.5 rounded-lg text-red-500 hover:bg-red-50">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Progress */}
+      <div className="mt-3">
+        <div className="flex items-center justify-between text-xs text-slate-500 mb-1">
+          <span>{done.toLocaleString()} / {drip.total_count.toLocaleString()} sent{drip.failed_count > 0 ? ` · ${drip.failed_count} failed` : ''}</span>
+          <span>{drip.remaining?.toLocaleString?.() ?? (drip.total_count - done)} remaining</span>
+        </div>
+        <div className="h-2 rounded-full bg-slate-100 overflow-hidden">
+          <div className="h-full bg-blue-500 transition-all" style={{ width: `${pct}%` }} />
+        </div>
+        <p className="text-xs text-slate-400 mt-1.5">
+          {drip.batch_size} every {drip.interval_days} day{drip.interval_days !== 1 ? 's' : ''}
+          {live && drip.next_run_at && ` · next batch ${fmtDate(drip.next_run_at + 'Z')}`}
+        </p>
+      </div>
+
+      {editing && (
+        <div className="mt-3 flex flex-wrap items-center gap-2 text-sm border-t border-slate-100 pt-3">
+          <span className="text-slate-600">Send</span>
+          <input type="number" min="1" value={batch} onChange={e => setBatch(e.target.value)}
+            className="w-16 text-center border border-slate-300 rounded-lg px-2 py-1" />
+          <span className="text-slate-600">every</span>
+          <input type="number" min="1" value={interval} onChange={e => setInterval(e.target.value)}
+            className="w-16 text-center border border-slate-300 rounded-lg px-2 py-1" />
+          <span className="text-slate-600">days</span>
+          <button disabled={busy}
+            onClick={() => act(() => updateHandwryttenDrip(drip.id, { batch_size: batch, interval_days: interval })).then(() => setEditing(false))}
+            className="ml-auto px-3 py-1 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700">
+            Save
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DripsSection() {
+  const [drips, setDrips] = useState([])
+  const load = useCallback(async () => {
+    try { setDrips(await getHandwryttenDrips()) } catch (_) {}
+  }, [])
+  useEffect(() => {
+    load()
+    const t = window.setInterval(load, 30000) // refresh progress periodically
+    return () => window.clearInterval(t)
+  }, [load])
+
+  const active = drips.filter(d => d.status === 'active' || d.status === 'paused')
+  const past   = drips.filter(d => d.status === 'complete' || d.status === 'cancelled')
+
+  if (drips.length === 0) return null
+
+  return (
+    <div className="mb-6 space-y-3">
+      <h2 className="text-sm font-semibold text-slate-700">Drip Campaigns</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+        {[...active, ...past].map(d => <DripCard key={d.id} drip={d} onChange={load} />)}
+      </div>
+    </div>
+  )
+}
+
 export default function CampaignsPage() {
   const [campaigns, setCampaigns]   = useState([])
   const [total,     setTotal]       = useState(0)
@@ -170,6 +296,7 @@ export default function CampaignsPage() {
       />
 
       <div className="flex-1 overflow-auto p-6">
+        <DripsSection />
         {loading && campaigns.length === 0 ? (
           <div className="flex items-center justify-center h-48">
             <Loader2 className="w-6 h-6 text-slate-400 animate-spin" />

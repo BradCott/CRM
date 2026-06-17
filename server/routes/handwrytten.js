@@ -433,4 +433,140 @@ router.post('/send-bulk', async (req, res) => {
   })
 })
 
+// ── Drip campaigns (throttled "X letters every N days") ──────────────────────
+
+import { processDueDrips, nextRunIso } from '../services/dripEngine.js'
+
+/** GET /api/handwrytten/drips — list with progress */
+router.get('/drips', (_req, res) => {
+  const rows = db.prepare(`
+    SELECT d.*, u.name AS created_by_name,
+      (SELECT COUNT(*) FROM handwrytten_drip_queue q WHERE q.drip_id = d.id AND q.status = 'queued') AS remaining
+    FROM handwrytten_drips d
+    LEFT JOIN users u ON u.id = d.created_by_user_id
+    ORDER BY d.created_at DESC
+  `).all()
+  res.json(rows)
+})
+
+/** GET /api/handwrytten/drips/:id — single drip detail */
+router.get('/drips/:id', (req, res) => {
+  const drip = db.prepare(`SELECT * FROM handwrytten_drips WHERE id = ?`).get(req.params.id)
+  if (!drip) return res.status(404).json({ error: 'Drip not found' })
+  const remaining = db.prepare(`SELECT COUNT(*) AS n FROM handwrytten_drip_queue WHERE drip_id=? AND status='queued'`).get(drip.id).n
+  res.json({ ...drip, remaining })
+})
+
+/**
+ * POST /api/handwrytten/drips — create a drip and queue recipients.
+ * Body: { name?, recipients:[{contact_id, property_id?}], message, card_id?, font?,
+ *         batch_size, interval_days, filters? }
+ * The first batch fires immediately; the rest are spaced by interval_days.
+ * DNC contacts are filtered out server-side as a safety net.
+ */
+router.post('/drips', (req, res) => {
+  const { name, recipients, message, card_id, font, batch_size, interval_days, filters } = req.body
+  const userId = req.user?.id
+
+  if (!Array.isArray(recipients) || recipients.length === 0) {
+    return res.status(400).json({ error: 'recipients array is required' })
+  }
+  if (!message) return res.status(400).json({ error: 'message is required' })
+
+  const batchN = Math.max(1, parseInt(batch_size, 10) || 50)
+  const intervalN = Math.max(1, parseInt(interval_days, 10) || 1)
+
+  // Filter out DNC contacts and de-dupe by contact_id (one letter per person).
+  const seen = new Set()
+  const clean = []
+  for (const r of recipients) {
+    const cid = Number(r.contact_id)
+    if (!cid || seen.has(cid)) continue
+    const person = db.prepare(`SELECT do_not_contact FROM people WHERE id = ?`).get(cid)
+    if (!person || person.do_not_contact) continue
+    seen.add(cid)
+    clean.push({ contact_id: cid, property_id: r.property_id || null })
+  }
+
+  if (clean.length === 0) {
+    return res.status(400).json({ error: 'No eligible recipients after removing DNC and duplicates.' })
+  }
+
+  const create = db.transaction(() => {
+    const dripRes = db.prepare(`
+      INSERT INTO handwrytten_drips
+        (name, message_template, card_id, font, filters, batch_size, interval_days,
+         status, total_count, next_run_at, created_by_user_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, datetime('now'), ?)
+    `).run(
+      name || null, message, card_id || null, font || null,
+      filters ? JSON.stringify(filters) : null,
+      batchN, intervalN, clean.length, userId || null,
+    )
+    const dripId = dripRes.lastInsertRowid
+    const insQ = db.prepare(`
+      INSERT INTO handwrytten_drip_queue (drip_id, contact_id, property_id, position, status)
+      VALUES (?, ?, ?, ?, 'queued')
+    `)
+    clean.forEach((r, i) => insQ.run(dripId, r.contact_id, r.property_id, i))
+    return dripId
+  })
+
+  const dripId = create()
+
+  // Kick the first batch right away (async — don't block the response).
+  processDueDrips().catch(err => console.error('[drip] initial tick error:', err.message))
+
+  res.json({
+    drip_id:       dripId,
+    total:         clean.length,
+    removed_dnc:   recipients.length - clean.length,
+    batch_size:    batchN,
+    interval_days: intervalN,
+  })
+})
+
+/**
+ * PATCH /api/handwrytten/drips/:id — pause / resume / edit batch+interval.
+ * Body: { status?: 'active'|'paused', batch_size?, interval_days? }
+ */
+router.patch('/drips/:id', (req, res) => {
+  const drip = db.prepare(`SELECT * FROM handwrytten_drips WHERE id = ?`).get(req.params.id)
+  if (!drip) return res.status(404).json({ error: 'Drip not found' })
+  if (drip.status === 'complete' || drip.status === 'cancelled') {
+    return res.status(400).json({ error: `Drip is ${drip.status} and can't be modified.` })
+  }
+
+  const { status, batch_size, interval_days } = req.body
+  const fields = []
+  const params = []
+
+  if (status === 'paused') { fields.push('status = ?'); params.push('paused') }
+  if (status === 'active') {
+    fields.push('status = ?'); params.push('active')
+    // Resuming: make it due now so the next tick picks it up.
+    fields.push('next_run_at = datetime(\'now\')')
+  }
+  if (batch_size != null)    { fields.push('batch_size = ?');    params.push(Math.max(1, parseInt(batch_size, 10) || drip.batch_size)) }
+  if (interval_days != null) { fields.push('interval_days = ?'); params.push(Math.max(1, parseInt(interval_days, 10) || drip.interval_days)) }
+
+  if (fields.length === 0) return res.status(400).json({ error: 'Nothing to update' })
+
+  params.push(drip.id)
+  db.prepare(`UPDATE handwrytten_drips SET ${fields.join(', ')} WHERE id = ?`).run(...params)
+
+  if (status === 'active') processDueDrips().catch(() => {})
+
+  res.json(db.prepare(`SELECT * FROM handwrytten_drips WHERE id = ?`).get(drip.id))
+})
+
+/** POST /api/handwrytten/drips/:id/cancel — stop and discard remaining queue */
+router.post('/drips/:id/cancel', (req, res) => {
+  const drip = db.prepare(`SELECT * FROM handwrytten_drips WHERE id = ?`).get(req.params.id)
+  if (!drip) return res.status(404).json({ error: 'Drip not found' })
+  db.prepare(`UPDATE handwrytten_drip_queue SET status='skipped', error_message='Campaign cancelled', processed_at=datetime('now') WHERE drip_id=? AND status='queued'`).run(drip.id)
+  db.prepare(`UPDATE handwrytten_drips SET status='cancelled', next_run_at=NULL WHERE id=?`).run(drip.id)
+  res.json({ cancelled: true })
+})
+
 export default router

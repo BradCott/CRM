@@ -693,6 +693,45 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_hw_sends_contact  ON handwrytten_sends(contact_id);
   CREATE INDEX IF NOT EXISTS idx_hw_sends_campaign ON handwrytten_sends(campaign_id);
   CREATE INDEX IF NOT EXISTS idx_hw_sends_sent_at  ON handwrytten_sends(sent_at);
+
+  -- Drip campaigns: throttled mail sends ("X letters every N days until done")
+  CREATE TABLE IF NOT EXISTS handwrytten_drips (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    name               TEXT,
+    message_template   TEXT NOT NULL,
+    card_id            TEXT,
+    font               TEXT,
+    filters            TEXT,                       -- JSON snapshot of the audience filter (display only)
+    batch_size         INTEGER NOT NULL DEFAULT 50,
+    interval_days      INTEGER NOT NULL DEFAULT 1,
+    send_hour          INTEGER NOT NULL DEFAULT 9, -- hour of day (UTC) batches fire
+    status             TEXT NOT NULL DEFAULT 'active'
+                       CHECK(status IN ('active','paused','complete','cancelled')),
+    total_count        INTEGER DEFAULT 0,
+    sent_count         INTEGER DEFAULT 0,
+    failed_count       INTEGER DEFAULT 0,
+    next_run_at        TEXT,                        -- ISO datetime the next batch is due
+    last_run_at        TEXT,
+    created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at         TEXT DEFAULT (datetime('now'))
+  );
+  CREATE INDEX IF NOT EXISTS idx_hw_drips_status ON handwrytten_drips(status);
+
+  -- Per-recipient queue for a drip. Rows are consumed in batches by the engine.
+  CREATE TABLE IF NOT EXISTS handwrytten_drip_queue (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    drip_id       INTEGER NOT NULL REFERENCES handwrytten_drips(id) ON DELETE CASCADE,
+    contact_id    INTEGER REFERENCES people(id)     ON DELETE CASCADE,
+    property_id   INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+    position      INTEGER,
+    status        TEXT NOT NULL DEFAULT 'queued'
+                  CHECK(status IN ('queued','sent','failed','skipped')),
+    send_id       INTEGER REFERENCES handwrytten_sends(id) ON DELETE SET NULL,
+    error_message TEXT,
+    processed_at  TEXT
+  );
+  CREATE INDEX IF NOT EXISTS idx_hw_dq_drip   ON handwrytten_drip_queue(drip_id, status);
+  CREATE INDEX IF NOT EXISTS idx_hw_dq_status ON handwrytten_drip_queue(status);
 `)
 
 // Auto-tag existing owners whose name suggests LLC/entity type

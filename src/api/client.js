@@ -329,3 +329,10 @@ export const getHandwryttenCampaigns  = (params={}) => {
   const qs = new URLSearchParams(params).toString()
   return req('GET', `/handwrytten/campaigns${qs ? '?' + qs : ''}`)
 }
+
+// Drip campaigns (throttled "X letters every N days")
+export const createHandwryttenDrip = (data)        => req('POST',  '/handwrytten/drips', data)
+export const getHandwryttenDrips   = ()            => req('GET',   '/handwrytten/drips')
+export const getHandwryttenDrip    = (id)          => req('GET',   `/handwrytten/drips/${id}`)
+export const updateHandwryttenDrip = (id, data)    => req('PATCH', `/handwrytten/drips/${id}`, data)
+export const cancelHandwryttenDrip = (id)          => req('POST',  `/handwrytten/drips/${id}/cancel`)

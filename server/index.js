@@ -113,4 +113,8 @@ app.listen(PORT, '0.0.0.0', () => {
     })
     console.log('[plays] morning email digest scheduled — daily 6:00 AM')
   }).catch(() => {})
+  // Drip mail campaigns — hourly tick sends throttled batches
+  import('./services/dripEngine.js').then(({ startDripEngine }) => {
+    startDripEngine()
+  }).catch(err => console.warn('[drip] could not start:', err.message))
 })
