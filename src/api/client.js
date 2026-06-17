@@ -227,6 +227,7 @@ export const getInvestorProfile  = (id)     => req('GET',    `/investors/${id}`)
 export const createInvestor      = (data)   => req('POST',   '/investors', data)
 export const updateInvestor      = (id, d)  => req('PATCH',  `/investors/${id}`, d)
 export const deleteInvestorRecord = (id)    => req('DELETE', `/investors/${id}`)
+export const bulkDeleteInvestors = (opts)   => req('POST',   '/investors/bulk-delete', opts) // { ids } or { all: true }
 export const matchInvestorNames  = (names)  => req('POST',   '/investors/match', { names })
 export const confirmInvestorMatch = (data)  => req('POST',   '/investors/match/confirm', data)
 

@@ -715,6 +715,33 @@ router.patch('/:id', (req, res) => {
 
 // ── Delete investor ───────────────────────────────────────────────────────────
 
+// Bulk delete — accepts { ids: [...] } for selected rows, or { all: true } to
+// wipe every investor (used when re-importing a fresh allocations sheet).
+// Child links/distributions cascade automatically (ON DELETE CASCADE).
+router.post('/bulk-delete', (req, res) => {
+  const { ids, all } = req.body || {}
+
+  if (all === true) {
+    const before = db.prepare(`SELECT COUNT(*) AS n FROM investors`).get().n
+    db.prepare(`DELETE FROM investors`).run()
+    return res.json({ deleted: before })
+  }
+
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'Provide an array of ids, or { all: true }.' })
+  }
+
+  const cleanIds = ids.map(Number).filter(Number.isInteger)
+  const del = db.prepare(`DELETE FROM investors WHERE id = ?`)
+  const run = db.transaction((list) => {
+    let n = 0
+    for (const id of list) n += del.run(id).changes
+    return n
+  })
+  const deleted = run(cleanIds)
+  res.json({ deleted })
+})
+
 router.delete('/:id', (req, res) => {
   db.prepare(`DELETE FROM investors WHERE id = ?`).run(req.params.id)
   res.status(204).end()

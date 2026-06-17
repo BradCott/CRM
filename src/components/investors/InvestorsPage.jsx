@@ -5,7 +5,7 @@ import {
   ChevronLeft, ChevronRight, AlertCircle, Upload, CheckCircle2,
   XCircle, Info,
 } from 'lucide-react'
-import { getCRMInvestors, createInvestor, updateInvestor, deleteInvestorRecord, bulkImportInvestors } from '../../api/client'
+import { getCRMInvestors, createInvestor, updateInvestor, deleteInvestorRecord, bulkDeleteInvestors, bulkImportInvestors } from '../../api/client'
 import AllocationsImportModal from './AllocationsImportModal'
 import TopBar from '../layout/TopBar'
 import Button from '../ui/Button'
@@ -61,6 +61,9 @@ export default function InvestorsPage() {
   const [deleteTarget, setDeleteTarget] = useState(null)
   const [openMenu, setOpenMenu]         = useState(null)
   const [showBulkImport, setShowBulkImport] = useState(false)
+  const [selectedIds, setSelectedIds]   = useState(() => new Set())
+  const [bulkConfirm, setBulkConfirm]   = useState(null) // 'selected' | 'all'
+  const [bulkDeleting, setBulkDeleting] = useState(false)
   const searchTimer = useRef(null)
 
   const load = useCallback(async (s, entity, pg) => {
@@ -91,7 +94,36 @@ export default function InvestorsPage() {
 
   const handleDelete = async () => {
     await deleteInvestorRecord(deleteTarget.id)
+    setSelectedIds(prev => { const n = new Set(prev); n.delete(deleteTarget.id); return n })
     load(search, entityFilter, page)
+  }
+
+  const toggleRow = (id) => setSelectedIds(prev => {
+    const n = new Set(prev)
+    n.has(id) ? n.delete(id) : n.add(id)
+    return n
+  })
+
+  const allOnPageSelected = rows.length > 0 && rows.every(r => selectedIds.has(r.id))
+  const toggleAllOnPage = () => setSelectedIds(prev => {
+    const n = new Set(prev)
+    if (allOnPageSelected) rows.forEach(r => n.delete(r.id))
+    else rows.forEach(r => n.add(r.id))
+    return n
+  })
+
+  const handleBulkDelete = async () => {
+    setBulkDeleting(true)
+    try {
+      if (bulkConfirm === 'all') await bulkDeleteInvestors({ all: true })
+      else await bulkDeleteInvestors({ ids: [...selectedIds] })
+      setSelectedIds(new Set())
+      setBulkConfirm(null)
+      setPage(0)
+      load(search, entityFilter, 0)
+    } finally {
+      setBulkDeleting(false)
+    }
   }
 
   const totalPages = Math.ceil(total / PAGE_SIZE)
@@ -131,10 +163,38 @@ export default function InvestorsPage() {
           <EmptyInvestors onAdd={() => setShowForm(true)} />
         ) : (
           <>
+            <div className="flex items-center justify-between mb-3 min-h-[2rem]">
+              {selectedIds.size > 0 ? (
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-medium text-slate-700">{selectedIds.size} selected</span>
+                  <Button variant="danger" size="sm" onClick={() => setBulkConfirm('selected')}>
+                    <Trash2 className="w-4 h-4" /> Delete selected
+                  </Button>
+                  <button onClick={() => setSelectedIds(new Set())} className="text-sm text-slate-500 hover:text-slate-700">
+                    Clear
+                  </button>
+                </div>
+              ) : <span />}
+              <button
+                onClick={() => setBulkConfirm('all')}
+                className="text-sm text-red-600 hover:text-red-700 font-medium"
+              >
+                Delete all investors
+              </button>
+            </div>
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
               <table className="w-full text-sm">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
+                    <th className="px-4 py-3 w-10">
+                      <input
+                        type="checkbox"
+                        checked={allOnPageSelected}
+                        onChange={toggleAllOnPage}
+                        className="w-4 h-4 rounded border-slate-300 text-blue-600 cursor-pointer"
+                        title="Select all on this page"
+                      />
+                    </th>
                     {['Name', 'Entity Type', 'Email', 'Phone', 'Total Invested', '# Properties', ''].map(h => (
                       <th key={h} className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
                     ))}
@@ -147,6 +207,14 @@ export default function InvestorsPage() {
                       className={`border-b border-slate-100 last:border-0 hover:bg-blue-50/50 transition-colors cursor-pointer ${i % 2 === 0 ? '' : 'bg-slate-50/30'}`}
                       onClick={() => navigate(`/investors/${inv.id}`)}
                     >
+                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.has(inv.id)}
+                          onChange={() => toggleRow(inv.id)}
+                          className="w-4 h-4 rounded border-slate-300 text-blue-600 cursor-pointer"
+                        />
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <p className="font-semibold text-slate-900">{inv.name}</p>
@@ -252,6 +320,19 @@ export default function InvestorsPage() {
         onConfirm={handleDelete}
         title="Delete investor?"
         message={`"${deleteTarget?.name}" and all their links and distribution records will be permanently deleted.`}
+      />
+
+      <ConfirmDialog
+        isOpen={!!bulkConfirm}
+        onClose={() => setBulkConfirm(null)}
+        onConfirm={handleBulkDelete}
+        title={bulkConfirm === 'all' ? 'Delete ALL investors?' : `Delete ${selectedIds.size} investor${selectedIds.size === 1 ? '' : 's'}?`}
+        confirmLabel={bulkConfirm === 'all' ? `Delete all ${total}` : `Delete ${selectedIds.size}`}
+        message={
+          bulkConfirm === 'all'
+            ? `Every investor (${total}) and all their property links and distribution records will be permanently deleted. This cannot be undone — use this before re-importing a fresh allocations sheet.`
+            : `The selected investor${selectedIds.size === 1 ? '' : 's'} and all their links and distribution records will be permanently deleted.`
+        }
       />
 
       {openMenu && <div className="fixed inset-0 z-0" onClick={() => setOpenMenu(null)} />}
