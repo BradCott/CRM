@@ -146,6 +146,8 @@ function InlineInput({ col, draft, onChange, onCommit, onCancel }) {
         className={base}
       >
         {TABLE_STAGES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
+        <option disabled>──────────</option>
+        <option value="dropped">Dropped (remove from pipeline)</option>
       </select>
     )
   }
@@ -210,6 +212,12 @@ export default function DealTable({ deals, onDelete, onCellSave, onCloseDeal, on
     const { dealId, col } = editing
     const value = processValue(col, draft)
     setEditing(null)
+    // Selecting "Dropped" in the stage dropdown isn't a real stage — route it
+    // through the same confirm flow as the drop button.
+    if (col === 'stage' && value === 'dropped') {
+      setCloseMenu({ dealId, step: 'confirm', action: 'dropped' })
+      return
+    }
     onCellSave(dealId, col, value)
   }
 
