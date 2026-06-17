@@ -78,18 +78,9 @@ function applyDateFilters(query, conditions, params) {
   }
 }
 
-// GET /api/properties?search=&tenants=CVS,Walgreens&states=TN,GA&needsReview=1&limit=50&offset=0&sortCol=address&sortDir=asc
-router.get('/', (req, res) => {
-  const {
-    search = '',
-    tenant = '',    // legacy single-value (kept for backward compat)
-    state  = '',    // legacy single-value
-    limit  = 50,
-    offset = 0,
-    sortCol = 'address',
-    sortDir = 'asc',
-  } = req.query
-
+// Build the WHERE clause + params shared by the list and export endpoints.
+function buildPropertyWhere(query) {
+  const { search = '', tenant = '', state = '' } = query
   const conditions = []
   const params = []
 
@@ -100,7 +91,7 @@ router.get('/', (req, res) => {
   }
 
   // Multi-value tenant filter (comma-separated) — falls back to legacy single param
-  const tenantsRaw = req.query.tenants || tenant
+  const tenantsRaw = query.tenants || tenant
   if (tenantsRaw) {
     const list = tenantsRaw.split(',').map(s => s.trim()).filter(Boolean)
     if (list.length === 1) {
@@ -112,7 +103,7 @@ router.get('/', (req, res) => {
   }
 
   // Multi-value state filter (comma-separated) — falls back to legacy single param
-  const statesRaw = req.query.states || state
+  const statesRaw = query.states || state
   if (statesRaw) {
     const list = statesRaw.split(',').map(s => s.trim()).filter(Boolean)
     if (list.length === 1) {
@@ -123,19 +114,23 @@ router.get('/', (req, res) => {
     }
   }
 
-  // Needs ownership review filter
-  if (req.query.needsReview === '1') {
-    conditions.push(`p.needs_ownership_review = 1`)
-  }
+  if (query.needsReview === '1') conditions.push(`p.needs_ownership_review = 1`)
 
-  if (req.query.portfolio !== undefined) {
+  if (query.portfolio !== undefined) {
     conditions.push(`p.is_portfolio = ?`)
-    params.push(req.query.portfolio === '1' ? 1 : 0)
+    params.push(query.portfolio === '1' ? 1 : 0)
   }
 
-  applyDateFilters(req.query, conditions, params)
+  applyDateFilters(query, conditions, params)
 
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+  return { where: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', params }
+}
+
+// GET /api/properties?search=&tenants=CVS,Walgreens&states=TN,GA&needsReview=1&limit=50&offset=0&sortCol=address&sortDir=asc
+router.get('/', (req, res) => {
+  const { limit = 50, offset = 0, sortCol = 'address', sortDir = 'asc' } = req.query
+
+  const { where, params } = buildPropertyWhere(req.query)
 
   const total = db.prepare(`
     SELECT COUNT(*) AS n FROM properties p
@@ -153,6 +148,49 @@ router.get('/', (req, res) => {
   const rows = db.prepare(`${BASE_SELECT} ${where} ${orderBy} LIMIT ? OFFSET ?`).all(...params, parseInt(limit), parseInt(offset))
 
   res.json({ total, rows })
+})
+
+// GET /api/properties/export — CSV of all rows matching the current filters (no limit)
+router.get('/export', (req, res) => {
+  const { sortCol = 'address', sortDir = 'asc' } = req.query
+  const { where, params } = buildPropertyWhere(req.query)
+
+  const sortExpr  = SORT_MAP[sortCol] || 'p.address'
+  const direction = sortDir === 'desc' ? 'DESC' : 'ASC'
+  const nullFirst = direction === 'ASC' ? 1 : 0
+  const orderBy   = `ORDER BY CASE WHEN ${sortExpr} IS NULL THEN ${nullFirst} ELSE 0 END, ${sortExpr} ${direction}`
+
+  const rows = db.prepare(`${BASE_SELECT} ${where} ${orderBy}`).all(...params)
+
+  const esc = v => {
+    if (v == null || v === '') return ''
+    const s = String(v)
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const d10 = v => (v ? String(v).slice(0, 10) : '')
+
+  const headers = [
+    'Tenant','Address','City','State','ZIP',
+    'Owner Name','Owner Phone','Owner Email',
+    'Owner Address','Owner City','Owner State','Owner ZIP','Do Not Contact',
+    'Property Type','Lease Type','Lease Start','Lease End',
+    'Annual Rent','Cap Rate (%)','NOI','List Price','Building Size (sf)','Year Built',
+    'Date Added','Last Updated','Notes',
+  ]
+  const csvRows = rows.map(r => [
+    r.tenant_brand_name, r.address, r.city, r.state, r.zip,
+    r.owner_name, r.owner_phone, r.owner_email,
+    r.owner_address, r.owner_city, r.owner_state, r.owner_zip, r.owner_do_not_contact ? 'Yes' : 'No',
+    r.property_type, r.lease_type, r.lease_start, r.lease_end,
+    r.annual_rent, r.cap_rate, r.noi, r.list_price, r.building_size, r.year_built,
+    d10(r.created_at), d10(r.updated_at), r.notes,
+  ].map(esc).join(','))
+
+  const csv = [headers.join(','), ...csvRows].join('\n')
+  const scope = req.query.portfolio === '1' ? 'portfolio' : 'properties'
+  res.setHeader('Content-Type', 'text/csv')
+  res.setHeader('Content-Disposition', `attachment; filename="${scope}-${new Date().toISOString().slice(0,10)}.csv"`)
+  res.send(csv)
 })
 
 // Fee summary — total fees for listed/under_contract portfolio properties

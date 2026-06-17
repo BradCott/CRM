@@ -11,18 +11,11 @@ const BASE_SELECT = `
   LEFT JOIN people c ON c.id = p.company_id
 `
 
-// GET /api/people?search=&role=&sub_label=&do_not_contact=&owner_type=&limit=50&offset=0
-router.get('/', (req, res) => {
-  const {
-    search = '',
-    role = '',
-    sub_label = '',
-    do_not_contact = '',
-    owner_type = '',
-    limit = 50,
-    offset = 0,
-  } = req.query
+const PEOPLE_SORT_MAP = { name: 'p.name', date_added: 'p.created_at', last_updated: 'p.updated_at' }
 
+// Shared WHERE builder for the list + export endpoints.
+function buildPeopleWhere(query) {
+  const { search = '', role = '', sub_label = '', do_not_contact = '', owner_type = '' } = query
   const conditions = []
   const params = []
 
@@ -49,17 +42,21 @@ router.get('/', (req, res) => {
     ['updatedBefore', 'p.updated_at', '<'],
   ]
   for (const [key, col, op] of dateRanges) {
-    const v = req.query[key]
+    const v = query[key]
     if (!v) continue
     if (op === '<') { conditions.push(`${col} < date(?, '+1 day')`); params.push(v) }
     else            { conditions.push(`${col} >= date(?)`);          params.push(v) }
   }
 
-  const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+  return { where: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', params }
+}
 
-  // Sorting — whitelisted columns only
-  const SORT_MAP = { name: 'p.name', date_added: 'p.created_at', last_updated: 'p.updated_at' }
-  const sortExpr  = SORT_MAP[req.query.sortCol] || 'p.name'
+// GET /api/people?search=&role=&sub_label=&do_not_contact=&owner_type=&limit=50&offset=0
+router.get('/', (req, res) => {
+  const { limit = 50, offset = 0 } = req.query
+  const { where, params } = buildPeopleWhere(req.query)
+
+  const sortExpr  = PEOPLE_SORT_MAP[req.query.sortCol] || 'p.name'
   const direction = req.query.sortDir === 'desc' ? 'DESC' : 'ASC'
   const orderBy   = `ORDER BY ${sortExpr} ${direction}`
 
@@ -67,6 +64,39 @@ router.get('/', (req, res) => {
   const rows  = db.prepare(`${BASE_SELECT} ${where} ${orderBy} LIMIT ? OFFSET ?`).all(...params, parseInt(limit), parseInt(offset))
 
   res.json({ total, rows })
+})
+
+// GET /api/people/export — CSV of all rows matching the current filters (no limit)
+router.get('/export', (req, res) => {
+  const { where, params } = buildPeopleWhere(req.query)
+  const sortExpr  = PEOPLE_SORT_MAP[req.query.sortCol] || 'p.name'
+  const direction = req.query.sortDir === 'desc' ? 'DESC' : 'ASC'
+
+  const rows = db.prepare(`${BASE_SELECT} ${where} ORDER BY ${sortExpr} ${direction}`).all(...params)
+
+  const esc = v => {
+    if (v == null || v === '') return ''
+    const s = String(v)
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const d10 = v => (v ? String(v).slice(0, 10) : '')
+  const ROLE_LABEL = { owner: 'Owner', owner_company: 'Owner Company', broker: 'Broker', tenant_contact: 'Tenant Contact' }
+
+  const headers = [
+    'Name','First Name','Last Name','Role','Owner Type','Company',
+    'Phone','Mobile','Email','Address','City','State','ZIP','Do Not Contact',
+    'Date Added','Last Updated','Notes',
+  ]
+  const csvRows = rows.map(r => [
+    r.name, r.first_name, r.last_name, ROLE_LABEL[r.role] || r.role, r.owner_type, r.company_name,
+    r.phone, r.mobile, r.email, r.address, r.city, r.state, r.zip, r.do_not_contact ? 'Yes' : 'No',
+    d10(r.created_at), d10(r.updated_at), r.notes,
+  ].map(esc).join(','))
+
+  const csv = [headers.join(','), ...csvRows].join('\n')
+  res.setHeader('Content-Type', 'text/csv')
+  res.setHeader('Content-Disposition', `attachment; filename="people-${new Date().toISOString().slice(0,10)}.csv"`)
+  res.send(csv)
 })
 
 // GET /api/people/check-duplicate?name=&city=&state=&address=

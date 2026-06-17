@@ -70,6 +70,14 @@ export const exportReportUrl  = (params = {}) => {
   const qs = new URLSearchParams(params).toString()
   return `/api/reports/export${qs ? '?' + qs : ''}`
 }
+export const exportPropertiesUrl = (params = {}) => {
+  const qs = new URLSearchParams(params).toString()
+  return `/api/properties/export${qs ? '?' + qs : ''}`
+}
+export const exportPeopleUrl = (params = {}) => {
+  const qs = new URLSearchParams(params).toString()
+  return `/api/people/export${qs ? '?' + qs : ''}`
+}
 
 // Saved searches
 export const getSavedSearches   = ()         => req('GET',    '/saved-searches')

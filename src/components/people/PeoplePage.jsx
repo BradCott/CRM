@@ -2,9 +2,9 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Users, UserPlus, MoreHorizontal, Pencil, Trash2, Loader2,
-  AlertCircle, ChevronLeft, ChevronRight, Settings2,
+  AlertCircle, ChevronLeft, ChevronRight, Settings2, Download,
 } from 'lucide-react'
-import { getPeople, bulkDeletePeople } from '../../api/client'
+import { getPeople, bulkDeletePeople, exportPeopleUrl } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import TopBar from '../layout/TopBar'
 import Button from '../ui/Button'
@@ -236,6 +236,21 @@ export default function PeoplePage() {
   const setDate = (key, val) => setDateFilter(d => ({ ...d, [key]: val }))
   const hasDateFilter = Object.values(dateFilter).some(Boolean)
 
+  // Export the current filtered view to CSV (cookie auth → direct download link)
+  const handleExport = () => {
+    const params = { sortCol: sort.col, sortDir: sort.dir }
+    if (search)            params.search = search
+    if (roleFilter)        params.role = roleFilter
+    if (dncFilter !== '')  params.do_not_contact = dncFilter
+    if (ownerTypeFilter)   params.owner_type = ownerTypeFilter
+    for (const key of ['addedAfter', 'addedBefore', 'updatedAfter', 'updatedBefore']) {
+      if (dateFilter[key]) params[key] = dateFilter[key]
+    }
+    const a = document.createElement('a')
+    a.href = exportPeopleUrl(params)
+    a.click()
+  }
+
   const handleSearch = (val) => {
     setSearch(val); clearTimeout(searchTimer.current)
     searchTimer.current = setTimeout(() => { setPage(0); load(val, roleFilter, dncFilter, ownerTypeFilter, 0) }, 300)
@@ -361,6 +376,15 @@ export default function PeoplePage() {
               <option value="0">Contactable</option>
               <option value="1">Do Not Contact</option>
             </select>
+            <button
+              onClick={handleExport}
+              disabled={total === 0}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium border rounded-lg transition-colors text-slate-600 border-slate-200 hover:bg-slate-50 disabled:opacity-50"
+              title="Export the current filtered list to CSV"
+            >
+              <Download className="w-4 h-4" />
+              Export CSV
+            </button>
             <button
               onClick={() => setShowCustomizer(c => !c)}
               className={`flex items-center gap-1.5 px-3 py-2 text-sm font-medium border rounded-lg transition-colors ${showCustomizer ? 'bg-blue-50 text-blue-700 border-blue-200' : 'text-slate-600 border-slate-200 hover:bg-slate-50'}`}

@@ -3,9 +3,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Building2, Plus, MoreHorizontal, Pencil, Trash2, Loader2,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown,
-  AlertCircle, Settings2, Upload, Mail, ShieldAlert, Check,
+  AlertCircle, Settings2, Upload, Mail, ShieldAlert, Check, Download,
 } from 'lucide-react'
-import { getProperties, bulkDeleteProperties } from '../../api/client'
+import { getProperties, bulkDeleteProperties, exportPropertiesUrl } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import TopBar from '../layout/TopBar'
 import Button from '../ui/Button'
@@ -337,6 +337,18 @@ export default function PropertiesPage() {
 
   useEffect(() => { load(search, tenantFilters, stateFilters, needsReviewFilter, page, sortCol, sortDir) }, [page, tenantFilters, stateFilters, needsReviewFilter]) // eslint-disable-line
 
+  // Export the current filtered view to CSV (cookie auth → direct download link)
+  const handleExport = () => {
+    const params = { portfolio: '0', sortCol, sortDir }
+    if (search)             params.search = search
+    if (tenantFilters.length) params.tenants = tenantFilters.join(',')
+    if (stateFilters.length)  params.states  = stateFilters.join(',')
+    if (needsReviewFilter)  params.needsReview = '1'
+    const a = document.createElement('a')
+    a.href = exportPropertiesUrl(params)
+    a.click()
+  }
+
   const handleSort = (key) => {
     const newDir = sortCol === key && sortDir === 'asc' ? 'desc' : 'asc'
     const newCol = key
@@ -474,6 +486,15 @@ export default function PropertiesPage() {
             >
               <Settings2 className="w-4 h-4" />
               {activePresetLabel ?? 'Columns'}
+            </button>
+            <button
+              onClick={handleExport}
+              disabled={total === 0}
+              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium border rounded-lg transition-colors text-slate-600 border-slate-200 hover:bg-slate-50 disabled:opacity-50"
+              title="Export the current filtered list to CSV"
+            >
+              <Download className="w-4 h-4" />
+              Export CSV
             </button>
             <button
               onClick={() => setShowBulkSend(true)}
