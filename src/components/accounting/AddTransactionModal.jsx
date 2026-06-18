@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
 import { Input, Select } from '../ui/Input'
 import Button from '../ui/Button'
-import { createTransactions } from '../../api/client'
+import { createTransactions, getPropertyInvestorsList } from '../../api/client'
 import CategorySelect from './CategorySelect'
 
 const EMPTY = {
@@ -11,6 +11,7 @@ const EMPTY = {
   category:    'Rent',
   amount:      '',
   vendor:      '',
+  investor_id: '',
   sign:        '+',  // UI toggle: + or -
 }
 
@@ -18,6 +19,9 @@ export default function AddTransactionModal({ propertyId, onSaved, onClose }) {
   const [form, setForm] = useState(EMPTY)
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState(null)
+  const [investors, setInvestors] = useState([])
+
+  useEffect(() => { getPropertyInvestorsList(propertyId).then(setInvestors).catch(() => {}) }, [propertyId])
 
   const set = field => e => setForm(f => ({ ...f, [field]: e.target.value }))
 
@@ -42,6 +46,7 @@ export default function AddTransactionModal({ propertyId, onSaved, onClose }) {
         amount:      form.sign === '-' ? -rawAmt : rawAmt,
         source:      'Manual',
         vendor:      form.vendor.trim() || null,
+        investor_id: form.category === 'Equity Contribution' && form.investor_id ? Number(form.investor_id) : null,
       }])
       onSaved()
       onClose()
@@ -87,6 +92,22 @@ export default function AddTransactionModal({ propertyId, onSaved, onClose }) {
               className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
             />
           </div>
+
+          {/* Investor — only relevant for equity contributions */}
+          {form.category === 'Equity Contribution' && (
+            <div>
+              <label className="block text-xs font-medium text-slate-600 mb-1">Investor (whose capital is this?)</label>
+              <select
+                value={form.investor_id}
+                onChange={set('investor_id')}
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white outline-none focus:ring-2 focus:ring-blue-200 focus:border-blue-400"
+              >
+                <option value="">— Select investor —</option>
+                {investors.map(i => <option key={i.id} value={i.id}>{i.name}</option>)}
+              </select>
+              <p className="mt-1 text-xs text-slate-400">Attributes this contribution to the investor's capital account.</p>
+            </div>
+          )}
 
           <Input
             label="Vendor / Payee (optional)"

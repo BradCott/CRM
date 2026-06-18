@@ -2,7 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import * as XLSX from 'xlsx'
 import db from '../db.js'
-import { autoLinkInvestors } from '../services/investorMatch.js'
+import { autoLinkInvestors, normalizeName, nameSimilarity } from '../services/investorMatch.js'
 import { categorizeBatch, learnRules, ruleConfidence } from '../utils/categorize.js'
 import { generateSchedule } from '../utils/amortization.js'
 
@@ -145,11 +145,13 @@ router.get('/:propertyId/transactions', (req, res) => {
   if (!prop) return res.status(404).json({ error: 'Property not found' })
 
   const transactions = db.prepare(`
-    SELECT id, property_id, date, description, category, amount, source, vendor, reconciled,
-           review_status, external_id, created_at
-    FROM accounting_transactions
-    WHERE property_id = ?
-    ORDER BY date ASC, id ASC
+    SELECT tx.id, tx.property_id, tx.date, tx.description, tx.category, tx.amount, tx.source, tx.vendor,
+           tx.reconciled, tx.review_status, tx.external_id, tx.created_at,
+           tx.investor_id, i.name AS investor_name
+    FROM accounting_transactions tx
+    LEFT JOIN investors i ON i.id = tx.investor_id
+    WHERE tx.property_id = ?
+    ORDER BY tx.date ASC, tx.id ASC
   `).all(propertyId)
 
   res.json({ property: prop, transactions })
@@ -164,20 +166,20 @@ router.post('/:propertyId/transactions', (req, res) => {
 
   const payload = Array.isArray(req.body) ? req.body : [req.body]
   const stmt = db.prepare(`
-    INSERT INTO accounting_transactions (property_id, date, description, category, amount, source, vendor)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO accounting_transactions (property_id, date, description, category, amount, source, vendor, investor_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `)
 
   const created = []
   for (const t of payload) {
-    const { date, description, category, amount, source = 'Manual', vendor = null } = t
+    const { date, description, category, amount, source = 'Manual', vendor = null, investor_id = null } = t
     if (!date || !description || !category || amount === undefined) {
       return res.status(400).json({ error: `Missing required fields on transaction: ${JSON.stringify(t)}` })
     }
     if (!CATEGORIES.includes(category)) return res.status(400).json({ error: `Invalid category: ${category}` })
     if (!SOURCES.includes(source))      return res.status(400).json({ error: `Invalid source: ${source}` })
-    const r = stmt.run(propertyId, date, description, category, parseFloat(amount), source, vendor || null)
-    created.push({ id: r.lastInsertRowid, property_id: Number(propertyId), date, description, category, amount: parseFloat(amount), source, vendor: vendor || null })
+    const r = stmt.run(propertyId, date, description, category, parseFloat(amount), source, vendor || null, investor_id || null)
+    created.push({ id: r.lastInsertRowid, property_id: Number(propertyId), date, description, category, amount: parseFloat(amount), source, vendor: vendor || null, investor_id: investor_id || null })
   }
 
   // Study every categorization the user makes so the auto-pilot improves over time
@@ -636,6 +638,88 @@ router.post('/:propertyId/auto-record', (req, res) => {
   const recorded = run()
   try { learnRules(learned) } catch (_) {}
   res.json({ recorded, left: pending.length - recorded })
+})
+
+// ── Equity contributions ↔ investors ──────────────────────────────────────────
+
+/** Investor roster (id, name) + their contact names, for matching + the dropdown. */
+function investorRoster() {
+  const investors = db.prepare('SELECT id, name FROM investors ORDER BY name').all()
+  const contacts  = db.prepare('SELECT investor_id, name FROM investor_contacts').all()
+  const byId = new Map(investors.map(i => [i.id, { ...i, aliases: [i.name] }]))
+  for (const c of contacts) byId.get(c.investor_id)?.aliases.push(c.name)
+  return [...byId.values()]
+}
+
+/** Best investor match for a bank-wire description. Returns { investor_id, name, score } | null. */
+function matchInvestorToDescription(description, roster) {
+  const desc = normalizeName(description || '')
+  if (!desc) return null
+  let best = null, bestScore = 0
+  for (const inv of roster) {
+    for (const alias of inv.aliases) {
+      const a = normalizeName(alias)
+      if (!a) continue
+      // Strong signal: the wire text contains the investor/contact name (or vice-versa)
+      let score = 0
+      if (desc.includes(a) || a.includes(desc)) score = 0.95
+      else score = nameSimilarity(desc, a)
+      if (score > bestScore) { bestScore = score; best = { investor_id: inv.id, name: inv.name, score } }
+    }
+  }
+  return best && bestScore >= 0.6 ? best : null
+}
+
+/** GET roster for the investor dropdown on a property's ledger. */
+router.get('/:propertyId/investors-list', (req, res) => {
+  res.json(db.prepare('SELECT id, name, entity_type FROM investors ORDER BY name').all())
+})
+
+/** PATCH set/clear the investor attributed to a transaction. */
+router.patch('/transactions/:id/investor', (req, res) => {
+  const tx = db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id)
+  if (!tx) return res.status(404).json({ error: 'Transaction not found' })
+  const investorId = req.body?.investor_id || null
+  db.prepare('UPDATE accounting_transactions SET investor_id = ? WHERE id = ?').run(investorId, req.params.id)
+  const updated = db.prepare(`
+    SELECT tx.*, i.name AS investor_name FROM accounting_transactions tx
+    LEFT JOIN investors i ON i.id = tx.investor_id WHERE tx.id = ?
+  `).get(req.params.id)
+  res.json(updated)
+})
+
+/** GET AI investor suggestions for unattributed Equity Contribution transactions. */
+router.get('/:propertyId/investor-suggestions', (req, res) => {
+  const roster = investorRoster()
+  const txs = db.prepare(`
+    SELECT id, description FROM accounting_transactions
+    WHERE property_id = ? AND category = 'Equity Contribution' AND investor_id IS NULL
+  `).all(req.params.propertyId)
+  const out = {}
+  for (const tx of txs) {
+    const m = matchInvestorToDescription(tx.description, roster)
+    if (m) out[tx.id] = { investor_id: m.investor_id, name: m.name, confidence: m.score >= 0.9 ? 'high' : 'medium' }
+  }
+  res.json(out)
+})
+
+/** POST auto-attribute confident investor matches to unattributed equity contributions. */
+router.post('/:propertyId/auto-attribute-investors', (req, res) => {
+  const roster = investorRoster()
+  const txs = db.prepare(`
+    SELECT id, description FROM accounting_transactions
+    WHERE property_id = ? AND category = 'Equity Contribution' AND investor_id IS NULL
+  `).all(req.params.propertyId)
+  const upd = db.prepare('UPDATE accounting_transactions SET investor_id = ? WHERE id = ?')
+  let attributed = 0
+  const run = db.transaction(() => {
+    for (const tx of txs) {
+      const m = matchInvestorToDescription(tx.description, roster)
+      if (m && m.score >= 0.9) { upd.run(m.investor_id, tx.id); attributed++ }
+    }
+  })
+  run()
+  res.json({ attributed, left: txs.length - attributed })
 })
 
 // ── AI + rules categorization for bank/Plaid imports ──────────────────────────

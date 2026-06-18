@@ -423,6 +423,10 @@ const migrations = [
        UPDATE properties SET updated_at = datetime('now') WHERE id = NEW.id;
      END`,
 
+  // Attribute an equity-contribution transaction to an investor (capital accounts)
+  `ALTER TABLE accounting_transactions ADD COLUMN investor_id INTEGER REFERENCES investors(id) ON DELETE SET NULL`,
+  `CREATE INDEX IF NOT EXISTS idx_acct_investor ON accounting_transactions(investor_id)`,
+
   // ── Investor contacts (people under a company/trust investor) ───────────────
   `CREATE TABLE IF NOT EXISTS investor_contacts (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, updateTransaction } from '../../api/client'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction } from '../../api/client'
 import OpeningBalancesModal from './OpeningBalancesModal'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
@@ -71,6 +71,8 @@ export default function LedgerPage() {
   const [recordingAll, setRecordingAll]     = useState(false)
   const [autoRecording, setAutoRecording]   = useState(false)
   const [suggestions, setSuggestions]       = useState({})   // tx.id → { suggested, confidence, hit_count }
+  const [investorsList, setInvestorsList]   = useState([])   // [{id,name}] for the equity dropdown
+  const [investorSug, setInvestorSug]       = useState({})   // tx.id → { investor_id, name, confidence }
   const [editingId, setEditingId]           = useState(null)   // tx.id being edited inline
   const [editForm, setEditForm]             = useState(null)
   const [savingEdit, setSavingEdit]         = useState(false)
@@ -86,13 +88,19 @@ export default function LedgerPage() {
       getInvestors(propertyId),
       getAccountingSettings().catch(() => ({ advanced: false })),
       getOpeningBalances(propertyId).catch(() => null),
+      getPropertyInvestorsList(propertyId).catch(() => []),
     ])
-      .then(([ledger, invs, settings, opening]) => {
+      .then(([ledger, invs, settings, opening, roster]) => {
         setProperty(ledger.property)
         setTransactions(ledger.transactions)
         setInvestors(invs)
         setAdvanced(!!settings.advanced)
         setOpeningBalances(opening)
+        setInvestorsList(roster)
+        // Suggest investors for any unattributed equity contributions
+        if (ledger.transactions.some(t => t.category === 'Equity Contribution' && !t.investor_id)) {
+          getInvestorSuggestions(propertyId).then(setInvestorSug).catch(() => {})
+        }
         // Surface pending review items: open the ledger and focus the review filter
         if (ledger.transactions.some(t => t.review_status === 'needs_review')) {
           setLedgerOpen(true)
@@ -155,6 +163,16 @@ export default function LedgerPage() {
     } finally {
       setRecordingId(null)
     }
+  }
+
+  async function handleSetInvestor(txId, investorId) {
+    // Optimistic update
+    const inv = investorsList.find(i => i.id === Number(investorId))
+    setTransactions(prev => prev.map(t => t.id === txId
+      ? { ...t, investor_id: investorId ? Number(investorId) : null, investor_name: inv?.name || null } : t))
+    setInvestorSug(prev => { const n = { ...prev }; delete n[txId]; return n })
+    try { await setTransactionInvestor(txId, investorId ? Number(investorId) : null) }
+    catch (e) { alert(e.message); reload() }
   }
 
   async function handleRecordAll() {
@@ -765,6 +783,32 @@ export default function LedgerPage() {
                         <td className="px-4 py-3 border-b border-slate-100 text-slate-800 max-w-[260px] font-medium">
                           <span className="truncate block">{tx.description}</span>
                           {tx.vendor && <span className="text-xs text-slate-400 font-normal">{tx.vendor}</span>}
+                          {(tx.category === 'Equity Contribution' || reviewCats[tx.id] === 'Equity Contribution') && (
+                            <div className="mt-1 flex items-center gap-1.5">
+                              <Users className="w-3 h-3 text-slate-400 shrink-0" />
+                              <select
+                                value={tx.investor_id || ''}
+                                onChange={e => handleSetInvestor(tx.id, e.target.value)}
+                                className={`text-xs border rounded px-1.5 py-0.5 bg-white max-w-[180px] focus:outline-none focus:ring-1 focus:ring-blue-400 ${
+                                  tx.investor_id ? 'border-slate-200 text-slate-700' : 'border-amber-300 text-amber-700'
+                                }`}
+                              >
+                                <option value="">
+                                  {investorSug[tx.id] ? `Suggested: ${investorSug[tx.id].name}` : '— Attribute to investor —'}
+                                </option>
+                                {investorsList.map(iv => <option key={iv.id} value={iv.id}>{iv.name}</option>)}
+                              </select>
+                              {!tx.investor_id && investorSug[tx.id] && (
+                                <button
+                                  onClick={() => handleSetInvestor(tx.id, investorSug[tx.id].investor_id)}
+                                  className="text-xs font-medium text-blue-600 hover:underline shrink-0"
+                                  title={`Auto-pilot match (${investorSug[tx.id].confidence} confidence)`}
+                                >
+                                  ✓ accept
+                                </button>
+                              )}
+                            </div>
+                          )}
                         </td>
                         <td className="px-4 py-3 border-b border-slate-100">
                           {pending ? (
