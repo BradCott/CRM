@@ -52,6 +52,50 @@ export const CATEGORY_COLORS = {
 
 const CUSTOM_COLOR = 'bg-slate-100 text-slate-600'
 
+// ── Chart of Accounts classification ──────────────────────────────────────────
+// The accounting "kind" of each built-in category. Everything in BUILTIN_EXPENSE
+// is an expense; these are the non-expense built-ins.
+const BUILTIN_CATEGORY_KIND = {
+  'Rent':                'income',
+  'Sale':                'income',
+  'Equity Contribution': 'equity',
+  'Purchase':            'asset',
+  'Loan':                'liability',
+  'Loan Payment':        'liability',
+  'Mortgage Principal':  'liability',
+}
+
+/** Account type for a category: 'income' | 'expense' | 'asset' | 'liability' | 'equity'. */
+export function categoryKind(name, custom = []) {
+  if (BUILTIN_CATEGORY_KIND[name]) return BUILTIN_CATEGORY_KIND[name]
+  if (BUILTIN_EXPENSE.includes(name)) return 'expense'
+  const c = custom.find(c => c.name === name)
+  return c?.kind || 'expense'
+}
+
+/** Human metadata for each account type — order, label, where it lives on the books. */
+export const ACCOUNT_TYPES = [
+  { kind: 'income',    label: 'Income',      statement: 'Profit & Loss',  hint: 'Money earned — rent and other revenue.' },
+  { kind: 'expense',   label: 'Expenses',    statement: 'Profit & Loss',  hint: 'Operating costs deducted from income.' },
+  { kind: 'asset',     label: 'Assets',      statement: 'Balance Sheet',  hint: 'What the property owns — real estate, acquisition costs.' },
+  { kind: 'liability', label: 'Liabilities', statement: 'Balance Sheet',  hint: 'What is owed — loans and notes payable.' },
+  { kind: 'equity',    label: 'Equity',      statement: 'Balance Sheet',  hint: 'Owner / investor capital.' },
+]
+
+/** Build the full chart of accounts grouped by type. `custom` = [{id,name,kind}]. */
+export function buildChartOfAccounts(builtin = [], custom = []) {
+  const rows = [
+    ...builtin.map(name => ({ name, kind: categoryKind(name, custom), builtin: true })),
+    ...custom.map(c => ({ name: c.name, kind: c.kind, builtin: false, id: c.id })),
+  ]
+  return ACCOUNT_TYPES.map(t => ({
+    ...t,
+    categories: rows
+      .filter(r => r.kind === t.kind)
+      .sort((a, b) => a.name.localeCompare(b.name)),
+  }))
+}
+
 // Friendly P&L display labels per category
 export const EXPENSE_LABELS = {
   'Mortgage':               'Mortgage / Debt Service',

@@ -55,7 +55,7 @@ export default function AccountingPage() {
               className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
             >
               <Tag className="w-4 h-4" />
-              Charge Types
+              Chart of Accounts
             </button>
             <button
               onClick={() => navigate('/accounting/reports')}

@@ -501,6 +501,20 @@ router.patch('/transactions/:id/record', (req, res) => {
   res.json(db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id))
 })
 
+// ── Send a recorded transaction back to needs-review (recorded → needs_review) ─
+router.patch('/transactions/:id/unrecord', (req, res) => {
+  const tx = db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id)
+  if (!tx) return res.status(404).json({ error: 'Transaction not found' })
+
+  db.prepare(`
+    UPDATE accounting_transactions
+    SET review_status = 'needs_review'
+    WHERE id = ?
+  `).run(req.params.id)
+
+  res.json(db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id))
+})
+
 // Record all pending transactions for a property at once
 router.post('/:propertyId/transactions/record-all', (req, res) => {
   const pending = db.prepare(

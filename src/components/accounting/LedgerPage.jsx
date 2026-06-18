@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, recordAllTransactions, updateTransaction } from '../../api/client'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, updateTransaction } from '../../api/client'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
 import AddTransactionModal from './AddTransactionModal'
@@ -120,6 +120,16 @@ export default function LedgerPage() {
     setRecordingId(tx.id)
     try {
       await recordTransaction(tx.id, { category: reviewCats[tx.id] ?? tx.category })
+      await reload()
+    } finally {
+      setRecordingId(null)
+    }
+  }
+
+  async function handleUnrecord(tx) {
+    setRecordingId(tx.id)
+    try {
+      await unrecordTransaction(tx.id)
       await reload()
     } finally {
       setRecordingId(null)
@@ -737,7 +747,7 @@ export default function LedgerPage() {
                         </td>
                         <td className="px-4 py-3 pr-6 border-b border-slate-100">
                           <div className="flex items-center gap-1 justify-end">
-                            {pending && (
+                            {pending ? (
                               <button
                                 onClick={() => handleRecord(tx)}
                                 disabled={recordingId === tx.id}
@@ -747,6 +757,17 @@ export default function LedgerPage() {
                                 {recordingId === tx.id
                                   ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                                   : <><Check className="w-3 h-3" /> Record</>}
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => handleUnrecord(tx)}
+                                disabled={recordingId === tx.id}
+                                className="flex items-center gap-1 text-xs font-medium text-amber-700 px-2 py-1 rounded-lg border border-amber-200 hover:bg-amber-50 transition-colors disabled:opacity-50 opacity-0 group-hover:opacity-100"
+                                title="Send this transaction back to Needs Review (removes it from the books until re-recorded)"
+                              >
+                                {recordingId === tx.id
+                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                  : <><ArrowLeftRight className="w-3 h-3" /> Unrecord</>}
                               </button>
                             )}
                             <button
