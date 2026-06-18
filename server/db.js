@@ -422,6 +422,21 @@ const migrations = [
      BEGIN
        UPDATE properties SET updated_at = datetime('now') WHERE id = NEW.id;
      END`,
+
+  // ── Opening balances (Advanced Accounting beta) ─────────────────────────────
+  // Per-property starting point so books can begin mid-life without entering full
+  // history. Purely additive — only used when the advanced-accounting flag is on.
+  `CREATE TABLE IF NOT EXISTS property_opening_balances (
+    property_id       INTEGER PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
+    as_of_date        TEXT,
+    cash              REAL DEFAULT 0,
+    real_estate       REAL DEFAULT 0,
+    loan_balance      REAL DEFAULT 0,
+    invested_capital  REAL DEFAULT 0,
+    retained_earnings REAL DEFAULT 0,
+    notes             TEXT,
+    updated_at        TEXT DEFAULT (datetime('now'))
+  )`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

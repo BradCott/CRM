@@ -188,6 +188,10 @@ export const unrecordTransaction      = (id)            => req('PATCH',  `/accou
 export const recordAllTransactions    = (propertyId)    => req('POST',   `/accounting/${propertyId}/transactions/record-all`)
 export const autoRecordTransactions   = (propertyId)    => req('POST',   `/accounting/${propertyId}/auto-record`)
 export const getReviewSuggestions     = (propertyId)    => req('GET',    `/accounting/${propertyId}/review-suggestions`)
+export const getAccountingSettings    = ()              => req('GET',    '/accounting/settings')
+export const updateAccountingSettings = (d)             => req('PATCH',  '/accounting/settings', d)
+export const getOpeningBalances       = (propertyId)    => req('GET',    `/accounting/${propertyId}/opening-balances`)
+export const saveOpeningBalances      = (propertyId, d) => req('PUT',    `/accounting/${propertyId}/opening-balances`, d)
 
 // Budgets
 export const getBudget  = (propertyId, year) => req('GET', `/accounting/${propertyId}/budget?year=${year}`)

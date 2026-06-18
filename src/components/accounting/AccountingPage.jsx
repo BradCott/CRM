@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BookOpen, Loader2, ArrowRight, TrendingUp, Home, BarChart2, Tag } from 'lucide-react'
-import { getAccountingSummary } from '../../api/client'
+import { getAccountingSummary, getAccountingSettings, updateAccountingSettings } from '../../api/client'
 import CategoryManager from './CategoryManager'
 
 function fmt$(v) {
@@ -26,13 +26,25 @@ export default function AccountingPage() {
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState(null)
   const [showCategories, setShowCategories] = useState(false)
+  const [advanced, setAdvanced] = useState(false)
+  const [savingAdvanced, setSavingAdvanced] = useState(false)
 
   useEffect(() => {
     getAccountingSummary()
       .then(setProperties)
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
+    getAccountingSettings().then(s => setAdvanced(!!s.advanced)).catch(() => {})
   }, [])
+
+  async function toggleAdvanced() {
+    const next = !advanced
+    setAdvanced(next)              // optimistic
+    setSavingAdvanced(true)
+    try { await updateAccountingSettings({ advanced: next }) }
+    catch { setAdvanced(!next) }   // revert on failure
+    finally { setSavingAdvanced(false) }
+  }
 
   if (loading) return (
     <div className="flex-1 flex items-center justify-center">
@@ -50,6 +62,19 @@ export default function AccountingPage() {
             <h1 className="text-xl font-semibold text-slate-900">Accounting</h1>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              onClick={toggleAdvanced}
+              disabled={savingAdvanced}
+              title="Advanced Accounting (beta): enables opening balances and the upcoming bank-account & reconciliation features. Turn off anytime to return to the simple view — your data is never changed."
+              className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors ${
+                advanced ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              <span className={`w-8 h-4 rounded-full relative transition-colors ${advanced ? 'bg-blue-500' : 'bg-slate-300'}`}>
+                <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${advanced ? 'left-4' : 'left-0.5'}`} />
+              </span>
+              Advanced (beta)
+            </button>
             <button
               onClick={() => setShowCategories(true)}
               className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"

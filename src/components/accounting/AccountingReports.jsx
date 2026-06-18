@@ -28,8 +28,15 @@ function fmtPct(n) {
 
 // ── BS computation ────────────────────────────────────────────────────────────
 
-function computeBS(transactions, investors) {
+function computeBS(transactions, investors, opening = null) {
   const sum = txs => txs.reduce((s, t) => s + Number(t.amount), 0)
+  // Opening balances (advanced mode) are additive to the transaction-derived figures.
+  const ob = opening || {}
+  const obCash = Number(ob.cash) || 0
+  const obRealEstate = Number(ob.real_estate) || 0
+  const obLoan = Number(ob.loan_balance) || 0
+  const obInvested = Number(ob.invested_capital) || 0
+  const obRetained = Number(ob.retained_earnings) || 0
   const building = Math.abs(sum(transactions.filter(t => t.description === 'Building Value')))
   const land     = Math.abs(sum(transactions.filter(t => t.description === 'Land Value')))
   const totalRealEstate = building + land
@@ -50,14 +57,15 @@ function computeBS(transactions, investors) {
   const acquisitionCredits = sum(transactions.filter(t =>
     ['Rent','Other'].includes(t.category) && t.source === 'Settlement Statement' && Number(t.amount) > 0
   ))
-  const investedCapital = investors.reduce((s, i) => s + Number(i.contribution || 0), 0)
-  const totalAssets      = totalRealEstate + totalCash
-  const totalLiabilities = loanBalance
+  const investedCapital = investors.reduce((s, i) => s + Number(i.contribution || 0), 0) + obInvested
+  const totalAssets      = totalRealEstate + obRealEstate + totalCash + obCash
+  const totalLiabilities = loanBalance + obLoan
   const totalEquity      = totalAssets - totalLiabilities
   const retainedEarnings = totalEquity - exchange1031 - acquisitionCredits - investedCapital
-  return { building, land, totalRealEstate, totalCash, totalAssets,
-           loanBalance, totalLiabilities,
-           exchange1031, acquisitionCredits, investedCapital, retainedEarnings, totalEquity }
+  return { building, land, totalRealEstate: totalRealEstate + obRealEstate, totalCash: totalCash + obCash, totalAssets,
+           loanBalance: loanBalance + obLoan, totalLiabilities,
+           exchange1031, acquisitionCredits, investedCapital, retainedEarnings, totalEquity,
+           openingRetained: obRetained }
 }
 
 // ── P&L computation ───────────────────────────────────────────────────────────
@@ -444,9 +452,9 @@ function BSLine({ label, value, bold, color, note }) {
 
 // ── Balance Sheet view ────────────────────────────────────────────────────────
 
-function BalanceSheetView({ properties }) {
+function BalanceSheetView({ properties, advanced }) {
   const [expanded, setExpanded] = useState(false)
-  const rows = properties.map(p => ({ ...p, bs: computeBS(p.transactions, p.investors) }))
+  const rows = properties.map(p => ({ ...p, bs: computeBS(p.transactions, p.investors, advanced ? p.opening_balances : null) }))
   const total = rows.reduce((acc, r) => {
     const b = r.bs
     return {
@@ -990,6 +998,7 @@ function DistributionsView() {
 export default function AccountingReports() {
   const navigate = useNavigate()
   const [properties, setProperties] = useState([])
+  const [advanced,   setAdvanced]   = useState(false)
   const [loading,    setLoading]    = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [error,      setError]      = useState(null)
@@ -998,7 +1007,12 @@ export default function AccountingReports() {
   const load = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true); else setLoading(true)
     setError(null)
-    try { setProperties(await getAccountingReports()) }
+    try {
+      const data = await getAccountingReports()
+      // New shape: { advanced, properties }; tolerate the old array shape too.
+      setProperties(Array.isArray(data) ? data : (data.properties || []))
+      setAdvanced(Array.isArray(data) ? false : !!data.advanced)
+    }
     catch (e) { setError(e.message) }
     finally { setLoading(false); setRefreshing(false) }
   }, [])
@@ -1051,7 +1065,7 @@ export default function AccountingReports() {
         )}
         {!loading && properties.length > 0 && (
           <>
-            {activeTab==='balance' && <BalanceSheetView properties={properties} />}
+            {activeTab==='balance' && <BalanceSheetView properties={properties} advanced={advanced} />}
             {activeTab==='pl'      && <PLView properties={properties} />}
           </>
         )}

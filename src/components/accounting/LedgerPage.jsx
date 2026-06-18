@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, updateTransaction } from '../../api/client'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, updateTransaction } from '../../api/client'
+import OpeningBalancesModal from './OpeningBalancesModal'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
 import AddTransactionModal from './AddTransactionModal'
@@ -74,17 +75,24 @@ export default function LedgerPage() {
   const [editForm, setEditForm]             = useState(null)
   const [savingEdit, setSavingEdit]         = useState(false)
   const [splitTx, setSplitTx]               = useState(null)    // transaction being split
+  const [advanced, setAdvanced]             = useState(false)   // Advanced Accounting beta flag
+  const [openingBalances, setOpeningBalances] = useState(null)
+  const [showOpening, setShowOpening]       = useState(false)
 
   const reload = useCallback(() => {
     setLoading(true)
     Promise.all([
       getLedger(propertyId),
       getInvestors(propertyId),
+      getAccountingSettings().catch(() => ({ advanced: false })),
+      getOpeningBalances(propertyId).catch(() => null),
     ])
-      .then(([ledger, invs]) => {
+      .then(([ledger, invs, settings, opening]) => {
         setProperty(ledger.property)
         setTransactions(ledger.transactions)
         setInvestors(invs)
+        setAdvanced(!!settings.advanced)
+        setOpeningBalances(opening)
         // Surface pending review items: open the ledger and focus the review filter
         if (ledger.transactions.some(t => t.review_status === 'needs_review')) {
           setLedgerOpen(true)
@@ -430,7 +438,17 @@ export default function LedgerPage() {
       {/* Balance Sheet / P&L views — recorded transactions only */}
       {activeView === 'balance' && (
         <div className="flex-1 overflow-y-auto">
-          <BalanceSheet transactions={recordedTx} investors={investors} />
+          {advanced && (
+            <div className="flex items-center justify-end px-6 pt-4">
+              <button
+                onClick={() => setShowOpening(true)}
+                className="flex items-center gap-1.5 text-xs font-medium text-blue-700 px-3 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors"
+              >
+                <Landmark className="w-3.5 h-3.5" /> {openingBalances?.as_of_date ? 'Edit' : 'Set'} opening balances
+              </button>
+            </div>
+          )}
+          <BalanceSheet transactions={recordedTx} investors={investors} opening={advanced ? openingBalances : null} />
         </div>
       )}
       {activeView === 'pl' && (
@@ -863,6 +881,15 @@ export default function LedgerPage() {
           tx={splitTx}
           onSaved={reload}
           onClose={() => setSplitTx(null)}
+        />
+      )}
+
+      {showOpening && (
+        <OpeningBalancesModal
+          propertyId={propertyId}
+          initial={openingBalances}
+          onSaved={reload}
+          onClose={() => setShowOpening(false)}
         />
       )}
 

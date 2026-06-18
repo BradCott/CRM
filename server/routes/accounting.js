@@ -27,6 +27,58 @@ function isValidCategory(name) {
 // Back-compat alias for existing `CATEGORIES.includes(x)` call sites
 const CATEGORIES = { includes: isValidCategory }
 
+// ── Advanced-accounting beta flag (master reversibility switch) ───────────────
+function getSetting(key, fallback = null) {
+  const row = db.prepare('SELECT value FROM app_settings WHERE key = ?').get(key)
+  return row ? row.value : fallback
+}
+function setSetting(key, value) {
+  db.prepare(`INSERT INTO app_settings (key, value) VALUES (?, ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(key, String(value))
+}
+const isAdvanced = () => getSetting('accounting_advanced', '0') === '1'
+
+router.get('/settings', (_req, res) => {
+  res.json({ advanced: isAdvanced() })
+})
+router.patch('/settings', (req, res) => {
+  if (req.body?.advanced !== undefined) setSetting('accounting_advanced', req.body.advanced ? '1' : '0')
+  res.json({ advanced: isAdvanced() })
+})
+
+// ── Opening balances (per property) ───────────────────────────────────────────
+const ZERO_OPENING = {
+  as_of_date: null, cash: 0, real_estate: 0, loan_balance: 0,
+  invested_capital: 0, retained_earnings: 0, notes: null,
+}
+function getOpeningBalances(propertyId) {
+  return db.prepare('SELECT * FROM property_opening_balances WHERE property_id = ?').get(propertyId)
+    || { property_id: Number(propertyId), ...ZERO_OPENING }
+}
+
+router.get('/:propertyId/opening-balances', (req, res) => {
+  res.json(getOpeningBalances(req.params.propertyId))
+})
+
+router.put('/:propertyId/opening-balances', (req, res) => {
+  const b = req.body || {}
+  const num = v => (v === '' || v === null || v === undefined ? 0 : parseFloat(v) || 0)
+  db.prepare(`
+    INSERT INTO property_opening_balances
+      (property_id, as_of_date, cash, real_estate, loan_balance, invested_capital, retained_earnings, notes, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(property_id) DO UPDATE SET
+      as_of_date = excluded.as_of_date, cash = excluded.cash, real_estate = excluded.real_estate,
+      loan_balance = excluded.loan_balance, invested_capital = excluded.invested_capital,
+      retained_earnings = excluded.retained_earnings, notes = excluded.notes, updated_at = datetime('now')
+  `).run(
+    req.params.propertyId, b.as_of_date || null,
+    num(b.cash), num(b.real_estate), num(b.loan_balance),
+    num(b.invested_capital), num(b.retained_earnings), b.notes || null,
+  )
+  res.json(getOpeningBalances(req.params.propertyId))
+})
+
 // ── Portfolio Reports — all properties with full transaction + investor data ──
 
 router.get('/reports', (req, res) => {
@@ -53,11 +105,12 @@ router.get('/reports', (req, res) => {
 
   const result = properties.map(p => ({
     ...p,
-    transactions: txStmt.all(p.id),
-    investors:    invStmt.all(p.id),
+    transactions:     txStmt.all(p.id),
+    investors:        invStmt.all(p.id),
+    opening_balances: getOpeningBalances(p.id),
   }))
 
-  res.json(result)
+  res.json({ advanced: isAdvanced(), properties: result })
 })
 
 // ── Summary — all portfolio properties with computed stats ────────────────────

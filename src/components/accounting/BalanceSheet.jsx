@@ -30,13 +30,19 @@ function SectionLabel({ children }) {
   return <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-4 mb-1">{children}</p>
 }
 
-export default function BalanceSheet({ transactions, investors }) {
+export default function BalanceSheet({ transactions, investors, opening = null }) {
   const sum = txs => txs.reduce((s, t) => s + Number(t.amount), 0)
+  // Opening balances (advanced mode) are additive to transaction-derived figures.
+  const ob = opening || {}
+  const obCash       = Number(ob.cash) || 0
+  const obRealEstate = Number(ob.real_estate) || 0
+  const obLoan       = Number(ob.loan_balance) || 0
+  const obInvested   = Number(ob.invested_capital) || 0
 
   // ── Real Property (at cost) ──────────────────────────────────────────────────
   const building = Math.abs(sum(transactions.filter(t => t.description === 'Building Value')))
   const land     = Math.abs(sum(transactions.filter(t => t.description === 'Land Value')))
-  const totalRealEstate = building + land
+  const totalRealEstate = building + land + obRealEstate
 
   // ── Post-acquisition operational cash ────────────────────────────────────────
   // Includes: Rent, Mortgage payments, Repairs, Sales, Other — but NOT items sourced
@@ -60,7 +66,7 @@ export default function BalanceSheet({ transactions, investors }) {
   // Principal paydowns reduce both cash and the loan balance (negative = cash out)
   const principalPaid = sum(transactions.filter(t => t.category === 'Mortgage Principal'))
 
-  const totalCash = opCash + otherOp + equityContribCash + principalPaid
+  const totalCash = opCash + otherOp + equityContribCash + principalPaid + obCash
 
   const totalAssets = totalRealEstate + totalCash
 
@@ -72,7 +78,7 @@ export default function BalanceSheet({ transactions, investors }) {
       t.category === 'Loan' &&
       t.description !== '1031 Exchange Proceeds'
     )
-  ) + principalPaid
+  ) + principalPaid + obLoan
   const totalLiabilities = loanBalance
 
   // ── Equity ────────────────────────────────────────────────────────────────────
@@ -88,8 +94,8 @@ export default function BalanceSheet({ transactions, investors }) {
     )
   )
 
-  // Investor capital from the investors table
-  const investedCapital = investors.reduce((s, i) => s + Number(i.contribution || 0), 0)
+  // Investor capital from the investors table (+ opening invested capital)
+  const investedCapital = investors.reduce((s, i) => s + Number(i.contribution || 0), 0) + obInvested
 
   // Retained earnings = residual (what's left after accounting for all known equity sources)
   const totalEquity = totalAssets - totalLiabilities
@@ -99,7 +105,7 @@ export default function BalanceSheet({ transactions, investors }) {
   const totalLE    = totalLiabilities + totalEquity
   const balanced   = Math.abs(totalAssets - totalLE) < 2
 
-  const noData = totalRealEstate === 0 && totalLiabilities === 0
+  const noData = totalAssets === 0 && totalLiabilities === 0 && totalEquity === 0
 
   if (noData) {
     return (
