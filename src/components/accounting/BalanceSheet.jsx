@@ -94,8 +94,12 @@ export default function BalanceSheet({ transactions, investors, opening = null }
     )
   )
 
-  // Investor capital from the investors table (+ opening invested capital)
-  const investedCapital = investors.reduce((s, i) => s + Number(i.contribution || 0), 0) + obInvested
+  // Invested capital = actual equity contributions recorded (ties to the cash that
+  // hit the bank, now attributed to investors). Falls back to the legacy
+  // property_investors table only when no equity contributions are recorded yet.
+  const investedFromContributions = equityContribCash
+  const investedFromTable = investors.reduce((s, i) => s + Number(i.contribution || 0), 0)
+  const investedCapital = (investedFromContributions !== 0 ? investedFromContributions : investedFromTable) + obInvested
 
   // Retained earnings = residual (what's left after accounting for all known equity sources)
   const totalEquity = totalAssets - totalLiabilities

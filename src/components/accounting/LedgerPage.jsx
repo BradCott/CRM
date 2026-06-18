@@ -17,6 +17,7 @@ import BudgetVsActual from './BudgetVsActual'
 import Bills from './Bills'
 import Vendors from './Vendors'
 import Distributions from './Distributions'
+import CapitalAccounts from './CapitalAccounts'
 import PlaidConnect from './PlaidConnect'
 import SplitTransactionModal from './SplitTransactionModal'
 import AmortizationCard from './AmortizationCard'
@@ -434,6 +435,7 @@ export default function LedgerPage() {
             { key: 'budget',    label: 'Budget',        Icon: Target },
             { key: 'bills',     label: 'Bills',         Icon: Receipt },
             { key: 'vendors',   label: 'Vendors',       Icon: Store },
+            { key: 'capital',       label: 'Capital',       Icon: Users },
             { key: 'distributions', label: 'Distributions', Icon: HandCoins },
           ].map(({ key, label, Icon }) => (
             <button
@@ -497,6 +499,11 @@ export default function LedgerPage() {
       {activeView === 'vendors' && (
         <div className="flex-1 overflow-y-auto">
           <Vendors transactions={recordedTx} onChanged={reload} />
+        </div>
+      )}
+      {activeView === 'capital' && (
+        <div className="flex-1 overflow-y-auto">
+          <CapitalAccounts propertyId={propertyId} />
         </div>
       )}
       {activeView === 'distributions' && (

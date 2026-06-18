@@ -647,6 +647,56 @@ router.get('/:propertyId/investors-list', (req, res) => {
   res.json(db.prepare('SELECT id, name, entity_type FROM investors ORDER BY name').all())
 })
 
+/**
+ * GET capital accounts for a property — per investor: committed (from the cap
+ * table), contributed (recorded equity contributions attributed to them),
+ * distributions received, and the resulting capital balance.
+ */
+router.get('/:propertyId/capital-accounts', (req, res) => {
+  const pid = req.params.propertyId
+  const committed = db.prepare(`
+    SELECT l.investor_id, i.name, i.entity_type, l.contribution AS committed
+    FROM investor_property_links l JOIN investors i ON i.id = l.investor_id
+    WHERE l.property_id = ?
+  `).all(pid)
+  const contributed = db.prepare(`
+    SELECT investor_id, COALESCE(SUM(amount), 0) AS total
+    FROM accounting_transactions
+    WHERE property_id = ? AND category = 'Equity Contribution'
+      AND review_status = 'recorded' AND investor_id IS NOT NULL
+    GROUP BY investor_id
+  `).all(pid)
+  const dist = db.prepare(`
+    SELECT investor_id, COALESCE(SUM(amount), 0) AS total
+    FROM investor_distributions WHERE property_id = ? GROUP BY investor_id
+  `).all(pid)
+
+  const contribMap = new Map(contributed.map(r => [r.investor_id, r.total]))
+  const distMap    = new Map(dist.map(r => [r.investor_id, r.total]))
+  const byId       = new Map()
+  for (const c of committed) byId.set(c.investor_id, { investor_id: c.investor_id, name: c.name, entity_type: c.entity_type, committed: c.committed || 0 })
+  // Include anyone who contributed but isn't in the cap table
+  for (const c of contributed) {
+    if (byId.has(c.investor_id)) continue
+    const inv = db.prepare('SELECT name, entity_type FROM investors WHERE id = ?').get(c.investor_id)
+    byId.set(c.investor_id, { investor_id: c.investor_id, name: inv?.name || 'Unknown', entity_type: inv?.entity_type, committed: 0 })
+  }
+
+  const rows = [...byId.values()].map(r => {
+    const contributed_amt = contribMap.get(r.investor_id) || 0
+    const distributions   = distMap.get(r.investor_id) || 0
+    return {
+      ...r,
+      contributed:  contributed_amt,
+      distributions,
+      capital_balance: contributed_amt - distributions,
+      unfunded:        Math.max(0, (r.committed || 0) - contributed_amt),
+    }
+  }).sort((a, b) => b.committed - a.committed || a.name.localeCompare(b.name))
+
+  res.json(rows)
+})
+
 /** PATCH set/clear the investor attributed to a transaction. */
 router.patch('/transactions/:id/investor', (req, res) => {
   const tx = db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id)

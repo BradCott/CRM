@@ -189,6 +189,7 @@ export const recordAllTransactions    = (propertyId)    => req('POST',   `/accou
 export const autoRecordTransactions   = (propertyId)    => req('POST',   `/accounting/${propertyId}/auto-record`)
 export const getReviewSuggestions     = (propertyId)    => req('GET',    `/accounting/${propertyId}/review-suggestions`)
 export const getPropertyInvestorsList = (propertyId)    => req('GET',    `/accounting/${propertyId}/investors-list`)
+export const getCapitalAccounts       = (propertyId)    => req('GET',    `/accounting/${propertyId}/capital-accounts`)
 export const setTransactionInvestor   = (id, investorId)=> req('PATCH',  `/accounting/transactions/${id}/investor`, { investor_id: investorId })
 export const getInvestorSuggestions   = (propertyId)    => req('GET',    `/accounting/${propertyId}/investor-suggestions`)
 export const autoAttributeInvestors   = (propertyId)    => req('POST',   `/accounting/${propertyId}/auto-attribute-investors`)

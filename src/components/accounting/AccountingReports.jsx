@@ -57,7 +57,8 @@ function computeBS(transactions, investors, opening = null) {
   const acquisitionCredits = sum(transactions.filter(t =>
     ['Rent','Other'].includes(t.category) && t.source === 'Settlement Statement' && Number(t.amount) > 0
   ))
-  const investedCapital = investors.reduce((s, i) => s + Number(i.contribution || 0), 0) + obInvested
+  const investedFromTable = investors.reduce((s, i) => s + Number(i.contribution || 0), 0)
+  const investedCapital = (equityContribCash !== 0 ? equityContribCash : investedFromTable) + obInvested
   const totalAssets      = totalRealEstate + obRealEstate + totalCash + obCash
   const totalLiabilities = loanBalance + obLoan
   const totalEquity      = totalAssets - totalLiabilities
