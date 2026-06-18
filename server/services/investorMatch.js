@@ -4,6 +4,33 @@
  */
 import db from '../db.js'
 
+// ── Investor wire matching (shared by accounting + plaid sync) ────────────────
+
+/** Investor roster with contact-name aliases, for matching bank-wire descriptions. */
+export function investorRosterWithAliases() {
+  const investors = db.prepare('SELECT id, name FROM investors ORDER BY name').all()
+  const contacts  = db.prepare('SELECT investor_id, name FROM investor_contacts').all()
+  const byId = new Map(investors.map(i => [i.id, { id: i.id, name: i.name, aliases: [i.name] }]))
+  for (const c of contacts) byId.get(c.investor_id)?.aliases.push(c.name)
+  return [...byId.values()]
+}
+
+/** Best investor match for a description. Returns { investor_id, name, score } | null. */
+export function matchInvestorWire(description, roster) {
+  const d = normalizeName(description || '')
+  if (!d) return null
+  let best = null, bestScore = 0
+  for (const inv of roster) {
+    for (const alias of inv.aliases) {
+      const a = normalizeName(alias)
+      if (!a) continue
+      const score = (d.includes(a) || a.includes(d)) ? 0.95 : nameSimilarity(d, a)
+      if (score > bestScore) { bestScore = score; best = { investor_id: inv.id, name: inv.name, score } }
+    }
+  }
+  return best && bestScore >= 0.6 ? best : null
+}
+
 // ── Name normalization ────────────────────────────────────────────────────────
 
 const STRIP_SUFFIXES = /\b(llc|ltd|inc|corp|co|lp|l\.p\.|trust|partnership|group|holdings|enterprises|associates|properties|revocable|irrevocable|family|the|and|&)\b/gi

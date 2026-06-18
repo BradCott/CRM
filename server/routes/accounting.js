@@ -2,7 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import * as XLSX from 'xlsx'
 import db from '../db.js'
-import { autoLinkInvestors, normalizeName, nameSimilarity } from '../services/investorMatch.js'
+import { autoLinkInvestors, investorRosterWithAliases, matchInvestorWire } from '../services/investorMatch.js'
 import { categorizeBatch, learnRules, ruleConfidence } from '../utils/categorize.js'
 import { generateSchedule } from '../utils/amortization.js'
 
@@ -642,34 +642,6 @@ router.post('/:propertyId/auto-record', (req, res) => {
 
 // ── Equity contributions ↔ investors ──────────────────────────────────────────
 
-/** Investor roster (id, name) + their contact names, for matching + the dropdown. */
-function investorRoster() {
-  const investors = db.prepare('SELECT id, name FROM investors ORDER BY name').all()
-  const contacts  = db.prepare('SELECT investor_id, name FROM investor_contacts').all()
-  const byId = new Map(investors.map(i => [i.id, { ...i, aliases: [i.name] }]))
-  for (const c of contacts) byId.get(c.investor_id)?.aliases.push(c.name)
-  return [...byId.values()]
-}
-
-/** Best investor match for a bank-wire description. Returns { investor_id, name, score } | null. */
-function matchInvestorToDescription(description, roster) {
-  const desc = normalizeName(description || '')
-  if (!desc) return null
-  let best = null, bestScore = 0
-  for (const inv of roster) {
-    for (const alias of inv.aliases) {
-      const a = normalizeName(alias)
-      if (!a) continue
-      // Strong signal: the wire text contains the investor/contact name (or vice-versa)
-      let score = 0
-      if (desc.includes(a) || a.includes(desc)) score = 0.95
-      else score = nameSimilarity(desc, a)
-      if (score > bestScore) { bestScore = score; best = { investor_id: inv.id, name: inv.name, score } }
-    }
-  }
-  return best && bestScore >= 0.6 ? best : null
-}
-
 /** GET roster for the investor dropdown on a property's ledger. */
 router.get('/:propertyId/investors-list', (req, res) => {
   res.json(db.prepare('SELECT id, name, entity_type FROM investors ORDER BY name').all())
@@ -688,34 +660,56 @@ router.patch('/transactions/:id/investor', (req, res) => {
   res.json(updated)
 })
 
-/** GET AI investor suggestions for unattributed Equity Contribution transactions. */
+/**
+ * GET AI investor suggestions. Covers (a) Equity Contribution rows missing an
+ * investor, and (b) any unattributed money-in transaction (a deposit/wire) whose
+ * description matches an investor — even if it was auto-categorized as Other —
+ * so incoming investor wires surface as equity even before recategorizing.
+ */
 router.get('/:propertyId/investor-suggestions', (req, res) => {
-  const roster = investorRoster()
+  const roster = investorRosterWithAliases()
   const txs = db.prepare(`
-    SELECT id, description FROM accounting_transactions
-    WHERE property_id = ? AND category = 'Equity Contribution' AND investor_id IS NULL
+    SELECT id, description, category, amount FROM accounting_transactions
+    WHERE property_id = ? AND investor_id IS NULL
+      AND (category = 'Equity Contribution' OR amount > 0)
   `).all(req.params.propertyId)
   const out = {}
   for (const tx of txs) {
-    const m = matchInvestorToDescription(tx.description, roster)
-    if (m) out[tx.id] = { investor_id: m.investor_id, name: m.name, confidence: m.score >= 0.9 ? 'high' : 'medium' }
+    const m = matchInvestorWire(tx.description, roster)
+    if (!m) continue
+    out[tx.id] = {
+      investor_id: m.investor_id,
+      name:        m.name,
+      confidence:  m.score >= 0.9 ? 'high' : 'medium',
+      // Suggest recategorizing a money-in row that isn't equity yet
+      suggest_equity: tx.category !== 'Equity Contribution' && Number(tx.amount) > 0,
+    }
   }
   res.json(out)
 })
 
-/** POST auto-attribute confident investor matches to unattributed equity contributions. */
+/**
+ * POST auto-attribute high-confidence investor matches. For a money-in row that
+ * matches an investor but isn't categorized as equity yet, also set the category
+ * to 'Equity Contribution'. Stays in needs_review so the user still confirms.
+ */
 router.post('/:propertyId/auto-attribute-investors', (req, res) => {
-  const roster = investorRoster()
+  const roster = investorRosterWithAliases()
   const txs = db.prepare(`
-    SELECT id, description FROM accounting_transactions
-    WHERE property_id = ? AND category = 'Equity Contribution' AND investor_id IS NULL
+    SELECT id, description, category, amount FROM accounting_transactions
+    WHERE property_id = ? AND investor_id IS NULL
+      AND (category = 'Equity Contribution' OR amount > 0)
   `).all(req.params.propertyId)
-  const upd = db.prepare('UPDATE accounting_transactions SET investor_id = ? WHERE id = ?')
+  const setBoth = db.prepare(`UPDATE accounting_transactions SET investor_id = ?, category = 'Equity Contribution' WHERE id = ?`)
+  const setInv  = db.prepare(`UPDATE accounting_transactions SET investor_id = ? WHERE id = ?`)
   let attributed = 0
   const run = db.transaction(() => {
     for (const tx of txs) {
-      const m = matchInvestorToDescription(tx.description, roster)
-      if (m && m.score >= 0.9) { upd.run(m.investor_id, tx.id); attributed++ }
+      const m = matchInvestorWire(tx.description, roster)
+      if (!m || m.score < 0.9) continue
+      if (tx.category !== 'Equity Contribution' && Number(tx.amount) > 0) setBoth.run(m.investor_id, tx.id)
+      else setInv.run(m.investor_id, tx.id)
+      attributed++
     }
   })
   run()

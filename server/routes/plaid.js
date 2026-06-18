@@ -3,6 +3,7 @@ import { createRequire } from 'node:module'
 import db from '../db.js'
 import { categorizeBatch } from '../utils/categorize.js'
 import { matchMortgageSplit, markRowConsumed } from '../utils/amortization.js'
+import { investorRosterWithAliases, matchInvestorWire } from '../services/investorMatch.js'
 
 // plaid is CJS — use createRequire so it loads cleanly in an ESM project
 const require = createRequire(import.meta.url)
@@ -195,9 +196,11 @@ router.post('/connections/:id/sync', async (req, res) => {
     )
     const insertStmt = db.prepare(`
       INSERT INTO accounting_transactions
-        (property_id, date, description, category, amount, source, review_status, external_id)
-      VALUES (?, ?, ?, ?, ?, 'Bank Statement', 'needs_review', ?)
+        (property_id, date, description, category, amount, source, review_status, external_id, investor_id)
+      VALUES (?, ?, ?, ?, ?, 'Bank Statement', 'needs_review', ?, ?)
     `)
+    // Roster for detecting investor wires (deposits from a known investor → equity)
+    const roster = investorRosterWithAliases()
     const insertSplit = db.prepare(`
       INSERT INTO accounting_transactions
         (property_id, date, description, category, amount, source, review_status, external_id, split_group)
@@ -224,8 +227,14 @@ router.post('/connections/:id/sync', async (req, res) => {
         return
       }
 
-      const category = suggestions[i]?.category || 'Other'
-      insertStmt.run(conn.property_id, t.date, t.description, category, t.amount, t.plaid_transaction_id)
+      let category = suggestions[i]?.category || 'Other'
+      let investorId = null
+      // Money-in from a recognized investor → tag as Equity Contribution + attribute
+      if (Number(t.amount) > 0) {
+        const m = matchInvestorWire(t.description, roster)
+        if (m && m.score >= 0.9) { category = 'Equity Contribution'; investorId = m.investor_id }
+      }
+      insertStmt.run(conn.property_id, t.date, t.description, category, t.amount, t.plaid_transaction_id, investorId)
       inserted++
     })
 

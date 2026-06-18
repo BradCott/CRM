@@ -783,7 +783,7 @@ export default function LedgerPage() {
                         <td className="px-4 py-3 border-b border-slate-100 text-slate-800 max-w-[260px] font-medium">
                           <span className="truncate block">{tx.description}</span>
                           {tx.vendor && <span className="text-xs text-slate-400 font-normal">{tx.vendor}</span>}
-                          {(tx.category === 'Equity Contribution' || reviewCats[tx.id] === 'Equity Contribution') && (
+                          {(tx.category === 'Equity Contribution' || reviewCats[tx.id] === 'Equity Contribution' || investorSug[tx.id]) && (
                             <div className="mt-1 flex items-center gap-1.5">
                               <Users className="w-3 h-3 text-slate-400 shrink-0" />
                               <select
@@ -800,11 +800,14 @@ export default function LedgerPage() {
                               </select>
                               {!tx.investor_id && investorSug[tx.id] && (
                                 <button
-                                  onClick={() => handleSetInvestor(tx.id, investorSug[tx.id].investor_id)}
+                                  onClick={() => {
+                                    if (investorSug[tx.id].suggest_equity) setReviewCats(prev => ({ ...prev, [tx.id]: 'Equity Contribution' }))
+                                    handleSetInvestor(tx.id, investorSug[tx.id].investor_id)
+                                  }}
                                   className="text-xs font-medium text-blue-600 hover:underline shrink-0"
-                                  title={`Auto-pilot match (${investorSug[tx.id].confidence} confidence)`}
+                                  title={`Auto-pilot match (${investorSug[tx.id].confidence} confidence)${investorSug[tx.id].suggest_equity ? ' — also sets category to Equity Contribution' : ''}`}
                                 >
-                                  ✓ accept
+                                  {investorSug[tx.id].suggest_equity ? '✓ equity from ' + investorSug[tx.id].name.split(' ')[0] : '✓ accept'}
                                 </button>
                               )}
                             </div>
