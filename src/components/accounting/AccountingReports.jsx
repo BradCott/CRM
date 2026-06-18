@@ -40,10 +40,12 @@ function computeBS(transactions, investors) {
     t.category === 'Other' && t.source !== 'Settlement Statement'
   ))
   const equityContribCash = sum(transactions.filter(t => t.category === 'Equity Contribution'))
-  const totalCash = opCash + otherOp + equityContribCash
+  // Principal paydowns are cash out AND reduce the loan (negative amounts).
+  const principalPaid = sum(transactions.filter(t => t.category === 'Mortgage Principal'))
+  const totalCash = opCash + otherOp + equityContribCash + principalPaid
   const loanBalance = sum(transactions.filter(t =>
     t.category === 'Loan' && t.description !== '1031 Exchange Proceeds'
-  ))
+  )) + principalPaid
   const exchange1031       = sum(transactions.filter(t => t.description === '1031 Exchange Proceeds'))
   const acquisitionCredits = sum(transactions.filter(t =>
     ['Rent','Other'].includes(t.category) && t.source === 'Settlement Statement' && Number(t.amount) > 0

@@ -57,18 +57,22 @@ export default function BalanceSheet({ transactions, investors }) {
   // Equity contributions from investors flow through as cash
   const equityContribCash = sum(transactions.filter(t => t.category === 'Equity Contribution'))
 
-  const totalCash = opCash + otherOp + equityContribCash
+  // Principal paydowns reduce both cash and the loan balance (negative = cash out)
+  const principalPaid = sum(transactions.filter(t => t.category === 'Mortgage Principal'))
+
+  const totalCash = opCash + otherOp + equityContribCash + principalPaid
 
   const totalAssets = totalRealEstate + totalCash
 
   // ── Liabilities ───────────────────────────────────────────────────────────────
-  // Loan Proceeds = mortgage debt (excludes 1031 exchange which is equity, not debt)
+  // Loan Proceeds = mortgage debt (excludes 1031 exchange which is equity, not debt),
+  // reduced by principal payments recorded against the loan.
   const loanBalance = sum(
     transactions.filter(t =>
       t.category === 'Loan' &&
       t.description !== '1031 Exchange Proceeds'
     )
-  )
+  ) + principalPaid
   const totalLiabilities = loanBalance
 
   // ── Equity ────────────────────────────────────────────────────────────────────
@@ -139,7 +143,7 @@ export default function BalanceSheet({ transactions, investors }) {
 
       {loanBalance > 0 && (
         <Row label="Mortgage Payable" value={loanBalance}
-          note="Shown at original balance — actual outstanding balance is lower as principal is paid down" />
+          note="Outstanding balance — reduced by principal payments recorded against the loan" />
       )}
       {loanBalance === 0 && (
         <p className="text-sm text-slate-400 py-1.5">No mortgage recorded</p>
