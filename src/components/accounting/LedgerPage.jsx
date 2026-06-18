@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, updateTransaction } from '../../api/client'
+import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles } from 'lucide-react'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, updateTransaction } from '../../api/client'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
 import AddTransactionModal from './AddTransactionModal'
@@ -68,6 +68,8 @@ export default function LedgerPage() {
   const [reviewCats, setReviewCats]         = useState({})     // tx.id → category override
   const [recordingId, setRecordingId]       = useState(null)
   const [recordingAll, setRecordingAll]     = useState(false)
+  const [autoRecording, setAutoRecording]   = useState(false)
+  const [suggestions, setSuggestions]       = useState({})   // tx.id → { suggested, confidence, hit_count }
   const [editingId, setEditingId]           = useState(null)   // tx.id being edited inline
   const [editForm, setEditForm]             = useState(null)
   const [savingEdit, setSavingEdit]         = useState(false)
@@ -87,6 +89,17 @@ export default function LedgerPage() {
         if (ledger.transactions.some(t => t.review_status === 'needs_review')) {
           setLedgerOpen(true)
           setReviewFilter('review')
+          // Fetch auto-pilot confidence + pre-fill suggested categories
+          getReviewSuggestions(propertyId).then(list => {
+            const map = {}
+            for (const s of list) map[s.id] = s
+            setSuggestions(map)
+            setReviewCats(prev => {
+              const next = { ...prev }
+              for (const s of list) if (s.suggested && next[s.id] === undefined) next[s.id] = s.suggested
+              return next
+            })
+          }).catch(() => {})
         }
       })
       .catch(e => setError(e.message))
@@ -145,6 +158,23 @@ export default function LedgerPage() {
       setRecordingAll(false)
     }
   }
+
+  async function handleAutoRecord() {
+    setAutoRecording(true)
+    try {
+      const { recorded, left } = await autoRecordTransactions(propertyId)
+      await reload()
+      if (recorded === 0) {
+        alert('Nothing recorded yet — the auto-pilot needs to see you categorize these merchants a few times first. Record some manually and it will learn.')
+      } else {
+        alert(`Auto-recorded ${recorded} confident transaction${recorded !== 1 ? 's' : ''}. ${left} left in Needs Review for you to check.`)
+      }
+    } finally {
+      setAutoRecording(false)
+    }
+  }
+
+  const confidentCount = Object.values(suggestions).filter(s => s.confidence === 'high').length
 
   function startEdit(tx) {
     setEditingId(tx.id)
@@ -602,15 +632,27 @@ export default function LedgerPage() {
                   ))}
                 </div>
                 {needsReview.length > 0 && (
-                  <button
-                    onClick={handleRecordAll}
-                    disabled={recordingAll}
-                    className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 px-3 py-1.5 rounded-lg border border-emerald-200 hover:bg-emerald-50 transition-colors disabled:opacity-50"
-                  >
-                    {recordingAll
-                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Recording…</>
-                      : <><Check className="w-3.5 h-3.5" /> Record all {needsReview.length}</>}
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={handleAutoRecord}
+                      disabled={autoRecording || recordingAll}
+                      title="Record everything the auto-pilot is confident about (learned from how you've categorized these merchants before). Questionable ones stay in Needs Review."
+                      className="flex items-center gap-1.5 text-xs font-medium text-blue-700 px-3 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors disabled:opacity-50"
+                    >
+                      {autoRecording
+                        ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Working…</>
+                        : <><Sparkles className="w-3.5 h-3.5" /> Auto-record{confidentCount > 0 ? ` ${confidentCount}` : ''}</>}
+                    </button>
+                    <button
+                      onClick={handleRecordAll}
+                      disabled={recordingAll || autoRecording}
+                      className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 px-3 py-1.5 rounded-lg border border-emerald-200 hover:bg-emerald-50 transition-colors disabled:opacity-50"
+                    >
+                      {recordingAll
+                        ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Recording…</>
+                        : <><Check className="w-3.5 h-3.5" /> Record all {needsReview.length}</>}
+                    </button>
+                  </div>
                 )}
               </div>
             )}
@@ -708,11 +750,19 @@ export default function LedgerPage() {
                         </td>
                         <td className="px-4 py-3 border-b border-slate-100">
                           {pending ? (
-                            <CategorySelect
-                              value={reviewCats[tx.id] ?? tx.category}
-                              onChange={v => setReviewCats(prev => ({ ...prev, [tx.id]: v }))}
-                              className="text-xs border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
-                            />
+                            <div className="flex items-center gap-1.5">
+                              <CategorySelect
+                                value={reviewCats[tx.id] ?? tx.category}
+                                onChange={v => setReviewCats(prev => ({ ...prev, [tx.id]: v }))}
+                                className="text-xs border border-slate-200 rounded-lg px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+                              />
+                              {(() => {
+                                const conf = suggestions[tx.id]?.confidence
+                                if (conf === 'high') return <span title="High confidence — the auto-pilot has seen you categorize this merchant before" className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+                                if (conf === 'medium') return <span title="Some history — confirm to teach the auto-pilot" className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                                return <span title="New to the auto-pilot — your choice will train it" className="w-2 h-2 rounded-full bg-slate-300 shrink-0" />
+                              })()}
+                            </div>
                           ) : (
                             <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${catStyle}`}>
                               {tx.category}

@@ -186,6 +186,8 @@ export const reconcileTransaction     = (id, val)       => req('PATCH',  `/accou
 export const recordTransaction        = (id, d = {})    => req('PATCH',  `/accounting/transactions/${id}/record`, d)
 export const unrecordTransaction      = (id)            => req('PATCH',  `/accounting/transactions/${id}/unrecord`)
 export const recordAllTransactions    = (propertyId)    => req('POST',   `/accounting/${propertyId}/transactions/record-all`)
+export const autoRecordTransactions   = (propertyId)    => req('POST',   `/accounting/${propertyId}/auto-record`)
+export const getReviewSuggestions     = (propertyId)    => req('GET',    `/accounting/${propertyId}/review-suggestions`)
 
 // Budgets
 export const getBudget  = (propertyId, year) => req('GET', `/accounting/${propertyId}/budget?year=${year}`)

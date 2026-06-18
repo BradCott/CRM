@@ -71,6 +71,27 @@ export function lookupRules(keys) {
   return map
 }
 
+// A merchant the user has confirmed this many times is "high confidence" and
+// safe to auto-record. 1–2 confirmations = "medium" (suggest but keep in review).
+export const AUTO_CONFIDENT_HITS = 3
+
+/**
+ * How confident are we about a description's category, based on what the user
+ * has done before? Returns { key, category, hitCount, confidence }.
+ */
+export function ruleConfidence(description) {
+  const key = merchantKey(description)
+  if (!key) return { key: '', category: null, hitCount: 0, confidence: 'low' }
+  const row = db.prepare('SELECT category, hit_count FROM transaction_rules WHERE merchant_key = ?').get(key)
+  if (!row) return { key, category: null, hitCount: 0, confidence: 'low' }
+  return {
+    key,
+    category:   row.category,
+    hitCount:   row.hit_count,
+    confidence: row.hit_count >= AUTO_CONFIDENT_HITS ? 'high' : 'medium',
+  }
+}
+
 /** Record approved categorizations as rules (upsert, bumping hit_count). */
 export function learnRules(items) {
   const upsert = db.prepare(`

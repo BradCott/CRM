@@ -3,7 +3,7 @@ import multer from 'multer'
 import * as XLSX from 'xlsx'
 import db from '../db.js'
 import { autoLinkInvestors } from '../services/investorMatch.js'
-import { categorizeBatch, learnRules } from '../utils/categorize.js'
+import { categorizeBatch, learnRules, ruleConfidence } from '../utils/categorize.js'
 import { generateSchedule } from '../utils/amortization.js'
 
 const router = Router()
@@ -127,6 +127,9 @@ router.post('/:propertyId/transactions', (req, res) => {
     created.push({ id: r.lastInsertRowid, property_id: Number(propertyId), date, description, category, amount: parseFloat(amount), source, vendor: vendor || null })
   }
 
+  // Study every categorization the user makes so the auto-pilot improves over time
+  try { learnRules(created.map(t => ({ description: t.description, category: t.category }))) } catch (_) {}
+
   res.status(201).json(created)
 })
 
@@ -141,6 +144,8 @@ router.put('/transactions/:id', (req, res) => {
   db.prepare(`
     UPDATE accounting_transactions SET date=?, description=?, category=?, amount=?, vendor=? WHERE id=?
   `).run(date, description, category, parseFloat(amount), vendor || null, req.params.id)
+  // A manual correction is a strong signal — teach the auto-pilot
+  try { learnRules([{ description, category }]) } catch (_) {}
   const updated = db.prepare('SELECT * FROM accounting_transactions WHERE id=?').get(req.params.id)
   res.json(updated)
 })
@@ -529,6 +534,55 @@ router.post('/:propertyId/transactions/record-all', (req, res) => {
 
   try { learnRules(pending.map(p => ({ description: p.description, category: p.category }))) } catch (_) {}
   res.json({ recorded: pending.length })
+})
+
+// ── AI auto-pilot ─────────────────────────────────────────────────────────────
+// Confidence per needs-review item, based on what the user has done before.
+router.get('/:propertyId/review-suggestions', (req, res) => {
+  const pending = db.prepare(
+    `SELECT id, description, category FROM accounting_transactions
+     WHERE property_id = ? AND review_status = 'needs_review'`
+  ).all(req.params.propertyId)
+
+  res.json(pending.map(tx => {
+    const r = ruleConfidence(tx.description)
+    return {
+      id:         tx.id,
+      suggested:  r.category && isValidCategory(r.category) ? r.category : null,
+      confidence: r.category ? r.confidence : 'low',
+      hit_count:  r.hitCount,
+    }
+  }))
+})
+
+// Auto-record every needs-review item the auto-pilot is confident about
+// (a learned merchant rule the user has confirmed enough times). Questionable
+// items are left in Needs Review. Fully reversible via Unrecord.
+router.post('/:propertyId/auto-record', (req, res) => {
+  const pending = db.prepare(
+    `SELECT id, description, category FROM accounting_transactions
+     WHERE property_id = ? AND review_status = 'needs_review'`
+  ).all(req.params.propertyId)
+
+  const upd = db.prepare(
+    `UPDATE accounting_transactions SET review_status = 'recorded', category = ? WHERE id = ?`
+  )
+  const learned = []
+  const run = db.transaction(() => {
+    let recorded = 0
+    for (const tx of pending) {
+      const r = ruleConfidence(tx.description)
+      if (r.confidence === 'high' && r.category && isValidCategory(r.category)) {
+        upd.run(r.category, tx.id)
+        learned.push({ description: tx.description, category: r.category })
+        recorded++
+      }
+    }
+    return recorded
+  })
+  const recorded = run()
+  try { learnRules(learned) } catch (_) {}
+  res.json({ recorded, left: pending.length - recorded })
 })
 
 // ── AI + rules categorization for bank/Plaid imports ──────────────────────────
