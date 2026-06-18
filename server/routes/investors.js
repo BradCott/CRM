@@ -135,6 +135,11 @@ const EXTRA_INVESTORS = [
   { name: 'Julie Snider', entity_type: 'Individual', address: '7236 Dalewood Lane', city: 'Dallas', state: 'TX', zip: '75214', email: null, contacts: [], cells: {}, total: 0 },
 ]
 
+// Strict identity key: lowercase + collapse non-alphanumerics, but DON'T strip
+// distinguishing words. Keeps "The Brad Cottam Trust" separate from "Brad Cottam"
+// (normalizeName would collapse both to "brad cottam" and merge them on import).
+const strictKey = s => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+
 /** Split a "City, ST 12345" cell into parts. */
 function splitCityStateZip(s) {
   if (!s) return { city: null, state: null, zip: null }
@@ -185,7 +190,7 @@ function parseRichAllocations(raw) {
 
     const { city, state, zip } = splitCityStateZip(cellStr(row[cityIdx]))
     const rowEmail = cellStr(row[emailIdx])
-    const resolved = ENTITY_RESOLUTION[normalizeName(matrixName)]
+    const resolved = ENTITY_RESOLUTION[strictKey(matrixName)]
 
     const inv = {
       matrixName,
@@ -206,7 +211,7 @@ function parseRichAllocations(raw) {
 
   // Append roster-only investors not present in the matrix
   for (const extra of EXTRA_INVESTORS) {
-    if (!investors.some(i => normalizeName(i.name) === normalizeName(extra.name))) investors.push({ ...extra })
+    if (!investors.some(i => strictKey(i.name) === strictKey(extra.name))) investors.push({ ...extra })
   }
 
   return { sheetName: 'Investor Allocataions', columns, investors, legend: [], rich: true }
@@ -367,9 +372,10 @@ router.post('/allocations/import', upload.single('file'), (req, res) => {
     const parsed = parseAllocations(wb)
     if (parsed.error) return res.status(400).json({ error: parsed.error })
 
-    // Match against existing master investors by normalized name
+    // Match against existing master investors by strict name key (keeps e.g.
+    // "The Brad Cottam Trust" distinct from "Brad Cottam" so allocations don't merge)
     const existing = db.prepare('SELECT id, name FROM investors').all()
-    const byNorm = new Map(existing.map(r => [normalizeName(r.name), r.id]))
+    const byNorm = new Map(existing.map(r => [strictKey(r.name), r.id]))
 
     const createInvestor = db.prepare(`
       INSERT INTO investors (name, entity_type, email, address, city, state, zip, is_incomplete)
@@ -394,7 +400,7 @@ router.post('/allocations/import', upload.single('file'), (req, res) => {
     let investorsCreated = 0, investorsMatched = 0, linksUpserted = 0, skipped = 0, contactsCreated = 0
     const run = db.transaction(() => {
       for (const inv of parsed.investors) {
-        const norm = normalizeName(inv.name)
+        const norm = strictKey(inv.name)
         let id = byNorm.get(norm)
         if (id) {
           investorsMatched++
