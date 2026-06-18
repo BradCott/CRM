@@ -283,6 +283,7 @@ export const getInvestor = (id) => req('GET', `/investors/${id}`)
 export const createPlaidLinkToken = ()        => req('POST',   '/plaid/link-token')
 export const exchangePlaidToken   = (data)    => req('POST',   '/plaid/exchange-token', data)
 export const getPlaidConnections  = (propId)  => req('GET',    `/plaid/${propId}/connections`)
+export const getPlaidBalance      = (propId)  => req('GET',    `/plaid/${propId}/balance`)
 export const syncPlaidConnection  = (connId)  => req('POST',   `/plaid/connections/${connId}/sync`)
 export const disconnectPlaid      = (connId)  => req('DELETE', `/plaid/connections/${connId}`)
 

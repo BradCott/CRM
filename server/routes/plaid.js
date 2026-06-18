@@ -104,6 +104,40 @@ router.get('/:propertyId/connections', (req, res) => {
   res.json(rows)
 })
 
+// ── GET /plaid/:propertyId/balance ────────────────────────────────────────────
+// Live balance of the property's linked account(s) — used to auto-fill the
+// opening cash field. Sums the current balance across all linked accounts.
+router.get('/:propertyId/balance', async (req, res) => {
+  const client = getClient()
+  if (!client) return res.status(503).json({ error: 'Plaid not configured' })
+
+  const conns = db.prepare('SELECT * FROM bank_connections WHERE property_id = ?').all(req.params.propertyId)
+  if (!conns.length) return res.status(404).json({ error: 'No bank account linked to this property' })
+
+  try {
+    let total = 0
+    const accounts = []
+    for (const conn of conns) {
+      const { data } = await client.accountsBalanceGet({ access_token: conn.plaid_access_token })
+      // Restrict to the specific linked account when one was chosen at link time
+      const matching = (data.accounts || []).filter(a => !conn.plaid_account_id || a.account_id === conn.plaid_account_id)
+      for (const a of matching) {
+        const bal = a.balances?.current ?? a.balances?.available ?? 0
+        total += Number(bal) || 0
+        accounts.push({
+          name: a.name || conn.account_name,
+          mask: a.mask || conn.account_mask,
+          balance: Number(bal) || 0,
+        })
+      }
+    }
+    res.json({ total, as_of: new Date().toISOString().slice(0, 10), accounts })
+  } catch (err) {
+    console.error('[plaid] balance:', plaidErr(err))
+    res.status(500).json({ error: plaidErr(err) })
+  }
+})
+
 // ── POST /plaid/connections/:id/sync ─────────────────────────────────────────
 
 router.post('/connections/:id/sync', async (req, res) => {

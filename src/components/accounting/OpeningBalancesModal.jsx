@@ -2,9 +2,9 @@
 // without entering full history. Additive to transaction-derived figures and
 // only used when Advanced Accounting (beta) is on.
 import { useState } from 'react'
-import { X, Landmark, Loader2, AlertCircle, CheckCircle } from 'lucide-react'
+import { X, Landmark, Loader2, AlertCircle, CheckCircle, Building2 } from 'lucide-react'
 import Button from '../ui/Button'
-import { saveOpeningBalances } from '../../api/client'
+import { saveOpeningBalances, getPlaidBalance } from '../../api/client'
 
 const FIELDS = [
   { key: 'cash',              label: 'Cash / bank balance',   side: 'asset',     hint: 'Money in the property’s accounts on the start date' },
@@ -32,6 +32,24 @@ export default function OpeningBalancesModal({ propertyId, initial, onSaved, onC
   })
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState(null)
+  const [pullingBal, setPullingBal] = useState(false)
+  const [balNote, setBalNote] = useState(null)
+
+  async function useBankBalance() {
+    setPullingBal(true)
+    setError(null)
+    setBalNote(null)
+    try {
+      const { total, as_of, accounts } = await getPlaidBalance(propertyId)
+      setForm(f => ({ ...f, cash: String(total), as_of_date: as_of || f.as_of_date }))
+      const names = (accounts || []).map(a => `${a.name}${a.mask ? ` ••${a.mask}` : ''}`).join(', ')
+      setBalNote(`Pulled ${'$' + Math.round(total).toLocaleString()} from ${accounts?.length || 0} linked account${accounts?.length === 1 ? '' : 's'}${names ? ` (${names})` : ''}, as of ${as_of}.`)
+    } catch (e) {
+      setError(e.message.includes('No bank account') ? 'No bank account is linked to this property yet — link one from the Ledger first.' : e.message)
+    } finally {
+      setPullingBal(false)
+    }
+  }
 
   const num = v => (v === '' || v === null || v === undefined ? 0 : parseFloat(v) || 0)
   const set = key => e => setForm(f => ({ ...f, [key]: e.target.value }))
@@ -99,6 +117,21 @@ export default function OpeningBalancesModal({ propertyId, initial, onSaved, onC
                 />
               </div>
               <p className="text-[11px] text-slate-400 mt-0.5">{f.hint}</p>
+              {f.key === 'cash' && (
+                <div className="mt-1.5">
+                  <button
+                    type="button"
+                    onClick={useBankBalance}
+                    disabled={pullingBal}
+                    className="flex items-center gap-1.5 text-xs font-medium text-blue-700 px-2.5 py-1 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors disabled:opacity-50"
+                  >
+                    {pullingBal
+                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Pulling balance…</>
+                      : <><Building2 className="w-3.5 h-3.5" /> Use linked bank balance</>}
+                  </button>
+                  {balNote && <p className="text-[11px] text-emerald-600 mt-1">{balNote}</p>}
+                </div>
+              )}
             </div>
           ))}
 
