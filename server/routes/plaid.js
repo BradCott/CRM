@@ -50,6 +50,9 @@ router.post('/link-token', async (req, res) => {
       products:      [Products.Transactions],
       country_codes: [CountryCode.Us],
       language:      'en',
+      // Request the maximum history Plaid allows (default is only 90 days).
+      // Actual amount returned depends on what the institution provides.
+      transactions:  { days_requested: 730 },
     })
     res.json({ link_token: response.data.link_token })
   } catch (err) {
