@@ -423,6 +423,18 @@ const migrations = [
        UPDATE properties SET updated_at = datetime('now') WHERE id = NEW.id;
      END`,
 
+  // ── Investor contacts (people under a company/trust investor) ───────────────
+  `CREATE TABLE IF NOT EXISTS investor_contacts (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    investor_id INTEGER NOT NULL REFERENCES investors(id) ON DELETE CASCADE,
+    name        TEXT NOT NULL,
+    email       TEXT,
+    phone       TEXT,
+    title       TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_investor_contacts ON investor_contacts(investor_id)`,
+
   // ── Opening balances (Advanced Accounting beta) ─────────────────────────────
   // Per-property starting point so books can begin mid-life without entering full
   // history. Purely additive — only used when the advanced-accounting flag is on.

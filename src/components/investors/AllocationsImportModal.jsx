@@ -175,8 +175,8 @@ export default function AllocationsImportModal({ onClose, onDone }) {
                 <Stat label="Matched existing" value={result.investorsMatched} />
                 <Stat label="Equity positions" value={result.linksUpserted} color="text-emerald-700" />
               </div>
-              {result.addressesApplied > 0 && (
-                <p className="text-xs text-slate-500 mt-4">{result.addressesApplied} mailing address{result.addressesApplied !== 1 ? 'es' : ''} attached from the sheet.</p>
+              {result.contactsCreated > 0 && (
+                <p className="text-xs text-slate-500 mt-4">{result.contactsCreated} contact{result.contactsCreated !== 1 ? 's' : ''} added under company/trust investors.</p>
               )}
               {result.skipped > 0 && (
                 <p className="text-xs text-amber-600 mt-1">{result.skipped} contribution{result.skipped !== 1 ? 's' : ''} skipped (unmapped columns).</p>

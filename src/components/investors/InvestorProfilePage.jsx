@@ -2,11 +2,12 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Pencil, Check, X, Plus, Trash2, Loader2,
-  DollarSign, Building2, TrendingUp, Calendar, AlertCircle,
+  DollarSign, Building2, TrendingUp, Calendar, AlertCircle, Users, Mail, Phone,
 } from 'lucide-react'
 import {
   getInvestorProfile, updateInvestor, createDistribution, deleteDistribution,
   createInvestorLink, updateInvestorLink, deleteInvestorLink, getAllProperties,
+  addInvestorContact, updateInvestorContact, deleteInvestorContact,
 } from '../../api/client'
 import Button from '../ui/Button'
 import ConfirmDialog from '../ui/ConfirmDialog'
@@ -272,6 +273,88 @@ function LinkPropertyModal({ investorId, existingLinkIds, onSave, onClose }) {
 
 // ── Main profile page ─────────────────────────────────────────────────────────
 
+// ── Contacts card (people under a company/trust investor) ─────────────────────
+function ContactsCard({ investorId, contacts, onChanged }) {
+  const [adding, setAdding] = useState(false)
+  const [form, setForm]     = useState({ name: '', email: '', phone: '', title: '' })
+  const [busy, setBusy]     = useState(false)
+
+  async function save() {
+    if (!form.name.trim()) return
+    setBusy(true)
+    try {
+      await addInvestorContact(investorId, form)
+      setForm({ name: '', email: '', phone: '', title: '' })
+      setAdding(false)
+      await onChanged()
+    } catch (e) { alert(e.message) } finally { setBusy(false) }
+  }
+
+  async function remove(cid) {
+    if (!window.confirm('Remove this contact?')) return
+    try { await deleteInvestorContact(cid); await onChanged() } catch (e) { alert(e.message) }
+  }
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+        <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+          <Users className="w-4 h-4 text-slate-400" /> Contacts
+          {contacts.length > 0 && <span className="text-xs font-normal text-slate-400">({contacts.length})</span>}
+        </h2>
+        {!adding && (
+          <button onClick={() => setAdding(true)}
+            className="flex items-center gap-1.5 text-xs text-slate-500 hover:text-blue-600 px-2 py-1 rounded hover:bg-slate-50 transition-colors">
+            <Plus className="w-3.5 h-3.5" /> Add contact
+          </button>
+        )}
+      </div>
+
+      <div className="px-5 py-4 space-y-2">
+        {contacts.length === 0 && !adding && (
+          <p className="text-sm text-slate-400">No contacts yet. Add the people associated with this investor.</p>
+        )}
+
+        {contacts.map(c => (
+          <div key={c.id} className="flex items-start justify-between gap-3 py-2 border-b border-slate-50 last:border-0 group">
+            <div className="min-w-0">
+              <p className="text-sm font-medium text-slate-800">{c.name}{c.title && <span className="text-slate-400 font-normal"> · {c.title}</span>}</p>
+              <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-0.5">
+                {c.email && <a href={`mailto:${c.email}`} className="text-xs text-blue-600 hover:underline flex items-center gap-1"><Mail className="w-3 h-3" />{c.email}</a>}
+                {c.phone && <span className="text-xs text-slate-500 flex items-center gap-1"><Phone className="w-3 h-3" />{c.phone}</span>}
+              </div>
+            </div>
+            <button onClick={() => remove(c.id)}
+              className="p-1 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all shrink-0" title="Remove">
+              <Trash2 className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        ))}
+
+        {adding && (
+          <div className="grid grid-cols-2 gap-2 pt-2">
+            <input autoFocus placeholder="Name *" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+              className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <input placeholder="Title (optional)" value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))}
+              className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <input placeholder="Email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+              className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <input placeholder="Phone" value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))}
+              className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <div className="col-span-2 flex justify-end gap-2 mt-1">
+              <button onClick={() => { setAdding(false); setForm({ name: '', email: '', phone: '', title: '' }) }}
+                className="text-xs text-slate-500 hover:text-slate-700 px-3 py-1.5">Cancel</button>
+              <Button onClick={save} disabled={busy || !form.name.trim()} size="sm">
+                {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Add'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function InvestorProfilePage() {
   const { id }   = useParams()
   const navigate = useNavigate()
@@ -429,6 +512,9 @@ export default function InvestorProfilePage() {
             </div>
           )}
         </div>
+
+        {/* Contacts */}
+        <ContactsCard investorId={id} contacts={investor.contacts || []} onChanged={load} />
 
         {/* Properties Table */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">

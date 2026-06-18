@@ -109,12 +109,121 @@ function portfolioProperties() {
   `).all()
 }
 
+// ── Confirmed legal-entity resolution (Brad-verified 2026-06-18) ──────────────
+// Maps the informal name in the matrix's first column → the legal investor
+// identity. `contacts` are people to attach under a company/trust; the first
+// contact inherits the row's email unless emailToContactOnly is set.
+const ENTITY_RESOLUTION = {
+  'knox capital':            { name: 'Knox Capital',                                  type: 'LLC' },
+  'the brad cottam trust':   { name: 'The Brad Cottam Trust',                         type: 'Trust',      contacts: ['Brad Cottam'] },
+  'charles cottam':          { name: 'CCC RE Investments LLC',                        type: 'LLC',        contacts: ['Charles Cottam'] },
+  'tony pontier':            { name: 'KASH INVESTMENTS',                              type: 'LLC',        contacts: ['Tony Pontier'] },
+  'camelback brian snider':  { name: 'Camelback Consolidated Investments LLC',        type: 'LLC',        contacts: ['Brian Snider'] },
+  'eric snider':             { name: 'Eric Snider & Amber Snider Trust',              type: 'Trust',      contacts: ['Eric Snider', 'Amber Snider'] },
+  'perspective design':      { name: 'Perspective Design & Development LLC',          type: 'LLC',        contacts: ['Tricia Forbes'] },
+  'kyle farrell':            { name: 'Kyle & Jennifer Farrell Joint Revocable Trust', type: 'Trust',      contacts: ['Kyle Farrell', 'Jennifer Farrell'] },
+  'john long':               { name: 'Long Capital Holdings JV LLC',                  type: 'LLC',        contacts: ['John Long'] },
+  'flannery brothers':       { name: 'Flanery Brothers',                             type: 'LLC' },
+  'jimbo cottam':            { name: 'James A. Cottam',                               type: 'Individual' },
+  'jim bob cooter':          { name: 'James Robert Cooter',                           type: 'Individual' },
+  // Kyle Knoth's row is actually Courtney Bauer's investment; Kyle becomes a contact and keeps the row email.
+  'kyle knoth':              { name: 'Courtney Bauer',                                type: 'Individual', contacts: ['Kyle Knoth'], emailToContactOnly: true },
+}
+
+// Investors that belong in the roster but have no current property allocations.
+const EXTRA_INVESTORS = [
+  { name: 'Julie Snider', entity_type: 'Individual', address: '7236 Dalewood Lane', city: 'Dallas', state: 'TX', zip: '75214', email: null, contacts: [], cells: {}, total: 0 },
+]
+
+/** Split a "City, ST 12345" cell into parts. */
+function splitCityStateZip(s) {
+  if (!s) return { city: null, state: null, zip: null }
+  const m = String(s).match(/^(.*?),\s*([A-Za-z]{2})\b\s*(\d{5})?/)
+  if (m) return { city: m[1].trim(), state: m[2].toUpperCase(), zip: m[3] || null }
+  return { city: String(s).trim(), state: null, zip: null }
+}
+
+/**
+ * Parse the new-format matrix: columns are
+ * Name | Address | City(,ST ZIP) | Email | Email 2 | <property columns...> | Total | %.
+ * Returns null if the sheet isn't in this format (caller falls back to legacy).
+ */
+function parseRichAllocations(raw) {
+  const header = (raw[0] || []).map(h => cellStr(h) || '')
+  const lower  = header.map(h => h.toLowerCase())
+  const emailIdx = lower.findIndex(h => h === 'email')
+  const addrIdx  = lower.findIndex(h => h === 'address')
+  if (emailIdx === -1 || addrIdx === -1) return null   // not the rich format
+
+  const cityIdx   = lower.findIndex(h => h === 'city')
+  const email2Idx = lower.findIndex(h => h === 'email 2' || h === 'email2')
+  const totalIdx  = lower.findIndex(h => h === 'total')
+  const firstPropCol = Math.max(emailIdx, email2Idx, cityIdx, addrIdx) + 1
+  const lastPropCol  = totalIdx === -1 ? header.length : totalIdx
+
+  const columns = []
+  for (let c = firstPropCol; c < lastPropCol; c++) {
+    const label = header[c]
+    if (!label || SKIP_COLUMNS.some(s => label.toLowerCase().includes(s))) continue
+    columns.push({ index: c, label })
+  }
+
+  const investors = []
+  for (let r = 1; r < raw.length; r++) {
+    const row = raw[r] || []
+    const matrixName = cellStr(row[0])
+    if (!matrixName) continue
+    const low = matrixName.toLowerCase()
+    if (low.startsWith('total') || low.includes('grand total') || low.includes('percentage')) break
+
+    const cells = {}
+    let total = 0
+    for (const col of columns) {
+      const amt = cellNum(row[col.index])
+      if (amt) { cells[col.index] = amt; total += amt }
+    }
+
+    const { city, state, zip } = splitCityStateZip(cellStr(row[cityIdx]))
+    const rowEmail = cellStr(row[emailIdx])
+    const resolved = ENTITY_RESOLUTION[normalizeName(matrixName)]
+
+    const inv = {
+      matrixName,
+      name:        resolved?.name || matrixName,
+      entity_type: resolved?.type || deriveEntityType(matrixName),
+      address:     cellStr(row[addrIdx]),
+      city, state, zip,
+      email:       resolved?.emailToContactOnly ? null : rowEmail,
+      contacts:    [],
+      cells, total,
+    }
+    // Build contacts for entities: first contact inherits the row email
+    if (resolved?.contacts?.length) {
+      inv.contacts = resolved.contacts.map((cn, i) => ({ name: cn, email: i === 0 ? rowEmail : null }))
+    }
+    investors.push(inv)
+  }
+
+  // Append roster-only investors not present in the matrix
+  for (const extra of EXTRA_INVESTORS) {
+    if (!investors.some(i => normalizeName(i.name) === normalizeName(extra.name))) investors.push({ ...extra })
+  }
+
+  return { sheetName: 'Investor Allocataions', columns, investors, legend: [], rich: true }
+}
+
+export { parseAllocations }   // exported for offline verification
+
 /** Parse the "Investor Allocations" matrix generically (rows = investors, cols = properties). */
 function parseAllocations(workbook) {
   const sheetName = workbook.SheetNames.find(n => n.toLowerCase().includes('allocat'))
   if (!sheetName) return { error: 'No sheet whose name contains "Allocations" was found' }
   const raw = XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], { header: 1, defval: null })
   if (raw.length < 2) return { error: 'The allocations sheet is empty' }
+
+  // New format (has Address/Email columns) — read addresses, emails, entities directly.
+  const rich = parseRichAllocations(raw)
+  if (rich) return rich
 
   const header = raw[0] || []
   const columns = []
@@ -262,53 +371,59 @@ router.post('/allocations/import', upload.single('file'), (req, res) => {
     const existing = db.prepare('SELECT id, name FROM investors').all()
     const byNorm = new Map(existing.map(r => [normalizeName(r.name), r.id]))
 
-    const createInvestor = db.prepare('INSERT INTO investors (name, entity_type, is_incomplete) VALUES (?, ?, 0)')
+    const createInvestor = db.prepare(`
+      INSERT INTO investors (name, entity_type, email, address, city, state, zip, is_incomplete)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+    `)
     const upsertLink = db.prepare(`
       INSERT INTO investor_property_links (investor_id, property_id, contribution, preferred_return_rate)
       VALUES (?, ?, ?, 15)
       ON CONFLICT(investor_id, property_id) DO UPDATE SET contribution = excluded.contribution
     `)
-    // Fill address fields only where empty (don't clobber existing data)
-    const updAddr = db.prepare(`
+    // Fill fields only where empty on matched investors (don't clobber existing data)
+    const enrich = db.prepare(`
       UPDATE investors SET
-        address = COALESCE(address, ?), city = COALESCE(city, ?),
-        state = COALESCE(state, ?), zip = COALESCE(zip, ?)
+        email   = COALESCE(email, ?),   address = COALESCE(address, ?),
+        city    = COALESCE(city, ?),    state   = COALESCE(state, ?),
+        zip     = COALESCE(zip, ?)
       WHERE id = ?
     `)
+    const existsContact = db.prepare('SELECT 1 FROM investor_contacts WHERE investor_id = ? AND name = ?')
+    const addContact = db.prepare('INSERT INTO investor_contacts (investor_id, name, email) VALUES (?, ?, ?)')
 
-    let investorsCreated = 0, investorsMatched = 0, linksUpserted = 0, skipped = 0, addressesApplied = 0
-    const imported = []
+    let investorsCreated = 0, investorsMatched = 0, linksUpserted = 0, skipped = 0, contactsCreated = 0
     const run = db.transaction(() => {
       for (const inv of parsed.investors) {
         const norm = normalizeName(inv.name)
         let id = byNorm.get(norm)
-        if (id) investorsMatched++
-        else {
-          id = createInvestor.run(inv.name, deriveEntityType(inv.name)).lastInsertRowid
+        if (id) {
+          investorsMatched++
+          enrich.run(inv.email || null, inv.address || null, inv.city || null, inv.state || null, inv.zip || null, id)
+        } else {
+          id = createInvestor.run(
+            inv.name, inv.entity_type || deriveEntityType(inv.name),
+            inv.email || null, inv.address || null, inv.city || null, inv.state || null, inv.zip || null,
+          ).lastInsertRowid
           byNorm.set(norm, id)
           investorsCreated++
         }
-        imported.push({ id, name: inv.name })
         for (const [colIdx, amount] of Object.entries(inv.cells)) {
           const propId = mapping[colIdx]
           if (!propId) { skipped++; continue }
           upsertLink.run(id, Number(propId), amount)
           linksUpserted++
         }
-      }
-
-      // Enrich with mailing addresses from the legend
-      for (const entry of parsed.legend) {
-        const m = matchLegendToInvestor(entry.name, imported)
-        if (m && (entry.address || entry.city)) {
-          updAddr.run(entry.address, entry.city, entry.state, entry.zip, m.id)
-          addressesApplied++
+        // Attach contacts (people under a company/trust), skipping duplicates
+        for (const c of (inv.contacts || [])) {
+          if (!c?.name || existsContact.get(id, c.name)) continue
+          addContact.run(id, c.name, c.email || null)
+          contactsCreated++
         }
       }
     })
     run()
 
-    res.json({ ok: true, investorsCreated, investorsMatched, linksUpserted, skipped, addressesApplied })
+    res.json({ ok: true, investorsCreated, investorsMatched, linksUpserted, skipped, contactsCreated })
   } catch (e) {
     console.error('[investors] allocations import:', e.message)
     res.status(500).json({ error: e.message })
@@ -601,6 +716,11 @@ router.get('/:id', (req, res) => {
     ORDER BY d.distribution_date DESC, d.id DESC
   `).all(req.params.id)
 
+  // Contacts (people under a company/trust investor)
+  const contacts = db.prepare(
+    `SELECT id, name, email, phone, title FROM investor_contacts WHERE investor_id = ? ORDER BY id ASC`
+  ).all(req.params.id)
+
   // Portfolio summary
   const total_invested      = links.reduce((s, l) => s + (l.contribution || 0), 0)
   const total_distributions = distributions.reduce((s, d) => s + (d.amount || 0), 0)
@@ -618,7 +738,41 @@ router.get('/:id', (req, res) => {
     },
     links,
     distributions,
+    contacts,
   })
+})
+
+// ── Investor contacts (people under a company/trust) ──────────────────────────
+
+router.get('/:id/contacts', (req, res) => {
+  res.json(db.prepare(
+    `SELECT id, name, email, phone, title FROM investor_contacts WHERE investor_id = ? ORDER BY id ASC`
+  ).all(req.params.id))
+})
+
+router.post('/:id/contacts', (req, res) => {
+  const { name, email, phone, title } = req.body || {}
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Contact name is required' })
+  const r = db.prepare(
+    'INSERT INTO investor_contacts (investor_id, name, email, phone, title) VALUES (?, ?, ?, ?, ?)'
+  ).run(req.params.id, name.trim(), email || null, phone || null, title || null)
+  res.status(201).json(db.prepare('SELECT id, name, email, phone, title FROM investor_contacts WHERE id = ?').get(r.lastInsertRowid))
+})
+
+router.patch('/contacts/:contactId', (req, res) => {
+  const c = db.prepare('SELECT * FROM investor_contacts WHERE id = ?').get(req.params.contactId)
+  if (!c) return res.status(404).json({ error: 'Contact not found' })
+  const { name, email, phone, title } = req.body || {}
+  db.prepare('UPDATE investor_contacts SET name = ?, email = ?, phone = ?, title = ? WHERE id = ?').run(
+    name ?? c.name, email !== undefined ? email : c.email,
+    phone !== undefined ? phone : c.phone, title !== undefined ? title : c.title, req.params.contactId,
+  )
+  res.json(db.prepare('SELECT id, name, email, phone, title FROM investor_contacts WHERE id = ?').get(req.params.contactId))
+})
+
+router.delete('/contacts/:contactId', (req, res) => {
+  db.prepare('DELETE FROM investor_contacts WHERE id = ?').run(req.params.contactId)
+  res.status(204).end()
 })
 
 // ── Create investor ───────────────────────────────────────────────────────────
