@@ -87,12 +87,23 @@ export default function MailEngine() {
           </span>
         </div>
 
-        <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden mt-2.5 mb-3">
+        <div className="h-2.5 bg-slate-100 rounded-full overflow-hidden mt-2.5 mb-2">
           <div
             className={`h-full rounded-full transition-all ${pct >= 100 ? 'bg-emerald-500' : 'bg-violet-500'}`}
             style={{ width: `${Math.max(2, pct)}%` }}
           />
         </div>
+
+        {/* Who sent it this month (Brad vs Cole, etc.) */}
+        {stats.by_user?.length > 0 && (
+          <div className="flex flex-wrap gap-x-3 gap-y-1 mb-3">
+            {stats.by_user.map(u => (
+              <span key={u.name} className="text-xs text-slate-500">
+                <span className="font-semibold text-slate-700">{u.name.split(' ')[0]}</span> {u.count}
+              </span>
+            ))}
+          </div>
+        )}
 
         <div className="space-y-1.5">
           <button

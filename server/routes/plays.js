@@ -99,12 +99,22 @@ router.get('/launcher', (req, res) => {
 // ── Mail engine stats ─────────────────────────────────────────────────────────
 
 router.get('/mail-stats', (req, res) => {
-  const target = Number(getSetting('mail_monthly_target', 200))
+  const target = Number(getSetting('mail_monthly_target', 500))
 
   const { sent_this_month } = db.prepare(`
     SELECT COUNT(*) AS sent_this_month FROM handwrytten_sends
     WHERE status = 'sent' AND strftime('%Y-%m', sent_at) = strftime('%Y-%m', 'now')
   `).get()
+
+  // Breakdown by who sent it (Brad vs Cole, etc.) this month
+  const by_user = db.prepare(`
+    SELECT COALESCE(u.name, 'Unassigned') AS name, COUNT(*) AS count
+    FROM handwrytten_sends s
+    LEFT JOIN users u ON u.id = s.sent_by_user_id
+    WHERE s.status = 'sent' AND strftime('%Y-%m', s.sent_at) = strftime('%Y-%m', 'now')
+    GROUP BY s.sent_by_user_id
+    ORDER BY count DESC
+  `).all()
 
   const { due_followup } = db.prepare(`
     SELECT COUNT(*) AS due_followup FROM people pe
@@ -119,7 +129,7 @@ router.get('/mail-stats', (req, res) => {
       AND NOT EXISTS (SELECT 1 FROM handwrytten_sends s WHERE s.contact_id = pe.id)
   `).get()
 
-  res.json({ target, sent_this_month, due_followup, never_touched })
+  res.json({ target, sent_this_month, due_followup, never_touched, by_user })
 })
 
 router.put('/mail-target', (req, res) => {
