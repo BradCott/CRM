@@ -12,7 +12,23 @@ export default function MailEngine() {
   const [draft, setDraft]     = useState('')
 
   useEffect(() => {
-    getMailStats().then(setStats).catch(console.error).finally(() => setLoading(false))
+    let alive = true
+    const load = () => getMailStats()
+      .then(s => { if (alive) setStats(s) })
+      .catch(() => {})
+      .finally(() => { if (alive) setLoading(false) })
+    load()
+    // Refresh so drip batches show up as they send, and when you return to the tab
+    const interval = setInterval(load, 30000)
+    const onVisible = () => { if (!document.hidden) load() }
+    window.addEventListener('focus', load)
+    document.addEventListener('visibilitychange', onVisible)
+    return () => {
+      alive = false
+      clearInterval(interval)
+      window.removeEventListener('focus', load)
+      document.removeEventListener('visibilitychange', onVisible)
+    }
   }, [])
 
   async function saveTarget() {

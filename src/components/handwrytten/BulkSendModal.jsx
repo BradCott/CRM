@@ -483,8 +483,7 @@ export default function BulkSendModal({ onClose, onDone }) {
         font:    selectedFont,
       })
       setSendResult(result)
-      setStep('done')
-      onDone?.()
+      setStep('done')      // show the confirmation panel; its Done button closes
     } catch (err) {
       setSendError(err.message)
       setStep('preview')
@@ -508,8 +507,7 @@ export default function BulkSendModal({ onClose, onDone }) {
         filters:       { states: filterStates, tenant: filterTenant, ownerTypes: filterOwnerTypes },
       })
       setDripResult(result)
-      setStep('done')
-      onDone?.()
+      setStep('done')      // show the "Drip Campaign Started" confirmation; Done button closes
     } catch (err) {
       setSendError(err.message)
       setStep('preview')
