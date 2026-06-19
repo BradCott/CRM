@@ -4,6 +4,7 @@ import {
   getHandwryttenCards,
   getHandwryttenFonts,
   sendHandwryttenBulk,
+  sendHandwryttenBasket,
   createHandwryttenDrip,
   getProperties,
   setPersonDNC,
@@ -447,6 +448,30 @@ export default function BulkSendModal({ onClose, onDone }) {
       alert(e.message)
     } finally {
       setMerging(false)
+    }
+  }
+
+  // ── TEST: batched basket order (new method) ──────────────────────────────────
+  const [testing, setTesting] = useState(false)
+  async function handleTestBasket() {
+    if (includedRecipients.length === 0) return
+    if (!window.confirm(`TEST: send ${includedRecipients.length} letter${includedRecipients.length !== 1 ? 's' : ''} as ONE batched Handwrytten order (new method).\n\nThis sends real mail. Use a small recipient count to test. Continue?`)) return
+    setTesting(true)
+    setSendError(null)
+    try {
+      const result = await sendHandwryttenBasket({
+        recipients: includedRecipients.map(r => ({ contact_id: r.contact_id, property_id: r.property_id })),
+        message,
+        card_id: selectedCard,
+        font:    selectedFont,
+      })
+      alert(`✅ Batch sent as one order.\nOrder ID: ${result.order_id || '(see Handwrytten)'}\nLetters: ${result.count}\n\nCheck your Handwrytten Previous Orders — it should show as a single order.`)
+      onDone?.()
+    } catch (err) {
+      alert(`❌ Batch test failed:\n\n${err.message}\n\nThe normal mailer still works — this was only the test. Send me this error and I'll adjust the format.`)
+      setSendError(err.message)
+    } finally {
+      setTesting(false)
     }
   }
 
@@ -980,6 +1005,15 @@ export default function BulkSendModal({ onClose, onDone }) {
                 <span className="text-xs text-slate-400">
                   {includedRecipients.length} letters · est. ${(includedRecipients.length * COST_LOW).toFixed(0)}–${(includedRecipients.length * COST_HIGH).toFixed(0)}
                 </span>
+                {/* TEMP: test the new batched-order method (placeBasket → basket/send) */}
+                <button
+                  onClick={handleTestBasket}
+                  disabled={includedRecipients.length === 0 || overLimit || testing}
+                  title="TEST: send as one batched Handwrytten order (new method). Use a small count first."
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                >
+                  {testing ? <><Loader2 className="w-4 h-4 animate-spin" /> Testing…</> : <>🧪 TEST Mailer (batch)</>}
+                </button>
                 {sendMode === 'drip' ? (
                   <Button onClick={handleScheduleDrip} disabled={includedRecipients.length === 0 || overLimit || sending}>
                     {sending ? <><Loader2 className="w-4 h-4 animate-spin" /> Scheduling…</> : <><Mail className="w-4 h-4" /> Start Drip ({batchSize}/{intervalDays}d)</>}

@@ -347,6 +347,7 @@ export const getHandwryttenCards      = ()          => req('GET', '/handwrytten/
 export const getHandwryttenFonts      = ()          => req('GET', '/handwrytten/fonts')
 export const sendHandwryttenLetter    = (data)      => req('POST', '/handwrytten/send', data)
 export const sendHandwryttenBulk      = (data)      => req('POST', '/handwrytten/send-bulk', data)
+export const sendHandwryttenBasket    = (data)      => req('POST', '/handwrytten/send-basket', data) // TEST: one batched order
 export const getHandwryttenSends      = (params={}) => {
   const qs = new URLSearchParams(params).toString()
   return req('GET', `/handwrytten/sends${qs ? '?' + qs : ''}`)

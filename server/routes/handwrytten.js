@@ -441,6 +441,82 @@ router.post('/send-bulk', async (req, res) => {
   })
 })
 
+// ── TEST: batched basket order (placeBasket → basket/send) ────────────────────
+// Sends many recipients as ONE Handwrytten order instead of one order each.
+// Returns the raw API responses so we can confirm the format/payment before
+// replacing the per-letter sender. Records nothing unless the batch succeeds.
+router.post('/send-basket', async (req, res) => {
+  const { recipients, message, card_id, font } = req.body
+  const userId = req.user?.id
+  if (!Array.isArray(recipients) || recipients.length === 0) return res.status(400).json({ error: 'recipients array is required' })
+  if (!message) return res.status(400).json({ error: 'message is required' })
+
+  // Build one address entry (with its merged message) per recipient
+  const SIG = ' <sig:1427BC offset=1>'
+  const addresses = []
+  const sendMeta  = []
+  const skipped   = []
+  for (const { contact_id, property_id } of recipients) {
+    const person = db.prepare(`SELECT * FROM people WHERE id = ?`).get(contact_id)
+    if (!person || !person.address) { skipped.push({ contact_id, reason: person ? 'no address' : 'not found' }); continue }
+
+    let property = null
+    if (property_id) {
+      property = db.prepare(`SELECT p.*, t.name AS tenant_brand_name FROM properties p LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id WHERE p.id = ?`).get(property_id)
+    } else {
+      property = db.prepare(`SELECT p.*, t.name AS tenant_brand_name FROM properties p LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id WHERE p.owner_id = ? ORDER BY p.id ASC LIMIT 1`).get(contact_id)
+    }
+
+    const resolvedMessage = resolveMergeFields(message, person, property) + SIG
+    addresses.push({
+      recipient_first_name: person.first_name || person.name.split(' ')[0] || '',
+      recipient_last_name:  person.last_name  || person.name.split(' ').slice(1).join(' ') || '',
+      recipient_address1:   person.address || '',
+      recipient_city:       person.city    || '',
+      recipient_state:      person.state   || '',
+      recipient_zip:        person.zip     || '',
+      tocountry:            'US',
+      message:              resolvedMessage,
+      wishes:               '',
+    })
+    sendMeta.push({ contact_id, property_id: property_id || property?.id || null, message: resolvedMessage })
+  }
+
+  if (addresses.length === 0) return res.status(400).json({ error: 'No mailable recipients (all missing addresses).', skipped })
+
+  const basketParams = {
+    card_id:           card_id || '',
+    font_label:        font    || '',
+    sender_first_name: 'Knox',
+    sender_last_name:  'Capital',
+    sender_address1:   '7500 W 160th St Ste 101',
+    sender_city:       'Stilwell',
+    sender_state:      'KS',
+    sender_zip:        '66085',
+    sender_country_id: 1,
+    addresses,
+  }
+
+  try {
+    const placeResp = await hwPost('/orders/placeBasket', basketParams)
+    const sendResp  = await hwPost('/basket/send', {})
+    const orderId   = sendResp?.order?.id || sendResp?.id || sendResp?.order_id ||
+                      placeResp?.order?.id || placeResp?.id || null
+
+    // Record the successful batch in our history (one shared order id)
+    const ins = db.prepare(`
+      INSERT INTO handwrytten_sends (contact_id, property_id, message, card_id, font, sent_by_user_id, status, handwrytten_order_id, sent_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'sent', ?, datetime('now'))
+    `)
+    for (const m of sendMeta) ins.run(m.contact_id, m.property_id, m.message, card_id || null, font || null, userId || null, String(orderId || ''))
+
+    res.json({ ok: true, count: addresses.length, skipped, order_id: orderId, placeResp, sendResp })
+  } catch (err) {
+    // Surface the raw API error so we can adjust the format/payment params
+    res.status(502).json({ ok: false, error: err.message, sentAs: 'basket', count: addresses.length, skipped })
+  }
+})
+
 // ── Drip campaigns (throttled "X letters every N days") ──────────────────────
 
 import { processDueDrips, nextRunIso } from '../services/dripEngine.js'
