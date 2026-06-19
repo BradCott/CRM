@@ -24,10 +24,12 @@ router.post('/run', async (req, res) => {
   try {
     const before = db.prepare(`SELECT COUNT(*) AS n FROM deals WHERE source = 'drive_loi'`).get().n
     if (req.query.reset) {
+      // Also clear the cached folder IDs so a wrong/stale "LOIs" folder re-resolves by name
       db.prepare(`
         UPDATE oauth_tokens
         SET last_drive_check = NULL, lois_processed = NULL,
-            notes_processed = NULL, updated_at = datetime('now')
+            notes_processed = NULL, drive_folder_id = NULL, notes_folder_id = NULL,
+            updated_at = datetime('now')
         WHERE provider = 'google'
       `).run()
     }

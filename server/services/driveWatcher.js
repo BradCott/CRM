@@ -45,20 +45,21 @@ export async function watchDrive() {
     return
   }
 
-  // List files added since last check
-  const lastCheck = tokenRow.last_drive_check
-    ? new Date(tokenRow.last_drive_check).toISOString()
-    : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()
-
+  // List the folder's files. We DON'T filter by createdTime: Drive's createdTime
+  // is when a doc was created, not when it was moved into LOIs — so an LOI drafted
+  // elsewhere and later filed here would be silently skipped. Instead we list the
+  // current contents and rely on the processed-id list (+ deal title dedupe) for
+  // idempotency, so nothing is ever missed regardless of how it got into the folder.
   const filesRes = await drive.files.list({
-    q: `'${folderId}' in parents and trashed = false and createdTime > '${lastCheck}'`,
-    fields: 'files(id, name, mimeType, createdTime)',
-    orderBy: 'createdTime',
+    q: `'${folderId}' in parents and trashed = false`,
+    fields: 'files(id, name, mimeType, createdTime, modifiedTime)',
+    orderBy: 'modifiedTime desc',
+    pageSize: 100,
     ...ALL_DRIVES,
   })
 
   const files = filesRes.data.files || []
-  if (files.length) console.log(`[driveWatcher] ${files.length} new file(s) in LOIs folder`)
+  console.log(`[driveWatcher] LOIs folder has ${files.length} file(s)`)
 
   // Load already-processed file IDs
   let processed = []
