@@ -865,13 +865,18 @@ export default function BulkSendModal({ onClose, onDone }) {
                   <code className="bg-slate-100 px-1 rounded">{'{state}'}</code>
                 </p>
                 {recipients.length > 0 && (
-                  <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-slate-700 leading-relaxed">
-                    <span className="font-semibold text-slate-500 block mb-1">Preview (first recipient):</span>
-                    {applyMerge(message, recipients[0], {
-                      tenant_brand_name: recipients[0].tenant,
-                      city:  recipients[0].property_city,
-                      state: recipients[0].property_state,
-                    })}
+                  <div className="mt-2 p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-slate-700">
+                    <span className="font-semibold text-slate-500 block mb-1">
+                      Preview — {recipients[0].name}
+                      {isEntity(recipients[0]) && <span className="font-normal text-amber-700"> (a company, so {'{first_name}'} → “Hey”)</span>}:
+                    </span>
+                    <span className="whitespace-pre-line leading-relaxed block">
+                      {applyMerge(message, recipients[0], {
+                        tenant_brand_name: recipients[0].tenant,
+                        city:  recipients[0].property_city,
+                        state: recipients[0].property_state,
+                      })}
+                    </span>
                   </div>
                 )}
               </div>

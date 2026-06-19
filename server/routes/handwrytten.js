@@ -581,7 +581,8 @@ router.post('/bulk-file', (req, res) => {
       property = db.prepare(`SELECT p.*, t.name AS tenant_brand_name FROM properties p LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id WHERE p.owner_id = ? ORDER BY p.id ASC LIMIT 1`).get(contact_id)
     }
 
-    const msg = resolveMergeFields(message, person, property)
+    // Normalize line breaks to CRLF so they render as real lines (matches their template)
+    const msg = resolveMergeFields(message, person, property).replace(/\r\n|\r|\n/g, '\r\n')
     const entity = isEntity(person)
     const toFirst = entity ? '' : (person.first_name || (person.name || '').split(' ')[0] || '')
     const toLast  = entity ? '' : (person.last_name  || (person.name || '').split(' ').slice(1).join(' ') || '')
