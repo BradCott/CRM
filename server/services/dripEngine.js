@@ -23,9 +23,16 @@ async function hwPost(path, params = {}) {
   }
 }
 
+// Companies/entities get a "Hey" intro instead of "ABC," (the first token).
+const ENTITY_RE = /\b(llc|inc|incorporated|corp|corporation|company|trust|holdings?|partners(hip)?|group|capital|investments?|properties|property|ventures?|associates|enterprises?|realty|management|fund|reit)\b/i
+function isEntity(person) {
+  if (person.owner_type && person.owner_type !== 'Individual') return true
+  return ENTITY_RE.test(person.name || '')
+}
+
 function resolveMergeFields(template, person, property) {
   const nameParts = (person.name || '').trim().split(/\s+/)
-  const first = nameParts[0] || 'Friend'
+  const first = isEntity(person) ? 'Hey' : (nameParts[0] || 'Friend')
   const last  = nameParts.slice(1).join(' ') || ''
   return template
     .replace(/\{first_name\}/gi, first)

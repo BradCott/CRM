@@ -28,9 +28,18 @@ const COST_HIGH = 4.00
 
 const OWNER_TYPES = ['Individual', 'LLC', 'Trust', 'Institution', 'Corporation']
 
+// Companies/entities get a "Hey" intro instead of "ABC," (first token of the name).
+const ENTITY_RE = /\b(llc|inc|incorporated|corp|corporation|company|trust|holdings?|partners(hip)?|group|capital|investments?|properties|property|ventures?|associates|enterprises?|realty|management|fund|reit)\b/i
+function isEntity(person) {
+  if (person?.owner_type && person.owner_type !== 'Individual') return true
+  return ENTITY_RE.test(person?.name || person?.owner_name || '')
+}
+
 function applyMerge(template, person, property) {
   if (!template) return ''
-  const first = person?.first_name || (person?.name || '').split(' ')[0] || ''
+  const first = isEntity(person)
+    ? 'Hey'
+    : (person?.first_name || (person?.name || '').split(' ')[0] || '')
   const last  = person?.last_name  || (person?.name || '').split(' ').slice(1).join(' ') || ''
   return template
     .replace(/\{first_name\}/gi, first   || '[First Name]')
@@ -386,6 +395,7 @@ export default function BulkSendModal({ onClose, onDone }) {
           // for merge preview
           first_name:       p.owner_first_name || (p.owner_name || '').split(' ')[0] || '',
           owner_name:       p.owner_name,
+          owner_type:       p.owner_type || null,
         })
       }
       setRecipients(list)
