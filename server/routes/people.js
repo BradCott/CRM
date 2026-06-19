@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import db from '../db.js'
 import { normalizeName, matchPerson } from '../utils/normalize.js'
+import { normalizeName as fuzzyNormalize, nameSimilarity } from '../services/investorMatch.js'
 
 const router = Router()
 
@@ -142,6 +143,36 @@ router.get('/:id', (req, res) => {
   `).all(req.params.id)
 
   res.json({ ...row, properties, contacts })
+})
+
+// GET /api/people/:id/duplicates — find likely duplicate records of this person
+// anywhere in the database (fuzzy match that strips corporate suffixes, so
+// "NetStreit Corp" finds "NETSTREIT"). Includes property count + DNC for each.
+router.get('/:id/duplicates', (req, res) => {
+  const person = db.prepare('SELECT id, name FROM people WHERE id = ?').get(req.params.id)
+  if (!person) return res.status(404).json({ error: 'Not found' })
+
+  const targetNorm = fuzzyNormalize(person.name)
+  if (!targetNorm) return res.json({ person, candidates: [] })
+
+  const all = db.prepare('SELECT id, name, do_not_contact, role, owner_type, city, state FROM people WHERE id != ?').all(person.id)
+  const scored = []
+  for (const p of all) {
+    const n = fuzzyNormalize(p.name)
+    if (!n) continue
+    const score = n === targetNorm ? 1 : nameSimilarity(person.name, p.name)
+    if (score >= 0.70) scored.push({ ...p, score: +score.toFixed(2) })
+  }
+  scored.sort((a, b) => b.score - a.score)
+  const top = scored.slice(0, 30)
+
+  if (top.length) {
+    const ph = top.map(() => '?').join(',')
+    const counts = db.prepare(`SELECT owner_id, COUNT(*) AS n FROM properties WHERE owner_id IN (${ph}) GROUP BY owner_id`).all(...top.map(t => t.id))
+    const cmap = new Map(counts.map(c => [c.owner_id, c.n]))
+    top.forEach(t => { t.property_count = cmap.get(t.id) || 0 })
+  }
+  res.json({ person, candidates: top })
 })
 
 router.post('/', (req, res) => {

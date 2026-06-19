@@ -12,6 +12,7 @@ import {
 import { useApp } from '../../context/AppContext'
 import Button from '../ui/Button'
 import PersonDetail from '../people/PersonDetail'
+import DuplicateFinderModal from './DuplicateFinderModal'
 
 const DEFAULT_TEMPLATE =
   `{first_name}, Any chance you'd ever consider selling your {tenant} in {city}? ` +
@@ -253,6 +254,7 @@ export default function BulkSendModal({ onClose, onDone }) {
   const [mergeSel,      setMergeSel]      = useState(() => new Set())
   const [mergeKeep,     setMergeKeep]     = useState(null)   // chosen keeper during merge confirm
   const [merging,       setMerging]       = useState(false)
+  const [dupeFor,       setDupeFor]       = useState(null)   // recipient we're finding dupes for
 
   // ── Letter state ───────────────────────────────────────────────────────────
   const [message,       setMessage]       = useState(DEFAULT_TEMPLATE)
@@ -775,14 +777,23 @@ export default function BulkSendModal({ onClose, onDone }) {
                           </span>
                         )}
                         {!mergeMode && (
-                          <button
-                            onClick={() => markDNC(r)}
-                            disabled={busy}
-                            className="shrink-0 flex items-center gap-1 text-xs font-medium text-red-600 px-2 py-1 rounded-lg border border-red-200 hover:bg-red-50 transition-colors disabled:opacity-50"
-                            title="Mark Do Not Contact — removes them from mailings permanently"
-                          >
-                            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} DNC
-                          </button>
+                          <>
+                            <button
+                              onClick={() => setDupeFor(r)}
+                              className="shrink-0 flex items-center gap-1 text-xs font-medium text-violet-600 px-2 py-1 rounded-lg border border-violet-200 hover:bg-violet-50 transition-colors"
+                              title="Search the whole database for duplicates of this entity and merge into the real one"
+                            >
+                              <Search className="w-3 h-3" /> Dupes
+                            </button>
+                            <button
+                              onClick={() => markDNC(r)}
+                              disabled={busy}
+                              className="shrink-0 flex items-center gap-1 text-xs font-medium text-red-600 px-2 py-1 rounded-lg border border-red-200 hover:bg-red-50 transition-colors disabled:opacity-50"
+                              title="Mark Do Not Contact — removes them from mailings permanently"
+                            >
+                              {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} DNC
+                            </button>
+                          </>
                         )}
                       </div>
                       )
@@ -1072,6 +1083,19 @@ export default function BulkSendModal({ onClose, onDone }) {
           <div className="absolute inset-0 bg-black/40" onClick={() => setViewId(null)} />
           <PersonDetail personId={viewId} onClose={() => setViewId(null)} onEdit={() => setViewId(null)} />
         </div>
+      )}
+
+      {/* Find-duplicates / merge-into-canonical */}
+      {dupeFor && (
+        <DuplicateFinderModal
+          person={dupeFor}
+          onClose={() => setDupeFor(null)}
+          onMerged={(removedId) => {
+            setRecipients(prev => prev.filter(r => r.contact_id !== removedId))
+            setExcluded(prev => { const n = new Set(prev); n.delete(removedId); return n })
+            setDupeFor(null)
+          }}
+        />
       )}
     </div>
   )
