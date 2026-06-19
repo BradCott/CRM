@@ -42,6 +42,33 @@ router.post('/run', async (req, res) => {
   }
 })
 
+// POST /api/loi-import/set-folder — pin the exact LOIs folder by Drive URL or ID.
+// Eliminates ambiguity when several folders are named "LOIs". Clears the
+// processed list so the correct folder gets scanned fresh, then runs.
+router.post('/set-folder', async (req, res) => {
+  const raw = (req.body?.folder || '').trim()
+  // Accept a full Drive URL (…/folders/<id>) or a bare folder id
+  const m = raw.match(/[-\w]{25,}/)
+  const folderId = m ? m[0] : null
+  if (!folderId) return res.status(400).json({ error: 'Paste a Google Drive folder link or ID.' })
+
+  db.prepare(`
+    UPDATE oauth_tokens
+    SET drive_folder_id = ?, last_drive_check = NULL, lois_processed = NULL,
+        updated_at = datetime('now')
+    WHERE provider = 'google'
+  `).run(folderId)
+
+  try {
+    const before = db.prepare(`SELECT COUNT(*) AS n FROM deals WHERE source = 'drive_loi'`).get().n
+    await watchDrive()
+    const after = db.prepare(`SELECT COUNT(*) AS n FROM deals WHERE source = 'drive_loi'`).get().n
+    res.json({ ok: true, folderId, dealsCreated: after - before, ...(await diagnoseDrive()) })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // POST /api/loi-import
 router.post('/', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' })

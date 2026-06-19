@@ -16,6 +16,34 @@ const ALL_DRIVES = {
   corpora:                   'allDrives',
 }
 
+// Resolve the LOIs folder, preferring one that actually lives under "Knox CRE"
+// (there can be more than one folder named "LOIs" in the account/shared drives).
+async function resolveLoiFolderId(drive) {
+  const res = await drive.files.list({
+    q: `name = '${FOLDER_NAME}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id, name, parents, driveId)',
+    ...ALL_DRIVES,
+  })
+  const candidates = res.data.files || []
+  if (candidates.length === 0) return null
+  if (candidates.length === 1) return candidates[0].id
+
+  // Multiple "LOIs" folders — pick the one whose parent is the Knox CRE folder.
+  for (const c of candidates) {
+    const parentId = c.parents?.[0]
+    if (!parentId) continue
+    try {
+      const parent = await drive.files.get({ fileId: parentId, fields: 'name', supportsAllDrives: true })
+      if (/knox\s*cre/i.test(parent.data.name || '')) {
+        console.log(`[driveWatcher] picked LOIs folder under "${parent.data.name}"`)
+        return c.id
+      }
+    } catch (_) {}
+  }
+  console.warn(`[driveWatcher] ${candidates.length} "LOIs" folders found, none clearly under "Knox CRE" — using the first. Pin the exact folder in Settings if this is wrong.`)
+  return candidates[0].id
+}
+
 export async function watchDrive() {
   const tokenRow = db.prepare(`SELECT * FROM oauth_tokens WHERE provider = 'google'`).get()
   if (!tokenRow?.access_token) return
@@ -30,12 +58,7 @@ export async function watchDrive() {
   // Find or cache the LOIs folder ID
   let folderId = tokenRow.drive_folder_id
   if (!folderId) {
-    const res = await drive.files.list({
-      q: `name = '${FOLDER_NAME}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
-      fields: 'files(id, name)',
-      ...ALL_DRIVES,
-    })
-    folderId = res.data.files?.[0]?.id || null
+    folderId = await resolveLoiFolderId(drive)
     if (folderId) {
       db.prepare(`UPDATE oauth_tokens SET drive_folder_id = ?, updated_at = datetime('now') WHERE provider = 'google'`).run(folderId)
     }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle, Download, Database } from 'lucide-react'
-import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl } from '../../api/client'
+import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl } from '../../api/client'
 import Button from '../ui/Button'
 
 export default function SettingsPage() {
@@ -10,6 +10,24 @@ export default function SettingsPage() {
   const [diag, setDiag]       = useState(null)
   const [diagLoading, setDiagLoading] = useState(false)
   const [backupInfo, setBackupInfo] = useState(null)
+  const [folderInput, setFolderInput] = useState('')
+  const [pinning, setPinning]   = useState(false)
+
+  async function handlePinFolder() {
+    if (!folderInput.trim()) return
+    setPinning(true)
+    setMsg(null)
+    try {
+      const result = await setLoiFolder(folderInput.trim())
+      setDiag(result)
+      setFolderInput('')
+      setMsg({ type: 'success', text: `Pinned the LOIs folder. ${result.dealsCreated > 0 ? `Imported ${result.dealsCreated} deal(s).` : 'Scanned — no new deals (check the folder below).'}` })
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message })
+    } finally {
+      setPinning(false)
+    }
+  }
 
   useEffect(() => { getBackupInfo().then(setBackupInfo).catch(() => {}) }, [])
 
@@ -132,6 +150,29 @@ export default function SettingsPage() {
                       ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Testing…</>
                       : <><PlayCircle className="w-3.5 h-3.5" /> Test now</>}
                   </button>
+                </div>
+
+                {/* Pin the exact LOIs folder (fixes "wrong folder" — multiple LOIs folders) */}
+                <div className="mb-3 p-3 rounded-xl border border-slate-200 bg-slate-50">
+                  <p className="text-xs font-semibold text-slate-600 mb-1">Pin the exact LOIs folder</p>
+                  <p className="text-[11px] text-slate-400 mb-2">
+                    If it's reading the wrong folder, open <strong>Knox CRE/LOIs</strong> in Google Drive, copy the URL from your browser, and paste it here.
+                  </p>
+                  <div className="flex gap-2">
+                    <input
+                      value={folderInput}
+                      onChange={e => setFolderInput(e.target.value)}
+                      placeholder="https://drive.google.com/drive/folders/…"
+                      className="flex-1 text-xs border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                    />
+                    <button
+                      onClick={handlePinFolder}
+                      disabled={pinning || !folderInput.trim()}
+                      className="flex items-center gap-1.5 text-xs font-medium text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg disabled:opacity-50 shrink-0"
+                    >
+                      {pinning ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Pinning…</> : <><FolderOpen className="w-3.5 h-3.5" /> Pin & scan</>}
+                    </button>
+                  </div>
                 </div>
 
                 {diag && (
