@@ -1,4 +1,5 @@
 import express from 'express'
+import * as XLSX from 'xlsx'
 import db from '../db.js'
 
 const router  = express.Router()
@@ -534,6 +535,76 @@ router.post('/send-basket', async (req, res) => {
     // Surface the raw API error so we can adjust the format/payment params
     res.status(502).json({ ok: false, error: err.message, sentAs: 'basket', count: addresses.length, skipped })
   }
+})
+
+// ── Generate a Handwrytten bulk-upload spreadsheet (Basic template) ───────────
+// Builds the exact .xlsx their website bulk tool accepts — one row per recipient
+// with the fully-merged message — so a whole campaign uploads as a single order.
+const HW_BULK_HEADERS = [
+  'Return Address First Name', 'Return Address Last Name (opt)', 'Return Address Business (opt)',
+  'Return Address Line 1', 'Return Address Line 2 (opt)', 'Return Address City',
+  'Return Address State', 'Return Address Zip', 'Return Address Country',
+  'To Address First Name', 'To Address Last Name (opt)', 'To Address Business (opt)',
+  'To Address Line 1', 'To Address Line 2 (opt)', 'To Address City',
+  'To Address State', 'To Address Zip', 'To Address Country',
+  'Message', 'Sign Off (opt)', 'Send Date (opt)', 'Message Length',
+]
+
+router.post('/bulk-file', (req, res) => {
+  const { recipients, message, sign_off, return_address } = req.body
+  if (!Array.isArray(recipients) || recipients.length === 0) return res.status(400).json({ error: 'recipients array is required' })
+  if (!message) return res.status(400).json({ error: 'message is required' })
+
+  const ret = return_address || {}
+  const RET = {
+    first:   ret.first   ?? 'Brad',
+    last:    ret.last    ?? 'Cottam',
+    business:ret.business?? 'Knox Capital',
+    line1:   ret.line1   ?? '7500 W 160th St Ste 101',
+    line2:   ret.line2   ?? '',
+    city:    ret.city    ?? 'Stilwell',
+    state:   ret.state   ?? 'KS',
+    zip:     ret.zip     ?? '66085',
+    country: ret.country ?? 'United States',
+  }
+  const signOff = sign_off ?? 'Sincerely,\r\n<sig:1427BC>'
+
+  const rows = [HW_BULK_HEADERS]
+  for (const { contact_id, property_id } of recipients) {
+    const person = db.prepare(`SELECT * FROM people WHERE id = ?`).get(contact_id)
+    if (!person || !person.address) continue
+
+    let property = null
+    if (property_id) {
+      property = db.prepare(`SELECT p.*, t.name AS tenant_brand_name FROM properties p LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id WHERE p.id = ?`).get(property_id)
+    } else {
+      property = db.prepare(`SELECT p.*, t.name AS tenant_brand_name FROM properties p LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id WHERE p.owner_id = ? ORDER BY p.id ASC LIMIT 1`).get(contact_id)
+    }
+
+    const msg = resolveMergeFields(message, person, property)
+    const entity = isEntity(person)
+    const toFirst = entity ? '' : (person.first_name || (person.name || '').split(' ')[0] || '')
+    const toLast  = entity ? '' : (person.last_name  || (person.name || '').split(' ').slice(1).join(' ') || '')
+    const toBusiness = entity ? person.name : ''
+
+    rows.push([
+      RET.first, RET.last, RET.business, RET.line1, RET.line2, RET.city, RET.state, RET.zip, RET.country,
+      toFirst, toLast, toBusiness,
+      person.address || '', '', person.city || '', person.state || '', person.zip || '', 'United States',
+      msg, signOff, '', msg.length,
+    ])
+  }
+
+  if (rows.length === 1) return res.status(400).json({ error: 'No mailable recipients (all missing addresses).' })
+
+  const ws = XLSX.utils.aoa_to_sheet(rows)
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, 'Basic')
+  const buf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' })
+
+  res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
+  res.setHeader('Content-Disposition', `attachment; filename="handwrytten-bulk-${new Date().toISOString().slice(0,10)}.xlsx"`)
+  res.send(buf)
 })
 
 // ── Drip campaigns (throttled "X letters every N days") ──────────────────────

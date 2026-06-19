@@ -348,6 +348,24 @@ export const getHandwryttenFonts      = ()          => req('GET', '/handwrytten/
 export const sendHandwryttenLetter    = (data)      => req('POST', '/handwrytten/send', data)
 export const sendHandwryttenBulk      = (data)      => req('POST', '/handwrytten/send-bulk', data)
 export const sendHandwryttenBasket    = (data)      => req('POST', '/handwrytten/send-basket', data) // TEST: one batched order
+export async function downloadHandwryttenBulkFile(data) {
+  const res = await fetch('/api/handwrytten/bulk-file', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    credentials: 'include', body: JSON.stringify(data),
+  })
+  if (!res.ok) {
+    let msg = 'Failed to generate the bulk file'
+    try { msg = (await res.json()).error || msg } catch {}
+    throw new Error(msg)
+  }
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `handwrytten-bulk-${new Date().toISOString().slice(0, 10)}.xlsx`
+  document.body.appendChild(a); a.click(); a.remove()
+  URL.revokeObjectURL(url)
+}
 export const getHandwryttenSends      = (params={}) => {
   const qs = new URLSearchParams(params).toString()
   return req('GET', `/handwrytten/sends${qs ? '?' + qs : ''}`)

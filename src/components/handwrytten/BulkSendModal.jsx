@@ -4,7 +4,7 @@ import {
   getHandwryttenCards,
   getHandwryttenFonts,
   sendHandwryttenBulk,
-  sendHandwryttenBasket,
+  downloadHandwryttenBulkFile,
   createHandwryttenDrip,
   getProperties,
   setPersonDNC,
@@ -451,27 +451,22 @@ export default function BulkSendModal({ onClose, onDone }) {
     }
   }
 
-  // ── TEST: batched basket order (new method) ──────────────────────────────────
-  const [testing, setTesting] = useState(false)
-  async function handleTestBasket() {
+  // ── Download a Handwrytten bulk-upload spreadsheet (one order on their site) ──
+  const [downloading, setDownloading] = useState(false)
+  async function handleDownloadBulk() {
     if (includedRecipients.length === 0) return
-    if (!window.confirm(`TEST: send ${includedRecipients.length} letter${includedRecipients.length !== 1 ? 's' : ''} as ONE batched Handwrytten order (new method).\n\nThis sends real mail. Use a small recipient count to test. Continue?`)) return
-    setTesting(true)
+    setDownloading(true)
     setSendError(null)
     try {
-      const result = await sendHandwryttenBasket({
+      await downloadHandwryttenBulkFile({
         recipients: includedRecipients.map(r => ({ contact_id: r.contact_id, property_id: r.property_id })),
         message,
-        card_id: selectedCard,
-        font:    selectedFont,
       })
-      alert(`✅ Batch sent as one order.\nOrder ID: ${result.order_id || '(see Handwrytten)'}\nLetters: ${result.count}\n\nCheck your Handwrytten Previous Orders — it should show as a single order.`)
-      onDone?.()
     } catch (err) {
-      alert(`❌ Batch test failed:\n\n${err.message}\n\nThe normal mailer still works — this was only the test. Send me this error and I'll adjust the format.`)
       setSendError(err.message)
+      alert(`Couldn't generate the file:\n\n${err.message}`)
     } finally {
-      setTesting(false)
+      setDownloading(false)
     }
   }
 
@@ -1005,14 +1000,14 @@ export default function BulkSendModal({ onClose, onDone }) {
                 <span className="text-xs text-slate-400">
                   {includedRecipients.length} letters · est. ${(includedRecipients.length * COST_LOW).toFixed(0)}–${(includedRecipients.length * COST_HIGH).toFixed(0)}
                 </span>
-                {/* TEMP: test the new batched-order method (placeBasket → basket/send) */}
+                {/* Download a Handwrytten bulk-upload spreadsheet → one order on their site */}
                 <button
-                  onClick={handleTestBasket}
-                  disabled={includedRecipients.length === 0 || overLimit || testing}
-                  title="TEST: send as one batched Handwrytten order (new method). Use a small count first."
-                  className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                  onClick={handleDownloadBulk}
+                  disabled={includedRecipients.length === 0 || overLimit || downloading}
+                  title="Download a ready-to-upload Handwrytten bulk file (one batched order). Pick the card & font on their site, then upload this."
+                  className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition-colors disabled:opacity-50"
                 >
-                  {testing ? <><Loader2 className="w-4 h-4 animate-spin" /> Testing…</> : <>🧪 TEST Mailer (batch)</>}
+                  {downloading ? <><Loader2 className="w-4 h-4 animate-spin" /> Building…</> : <>⬇ Handwrytten bulk file</>}
                 </button>
                 {sendMode === 'drip' ? (
                   <Button onClick={handleScheduleDrip} disabled={includedRecipients.length === 0 || overLimit || sending}>
