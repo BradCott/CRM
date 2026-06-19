@@ -497,9 +497,28 @@ router.post('/send-basket', async (req, res) => {
     addresses,
   }
 
+  // Raw POST that reports status + flags HTML (a webpage = the path 404'd) so the
+  // test error is readable instead of dumping a marketing page.
+  async function hwTry(path, params) {
+    const r = await fetch(`${HW_BASE}${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': HW_KEY, 'Accept': 'application/json' },
+      body: JSON.stringify(params),
+    })
+    const text = await r.text()
+    const isHtml = /^\s*<(!doctype|html)/i.test(text)
+    console.log(`[hw-test] POST ${path} → ${r.status}${isHtml ? ' (HTML)' : ' | ' + text.slice(0, 300)}`)
+    if (!r.ok || isHtml) {
+      const why = isHtml ? `HTTP ${r.status} — returned a web page, so this endpoint path does not exist on the API`
+                         : `HTTP ${r.status}: ${text.slice(0, 400)}`
+      throw new Error(`${path} → ${why}`)
+    }
+    try { return JSON.parse(text) } catch { throw new Error(`${path} → non-JSON response: ${text.slice(0, 200)}`) }
+  }
+
   try {
-    const placeResp = await hwPost('/orders/placeBasket', basketParams)
-    const sendResp  = await hwPost('/basket/send', {})
+    const placeResp = await hwTry('/orders/placeBasket', basketParams)
+    const sendResp  = await hwTry('/basket/send', {})
     const orderId   = sendResp?.order?.id || sendResp?.id || sendResp?.order_id ||
                       placeResp?.order?.id || placeResp?.id || null
 
