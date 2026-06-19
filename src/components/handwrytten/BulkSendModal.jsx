@@ -1,14 +1,17 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { X, Mail, Loader2, CheckCircle, AlertCircle, ChevronRight, Users, Search } from 'lucide-react'
+import { X, Mail, Loader2, CheckCircle, AlertCircle, ChevronRight, Users, Search, Ban, GitMerge, ExternalLink } from 'lucide-react'
 import {
   getHandwryttenCards,
   getHandwryttenFonts,
   sendHandwryttenBulk,
   createHandwryttenDrip,
   getProperties,
+  setPersonDNC,
+  mergePeople,
 } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import Button from '../ui/Button'
+import PersonDetail from '../people/PersonDetail'
 
 const DEFAULT_TEMPLATE =
   `{first_name}, Any chance you'd ever consider selling your {tenant} in {city}? ` +
@@ -243,6 +246,13 @@ export default function BulkSendModal({ onClose, onDone }) {
   const [recipients,    setRecipients]    = useState([])
   const [loadingRec,    setLoadingRec]    = useState(false)
   const [breakdown,     setBreakdown]     = useState(null)   // diagnostic counts
+  const [excluded,      setExcluded]      = useState(() => new Set()) // contact_ids skipped this round
+  const [viewId,        setViewId]        = useState(null)   // open PersonDetail overlay
+  const [dncBusy,       setDncBusy]       = useState(() => new Set())
+  const [mergeMode,     setMergeMode]     = useState(false)
+  const [mergeSel,      setMergeSel]      = useState(() => new Set())
+  const [mergeKeep,     setMergeKeep]     = useState(null)   // chosen keeper during merge confirm
+  const [merging,       setMerging]       = useState(false)
 
   // ── Letter state ───────────────────────────────────────────────────────────
   const [message,       setMessage]       = useState(DEFAULT_TEMPLATE)
@@ -384,6 +394,50 @@ export default function BulkSendModal({ onClose, onDone }) {
     }
   }, [filterStates, filterTenant, filterOwnerTypes, filterLeaseStart, filterLeaseEnd])
 
+  // Recipients actually getting mailed this round (excluded ones removed)
+  const includedRecipients = useMemo(
+    () => recipients.filter(r => !excluded.has(r.contact_id)),
+    [recipients, excluded],
+  )
+
+  const toggleExcluded = (id) => setExcluded(prev => {
+    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n
+  })
+
+  async function markDNC(r) {
+    setDncBusy(prev => new Set(prev).add(r.contact_id))
+    try {
+      await setPersonDNC(r.contact_id, true)
+      // Drop them from the list entirely — DNC means never mail
+      setRecipients(prev => prev.filter(x => x.contact_id !== r.contact_id))
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setDncBusy(prev => { const n = new Set(prev); n.delete(r.contact_id); return n })
+    }
+  }
+
+  const toggleMergeSel = (id) => setMergeSel(prev => {
+    const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n
+  })
+
+  async function doMerge() {
+    if (!mergeKeep || mergeSel.size < 2) return
+    setMerging(true)
+    try {
+      const mergeIds = [...mergeSel].filter(id => id !== mergeKeep)
+      await mergePeople(mergeKeep, mergeIds)
+      // Remove the merged-away rows from the list (the keeper stays)
+      const removed = new Set(mergeIds)
+      setRecipients(prev => prev.filter(r => !removed.has(r.contact_id)))
+      setMergeSel(new Set()); setMergeKeep(null); setMergeMode(false)
+    } catch (e) {
+      alert(e.message)
+    } finally {
+      setMerging(false)
+    }
+  }
+
   // ── Send ───────────────────────────────────────────────────────────────────
   async function handleSend() {
     setStep('sending')
@@ -391,7 +445,7 @@ export default function BulkSendModal({ onClose, onDone }) {
     setSendError(null)
     try {
       const result = await sendHandwryttenBulk({
-        recipients: recipients.map(r => ({ contact_id: r.contact_id, property_id: r.property_id })),
+        recipients: includedRecipients.map(r => ({ contact_id: r.contact_id, property_id: r.property_id })),
         message,
         card_id: selectedCard,
         font:    selectedFont,
@@ -413,7 +467,7 @@ export default function BulkSendModal({ onClose, onDone }) {
     try {
       const result = await createHandwryttenDrip({
         name:          filterTenant.trim() || (filterStates.length ? filterStates.join('/') : 'Mail campaign'),
-        recipients:    recipients.map(r => ({ contact_id: r.contact_id, property_id: r.property_id })),
+        recipients:    includedRecipients.map(r => ({ contact_id: r.contact_id, property_id: r.property_id })),
         message,
         card_id:       selectedCard,
         font:          selectedFont,
@@ -635,12 +689,50 @@ export default function BulkSendModal({ onClose, onDone }) {
                 <div className="flex items-center justify-between mb-2">
                   <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-1.5">
                     <Users className="w-4 h-4 text-slate-400" />
-                    Recipients ({recipients.length})
+                    Recipients
+                    <span className="font-normal text-slate-400">
+                      ({includedRecipients.length}{excluded.size > 0 ? ` of ${recipients.length}` : ''} mailing)
+                    </span>
                   </h3>
-                  <span className="text-xs text-slate-500">
-                    Est. cost: ${(recipients.length * COST_LOW).toFixed(0)}–${(recipients.length * COST_HIGH).toFixed(0)}
-                  </span>
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-slate-500">
+                      Est. cost: ${(includedRecipients.length * COST_LOW).toFixed(0)}–${(includedRecipients.length * COST_HIGH).toFixed(0)}
+                    </span>
+                    {recipients.length > 0 && (
+                      <button
+                        onClick={() => { setMergeMode(m => !m); setMergeSel(new Set()); setMergeKeep(null) }}
+                        className={`flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border transition-colors ${
+                          mergeMode ? 'bg-violet-50 text-violet-700 border-violet-200' : 'text-slate-500 border-slate-200 hover:bg-slate-50'
+                        }`}
+                      >
+                        <GitMerge className="w-3.5 h-3.5" /> {mergeMode ? 'Done merging' : 'Merge duplicates'}
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {/* Merge action bar */}
+                {mergeMode && mergeSel.size >= 2 && (
+                  <div className="mb-2 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2.5 text-xs">
+                    <p className="font-semibold text-violet-800 mb-1.5">Merge {mergeSel.size} into one — keep:</p>
+                    <div className="space-y-1 max-h-28 overflow-y-auto">
+                      {recipients.filter(r => mergeSel.has(r.contact_id)).map(r => (
+                        <label key={r.contact_id} className="flex items-center gap-2 cursor-pointer">
+                          <input type="radio" name="mergeKeep" checked={mergeKeep === r.contact_id}
+                            onChange={() => setMergeKeep(r.contact_id)} className="accent-violet-600" />
+                          <span className="text-slate-700">{r.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2 mt-2">
+                      <Button size="sm" onClick={doMerge} disabled={!mergeKeep || merging}>
+                        {merging ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Merging…</> : 'Merge'}
+                      </Button>
+                      <button onClick={() => { setMergeSel(new Set()); setMergeKeep(null) }} className="text-slate-500 hover:text-slate-700">Clear</button>
+                    </div>
+                    <p className="text-[11px] text-violet-600 mt-1.5">The others' properties, mail history & contacts move onto the kept record, then they're deleted.</p>
+                  </div>
+                )}
 
                 {recipients.length === 0 ? (
                   <div className="rounded-xl border border-slate-200 p-6 text-center">
@@ -650,22 +742,51 @@ export default function BulkSendModal({ onClose, onDone }) {
                     </button>
                   </div>
                 ) : (
-                  <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 max-h-48 overflow-y-auto">
-                    {recipients.map((r, i) => (
-                      <div key={i} className="flex items-center justify-between px-3 py-2">
-                        <div className="min-w-0">
-                          <p className="text-sm font-medium text-slate-800 truncate">{r.name}</p>
+                  <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 max-h-56 overflow-y-auto">
+                    {recipients.map((r) => {
+                      const isExcluded = excluded.has(r.contact_id)
+                      const busy = dncBusy.has(r.contact_id)
+                      return (
+                      <div key={r.contact_id} className={`flex items-center gap-2 px-3 py-2 ${isExcluded ? 'opacity-40' : ''}`}>
+                        {/* Include / merge-select checkbox */}
+                        <input
+                          type="checkbox"
+                          checked={mergeMode ? mergeSel.has(r.contact_id) : !isExcluded}
+                          onChange={() => mergeMode ? toggleMergeSel(r.contact_id) : toggleExcluded(r.contact_id)}
+                          className={`w-4 h-4 rounded shrink-0 cursor-pointer ${mergeMode ? 'accent-violet-600' : 'accent-blue-600'}`}
+                          title={mergeMode ? 'Select to merge' : 'Include in this mailing'}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <button
+                            onClick={() => setViewId(r.contact_id)}
+                            className="text-sm font-medium text-slate-800 truncate hover:text-blue-600 hover:underline flex items-center gap-1 max-w-full"
+                            title="View full contact info"
+                          >
+                            <span className="truncate">{r.name}</span>
+                            <ExternalLink className="w-3 h-3 text-slate-300 shrink-0" />
+                          </button>
                           <p className="text-xs text-slate-400 truncate">
                             {[r.address, r.city, r.state].filter(Boolean).join(', ')}
                           </p>
                         </div>
                         {r.tenant && (
-                          <span className="ml-2 shrink-0 text-xs font-semibold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">
+                          <span className="shrink-0 text-xs font-semibold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-full">
                             {r.tenant}
                           </span>
                         )}
+                        {!mergeMode && (
+                          <button
+                            onClick={() => markDNC(r)}
+                            disabled={busy}
+                            className="shrink-0 flex items-center gap-1 text-xs font-medium text-red-600 px-2 py-1 rounded-lg border border-red-200 hover:bg-red-50 transition-colors disabled:opacity-50"
+                            title="Mark Do Not Contact — removes them from mailings permanently"
+                          >
+                            {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Ban className="w-3 h-3" />} DNC
+                          </button>
+                        )}
                       </div>
-                    ))}
+                      )
+                    })}
                   </div>
                 )}
               </div>
@@ -782,7 +903,7 @@ export default function BulkSendModal({ onClose, onDone }) {
                     }`}
                   >
                     <p className="text-sm font-semibold text-slate-800">Send all now</p>
-                    <p className="text-xs text-slate-500">All {recipients.length} go out today</p>
+                    <p className="text-xs text-slate-500">All {includedRecipients.length} go out today</p>
                   </button>
                   <button
                     onClick={() => setSendMode('drip')}
@@ -812,11 +933,11 @@ export default function BulkSendModal({ onClose, onDone }) {
                       />
                       <span>day{intervalDays == 1 ? '' : 's'} until complete.</span>
                     </div>
-                    {recipients.length > 0 && batchSize >= 1 && intervalDays >= 1 && (
+                    {includedRecipients.length > 0 && batchSize >= 1 && intervalDays >= 1 && (
                       <p className="text-xs text-slate-500 mt-2">
-                        {recipients.length} letters → ~{Math.ceil(recipients.length / Math.max(1, batchSize))} batch{Math.ceil(recipients.length / Math.max(1, batchSize)) !== 1 ? 'es' : ''} over about{' '}
+                        {includedRecipients.length} letters → ~{Math.ceil(includedRecipients.length / Math.max(1, batchSize))} batch{Math.ceil(includedRecipients.length / Math.max(1, batchSize)) !== 1 ? 'es' : ''} over about{' '}
                         <span className="font-semibold text-slate-700">
-                          {(Math.ceil(recipients.length / Math.max(1, batchSize)) - 1) * Math.max(1, intervalDays)} day{(Math.ceil(recipients.length / Math.max(1, batchSize)) - 1) * Math.max(1, intervalDays) !== 1 ? 's' : ''}
+                          {(Math.ceil(includedRecipients.length / Math.max(1, batchSize)) - 1) * Math.max(1, intervalDays)} day{(Math.ceil(includedRecipients.length / Math.max(1, batchSize)) - 1) * Math.max(1, intervalDays) !== 1 ? 's' : ''}
                         </span>. First batch goes out immediately. Pause, resume, or cancel anytime from Campaigns.
                       </p>
                     )}
@@ -836,15 +957,15 @@ export default function BulkSendModal({ onClose, onDone }) {
               <button onClick={() => setStep('filters')} className="text-sm text-slate-500 hover:text-slate-700">← Back</button>
               <div className="flex items-center gap-3">
                 <span className="text-xs text-slate-400">
-                  {recipients.length} letters · est. ${(recipients.length * COST_LOW).toFixed(0)}–${(recipients.length * COST_HIGH).toFixed(0)}
+                  {includedRecipients.length} letters · est. ${(includedRecipients.length * COST_LOW).toFixed(0)}–${(includedRecipients.length * COST_HIGH).toFixed(0)}
                 </span>
                 {sendMode === 'drip' ? (
-                  <Button onClick={handleScheduleDrip} disabled={recipients.length === 0 || overLimit || sending}>
+                  <Button onClick={handleScheduleDrip} disabled={includedRecipients.length === 0 || overLimit || sending}>
                     {sending ? <><Loader2 className="w-4 h-4 animate-spin" /> Scheduling…</> : <><Mail className="w-4 h-4" /> Start Drip ({batchSize}/{intervalDays}d)</>}
                   </Button>
                 ) : (
-                  <Button onClick={handleSend} disabled={recipients.length === 0 || overLimit}>
-                    <Mail className="w-4 h-4" /> Send {recipients.length} Letter{recipients.length !== 1 ? 's' : ''}
+                  <Button onClick={handleSend} disabled={includedRecipients.length === 0 || overLimit}>
+                    <Mail className="w-4 h-4" /> Send {includedRecipients.length} Letter{includedRecipients.length !== 1 ? 's' : ''}
                   </Button>
                 )}
               </div>
@@ -856,7 +977,7 @@ export default function BulkSendModal({ onClose, onDone }) {
         {step === 'sending' && (
           <div className="flex-1 flex flex-col items-center justify-center py-16 px-6 gap-4">
             <Loader2 className="w-10 h-10 text-blue-500 animate-spin" />
-            <p className="text-base font-semibold text-slate-800">Sending {recipients.length} letters…</p>
+            <p className="text-base font-semibold text-slate-800">Sending {includedRecipients.length} letters…</p>
             <p className="text-sm text-slate-400 text-center">
               Please wait — this may take a moment for large batches.
             </p>
@@ -944,6 +1065,14 @@ export default function BulkSendModal({ onClose, onDone }) {
         )}
 
       </div>
+
+      {/* Full contact info — opens above the campaign modal */}
+      {viewId && (
+        <div className="fixed inset-0 z-[60]">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setViewId(null)} />
+          <PersonDetail personId={viewId} onClose={() => setViewId(null)} onEdit={() => setViewId(null)} />
+        </div>
+      )}
     </div>
   )
 }

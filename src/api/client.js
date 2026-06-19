@@ -32,6 +32,8 @@ export const createPerson = (data)   => req('POST',   '/people', data)
 export const updatePerson = (id, d)  => req('PUT',    `/people/${id}`, d)
 export const deletePerson = (id)     => req('DELETE', `/people/${id}`)
 export const bulkDeletePeople = (ids) => req('POST', '/people/bulk-delete', { ids })
+export const setPersonDNC   = (id, v)  => req('PATCH', `/people/${id}/dnc`, { do_not_contact: v ? 1 : 0 })
+export const mergePeople    = (keepId, mergeIds) => req('POST', '/people/merge', { keep_id: keepId, merge_ids: mergeIds })
 
 // Properties — paginated
 export const getProperties   = (params = {}) => {

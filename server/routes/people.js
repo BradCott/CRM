@@ -193,9 +193,50 @@ router.put('/:id', (req, res) => {
   res.json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id))
 })
 
+// Lightweight do-not-contact toggle (avoids sending the whole record)
+router.patch('/:id/dnc', (req, res) => {
+  const val = req.body?.do_not_contact ? 1 : 0
+  db.prepare('UPDATE people SET do_not_contact = ? WHERE id = ?').run(val, req.params.id)
+  const row = db.prepare('SELECT id, name, do_not_contact FROM people WHERE id = ?').get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'Not found' })
+  res.json(row)
+})
+
 router.delete('/:id', (req, res) => {
   db.prepare('DELETE FROM people WHERE id = ?').run(req.params.id)
   res.status(204).end()
+})
+
+// POST /api/people/merge — consolidate duplicate entities into one.
+// Body: { keep_id, merge_ids: [] }. Reassigns every reference (owned properties,
+// company contacts, broker on deals, mail sends, drip queue, emails) from the
+// duplicates onto keep_id, then deletes the duplicates.
+router.post('/merge', (req, res) => {
+  const keep = Number(req.body?.keep_id)
+  const ids  = (Array.isArray(req.body?.merge_ids) ? req.body.merge_ids : [])
+    .map(Number).filter(n => n && n !== keep)
+  if (!keep || ids.length === 0) return res.status(400).json({ error: 'keep_id and a non-empty merge_ids are required' })
+  if (!db.prepare('SELECT 1 FROM people WHERE id = ?').get(keep)) return res.status(404).json({ error: 'keep_id not found' })
+
+  const ph = ids.map(() => '?').join(',')
+  const reassign = [
+    `UPDATE properties            SET owner_id   = ? WHERE owner_id   IN (${ph})`,
+    `UPDATE people                SET company_id = ? WHERE company_id IN (${ph})`,
+    `UPDATE deals                 SET broker_id  = ? WHERE broker_id  IN (${ph})`,
+    `UPDATE handwrytten_sends     SET contact_id = ? WHERE contact_id IN (${ph})`,
+    `UPDATE handwrytten_drip_queue SET contact_id = ? WHERE contact_id IN (${ph})`,
+    `UPDATE emails                SET person_id  = ? WHERE person_id  IN (${ph})`,
+  ]
+  const run = db.transaction(() => {
+    for (const sql of reassign) {
+      try { db.prepare(sql).run(keep, ...ids) } catch (_) { /* table/col may not exist on older installs */ }
+    }
+    db.prepare(`DELETE FROM people WHERE id IN (${ph})`).run(...ids)
+  })
+  run()
+
+  const properties_under_keep = db.prepare('SELECT COUNT(*) AS n FROM properties WHERE owner_id = ?').get(keep).n
+  res.json({ keep_id: keep, merged: ids.length, properties_under_keep })
 })
 
 // POST /api/people/bulk-delete — { ids: [] }
