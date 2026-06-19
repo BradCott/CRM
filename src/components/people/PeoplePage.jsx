@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Users, UserPlus, MoreHorizontal, Pencil, Trash2, Loader2,
-  AlertCircle, ChevronLeft, ChevronRight, Settings2, Download,
+  AlertCircle, ChevronLeft, ChevronRight, Settings2, Download, GitMerge,
 } from 'lucide-react'
 import { getPeople, bulkDeletePeople, exportPeopleUrl } from '../../api/client'
 import { useApp } from '../../context/AppContext'
@@ -14,6 +14,7 @@ import ConfirmDialog from '../ui/ConfirmDialog'
 import EmptyState from '../ui/EmptyState'
 import PersonForm from './PersonForm'
 import PersonDetail from './PersonDetail'
+import DuplicateFinderModal from '../handwrytten/DuplicateFinderModal'
 import ColumnCustomizer, {
   buildPanelCols, loadSavedCols, detectPreset, saveColsToStorage,
 } from '../ui/ColumnCustomizer'
@@ -198,6 +199,7 @@ export default function PeoplePage() {
     return id ? Number(id) : null
   })
   const [openMenu, setOpenMenu]         = useState(null)
+  const [dupeFor, setDupeFor]           = useState(null)
   const [showCustomizer, setShowCustomizer] = useState(false)
   const [selected, setSelected]         = useState(() => new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
@@ -511,6 +513,7 @@ export default function PeoplePage() {
                           {openMenu===p.id && (
                             <div className="absolute right-0 top-9 w-40 bg-white border border-slate-200 rounded-xl shadow-lg z-10 py-1 text-sm">
                               <button className="flex items-center gap-2 w-full px-3 py-2 text-slate-700 hover:bg-slate-50" onClick={() => { setEditTarget(p); setShowForm(true); setOpenMenu(null) }}><Pencil className="w-3.5 h-3.5"/> Edit</button>
+                              <button className="flex items-center gap-2 w-full px-3 py-2 text-violet-700 hover:bg-violet-50" onClick={() => { setDupeFor({ contact_id: p.id, name: p.name }); setOpenMenu(null) }}><GitMerge className="w-3.5 h-3.5"/> Find duplicates</button>
                               <button className="flex items-center gap-2 w-full px-3 py-2 text-red-600 hover:bg-red-50" onClick={() => { setDeleteTarget(p); setOpenMenu(null) }}><Trash2 className="w-3.5 h-3.5"/> Delete</button>
                             </div>
                           )}
@@ -559,6 +562,14 @@ export default function PeoplePage() {
         </>
       )}
       {openMenu && <div className="fixed inset-0 z-0" onClick={() => setOpenMenu(null)} />}
+
+      {dupeFor && (
+        <DuplicateFinderModal
+          person={dupeFor}
+          onClose={() => setDupeFor(null)}
+          onMerged={() => { setDupeFor(null); load(search, roleFilter, dncFilter, ownerTypeFilter, page) }}
+        />
+      )}
     </div>
   )
 }
