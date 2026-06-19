@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
-import { X, Mail, Loader2, CheckCircle, AlertCircle, ChevronRight, Users, Search, Ban, GitMerge, ExternalLink } from 'lucide-react'
+import { X, Mail, Loader2, CheckCircle, AlertCircle, ChevronRight, Users, Search, Ban, GitMerge, ExternalLink, Sparkles } from 'lucide-react'
 import {
   getHandwryttenCards,
   getHandwryttenFonts,
@@ -11,6 +11,7 @@ import {
   mergePeople,
 } from '../../api/client'
 import { useApp } from '../../context/AppContext'
+import { useAssistant } from '../../context/AssistantContext'
 import Button from '../ui/Button'
 import PersonDetail from '../people/PersonDetail'
 import DuplicateFinderModal from './DuplicateFinderModal'
@@ -245,6 +246,19 @@ const STEPS = ['filters', 'preview', 'sending', 'done']
 
 export default function BulkSendModal({ onClose, onDone }) {
   const { tenantBrands, propertyStates } = useApp()
+  const { askAssistant } = useAssistant()
+
+  // Open the Copilot pre-loaded to help draft/improve the campaign message
+  const askCopilotForMessage = () => {
+    const tenant = (filterTenant || '').trim()
+    const prompt =
+      `Help me write a short, warm handwritten note for a direct-mail campaign to commercial property owners` +
+      `${tenant ? ` who own a ${tenant}` : ''}. The goal is to ask if they'd ever consider selling, positioning me ` +
+      `as a friendly direct buyer (no brokers, move quick). Keep the whole thing UNDER 500 characters. You may use ` +
+      `these merge fields literally and I'll fill them in: {first_name}, {tenant}, {city}, {state}. ` +
+      `Here is my current draft — improve it or write a fresh option:\n\n${message}`
+    askAssistant(prompt)
+  }
 
   // ── Filter state ───────────────────────────────────────────────────────────
   const [filterStates,     setFilterStates]     = useState([])       // multi-select
@@ -833,7 +847,17 @@ export default function BulkSendModal({ onClose, onDone }) {
               {/* Message template */}
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Message Template</label>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide">Message Template</label>
+                    <button
+                      type="button"
+                      onClick={askCopilotForMessage}
+                      className="flex items-center gap-1 text-xs font-medium text-violet-600 hover:text-violet-800 hover:underline"
+                      title="Open the Copilot with a head start to draft or improve this message"
+                    >
+                      <Sparkles className="w-3 h-3" /> Ask Copilot to help write this
+                    </button>
+                  </div>
                   <span className={`text-xs font-medium ${overLimit ? 'text-red-600' : finalMaxLen > CHAR_MAX - 40 ? 'text-amber-600' : 'text-slate-400'}`}>
                     {finalMaxLen}/{CHAR_MAX} sent
                   </span>

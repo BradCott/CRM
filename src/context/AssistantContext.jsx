@@ -7,6 +7,7 @@ const AssistantContext = createContext(null)
 
 export function AssistantProvider({ children }) {
   const contextRef = useRef('')
+  const openerRef  = useRef(null)   // the widget registers its "open with prompt" fn here
 
   const setAssistantContext = useCallback((value) => {
     contextRef.current = value || ''
@@ -14,8 +15,14 @@ export function AssistantProvider({ children }) {
 
   const getAssistantContext = useCallback(() => contextRef.current, [])
 
+  // The floating widget calls this once to expose how it should be opened.
+  const registerOpener = useCallback((fn) => { openerRef.current = fn }, [])
+
+  // Any component can pop the copilot open, optionally seeding the input.
+  const askAssistant = useCallback((prompt = '') => { openerRef.current?.(prompt) }, [])
+
   return (
-    <AssistantContext.Provider value={{ setAssistantContext, getAssistantContext }}>
+    <AssistantContext.Provider value={{ setAssistantContext, getAssistantContext, registerOpener, askAssistant }}>
       {children}
     </AssistantContext.Provider>
   )

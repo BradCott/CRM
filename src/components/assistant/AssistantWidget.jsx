@@ -47,7 +47,7 @@ function captureScreen() {
 }
 
 export default function AssistantWidget() {
-  const { getAssistantContext } = useAssistant()
+  const { getAssistantContext, registerOpener } = useAssistant()
   const [open, setOpen]       = useState(false)
   const [messages, setMessages] = useState([])
   const [input, setInput]     = useState('')
@@ -57,6 +57,15 @@ export default function AssistantWidget() {
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
   }, [messages, loading])
+
+  // Let other parts of the app open the copilot with a ready-to-send prompt
+  useEffect(() => {
+    registerOpener((prompt) => {
+      setOpen(true)
+      if (prompt) setInput(prompt)
+    })
+    return () => registerOpener(null)
+  }, [registerOpener])
 
   async function send(text) {
     const content = (text ?? input).trim()
