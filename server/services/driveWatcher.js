@@ -3,7 +3,7 @@ import { Readable } from 'node:stream'
 import mammoth from 'mammoth'
 import db from '../db.js'
 import { getAuthedClient } from './googleClient.js'
-import { parseLOIText } from './loiParser.js'
+import { parseLOIText, parseLOIPdf } from './loiParser.js'
 
 const FOLDER_NAME = 'LOIs'
 
@@ -88,15 +88,27 @@ export async function watchDrive() {
   let processed = []
   try { processed = JSON.parse(tokenRow.lois_processed || '[]') } catch (_) {}
 
+  const apiKey = process.env.ANTHROPIC_API_KEY
   for (const file of files) {
     if (processed.includes(file.id)) continue
 
     try {
-      const text = await extractText(drive, file)
-      if (text) {
-        await createDealFromLOI(file.name, text, file.id)
+      if (file.mimeType === 'application/pdf') {
+        // PDFs go straight to Claude's document API (handles scanned LOIs too)
+        const dl = await drive.files.get({ fileId: file.id, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' })
+        let fields = {}
+        if (apiKey) {
+          try { fields = await parseLOIPdf(Buffer.from(dl.data), apiKey) }
+          catch (e) { console.error(`[driveWatcher] PDF parse failed for ${file.name}:`, e.message) }
+        }
+        await createDealFromLOI(file.name, '', file.id, fields)
+        processed.push(file.id)
+      } else {
+        const text = await extractText(drive, file)
+        if (text) await createDealFromLOI(file.name, text, file.id)
+        // Only mark processed once we actually had content to work with
+        if (text) processed.push(file.id)
       }
-      processed.push(file.id)
     } catch (err) {
       console.error(`[driveWatcher] Failed to process ${file.name}:`, err.message)
     }
@@ -264,7 +276,7 @@ export async function diagnoseDrive() {
   return out
 }
 
-async function createDealFromLOI(filename, text, fileId) {
+async function createDealFromLOI(filename, text, fileId, preParsed = null) {
   const title = filename.replace(/\.[^.]+$/, '').trim()
 
   // Dedupe — don't recreate a deal we already imported from this LOI
@@ -276,11 +288,11 @@ async function createDealFromLOI(filename, text, fileId) {
     return
   }
 
-  // Parse with the same AI extractor the manual upload uses; fall back to a
-  // basic price regex if the API key is missing or the call fails.
-  let f = {}
+  // PDFs arrive already parsed (preParsed); text docs get parsed here with the
+  // same AI extractor the manual upload uses.
+  let f = preParsed || {}
   const apiKey = process.env.ANTHROPIC_API_KEY
-  if (apiKey) {
+  if (!preParsed && apiKey) {
     try {
       f = await parseLOIText(text, apiKey)
     } catch (err) {
