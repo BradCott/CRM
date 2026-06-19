@@ -29,11 +29,12 @@ export const COL_DEFS = {
   dd_deadline:        { label: 'DD Deadline',   type: 'date' },
   stage:              { label: 'Stage',         type: 'select' },
   close_date:         { label: 'Close Date',    type: 'date' },
+  date_added:         { label: 'Date Added',    type: null },      // read-only (created_at)
 }
 
 const ALL_COL_KEYS = Object.keys(COL_DEFS)
-const DEFAULT_COLS = ['tenant', 'address', 'city', 'state', 'cap_rate', 'purchase_price', 'fee', 'due_diligence_days', 'dd_deadline', 'stage']
-const STORAGE_KEY  = 'pipeline_cols_v2'
+const DEFAULT_COLS = ['tenant', 'address', 'city', 'state', 'cap_rate', 'purchase_price', 'fee', 'due_diligence_days', 'dd_deadline', 'date_added', 'stage']
+const STORAGE_KEY  = 'pipeline_cols_v3'   // bumped so Date Added shows for existing layouts
 
 const PRESETS = [
   { id: 'default',   label: 'Default',       cols: DEFAULT_COLS },
@@ -77,6 +78,7 @@ function displayValue(col, deal) {
     case 'dd_deadline':        return fmtDate(deal.dd_deadline)
     case 'stage':              return <StageBadge stage={deal.stage} />
     case 'close_date':         return fmtDate(deal.close_date)
+    case 'date_added':         return fmtDate((deal.created_at || '').slice(0, 10))
     default:                   return null
   }
 }
@@ -118,6 +120,7 @@ function getSortValue(col, deal) {
     case 'stage':              return STAGE_ORDER[deal.stage] ?? 99
     case 'dd_deadline':        return deal.dd_deadline  ?? ''
     case 'close_date':         return deal.close_date   ?? ''
+    case 'date_added':         return deal.created_at   ?? ''
     default:                   return (deal[col] ?? '').toString().toLowerCase()
   }
 }
@@ -196,7 +199,6 @@ export default function DealTable({ deals, onDelete, onCellSave, onCloseDeal, on
   }, [deals, sortCol, sortDir])
 
   function handleSort(col) {
-    if (col === 'fee') return // fee is calculated, sort by price instead
     if (col === sortCol) setSortDir(d => d === 'asc' ? 'desc' : 'asc')
     else { setSortCol(col); setSortDir('asc') }
   }
@@ -288,19 +290,15 @@ export default function DealTable({ deals, onDelete, onCellSave, onCloseDeal, on
                 <th
                   key={col}
                   onClick={() => handleSort(col)}
-                  className={`text-left text-xs font-semibold text-slate-500 uppercase tracking-wide px-4 py-3 whitespace-nowrap first:pl-6 last:pr-6 select-none ${
-                    COL_DEFS[col]?.type !== null ? 'cursor-pointer hover:bg-slate-100 transition-colors' : ''
-                  }`}
+                  className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wide px-4 py-3 whitespace-nowrap first:pl-6 last:pr-6 select-none cursor-pointer hover:bg-slate-100 transition-colors"
                 >
                   <div className="flex items-center gap-1">
                     {COL_DEFS[col]?.label ?? col}
-                    {COL_DEFS[col]?.type !== null && (
-                      col === sortCol
-                        ? sortDir === 'asc'
-                          ? <ChevronUp className="w-3 h-3 text-blue-500" />
-                          : <ChevronDown className="w-3 h-3 text-blue-500" />
-                        : <ChevronsUpDown className="w-3 h-3 text-slate-300" />
-                    )}
+                    {col === sortCol
+                      ? sortDir === 'asc'
+                        ? <ChevronUp className="w-3 h-3 text-blue-500" />
+                        : <ChevronDown className="w-3 h-3 text-blue-500" />
+                      : <ChevronsUpDown className="w-3 h-3 text-slate-300" />}
                   </div>
                 </th>
               ))}

@@ -6,7 +6,7 @@ const router = Router()
 const SELECT = `
   SELECT
     d.id, d.property_id, d.stage, d.close_date, d.notes, d.title, d.source,
-    d.due_diligence_days, d.dd_deadline, d.earnest_money,
+    d.due_diligence_days, d.dd_deadline, d.earnest_money, d.created_at,
     COALESCE(d.purchase_price, d.offer_price)  AS purchase_price,
     COALESCE(d.tenant, t.name)                 AS tenant,
     COALESCE(d.address, p.address)             AS address,
@@ -94,8 +94,9 @@ router.post('/', (req, res) => {
           address, city, state, tenant, cap_rate, due_diligence_days, dd_deadline, earnest_money } = req.body
   const r = db.prepare(`
     INSERT INTO deals (property_id, stage, purchase_price, close_date, notes,
-                       address, city, state, tenant, cap_rate, due_diligence_days, dd_deadline, earnest_money)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                       address, city, state, tenant, cap_rate, due_diligence_days, dd_deadline, earnest_money,
+                       created_at, updated_at)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'), datetime('now'))
   `).run(toStr(property_id), stage, toFloat(purchase_price), toStr(close_date), toStr(notes),
          toStr(address), toStr(city), toStr(state), toStr(tenant),
          toFloat(cap_rate), toInt(due_diligence_days), toStr(dd_deadline), toFloat(earnest_money))
