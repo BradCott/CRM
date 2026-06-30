@@ -33,6 +33,7 @@ export async function syncGmail() {
 
   let pageToken = null
   let synced    = 0
+  let replies   = 0
 
   do {
     const listRes = await gmail.users.messages.list({
@@ -74,12 +75,31 @@ export async function syncGmail() {
       const direction = emailMap[fromAddr] ? 'inbound' : 'outbound'
 
       try {
-        db.prepare(`
+        const ins = db.prepare(`
           INSERT OR IGNORE INTO emails
             (person_id, gmail_message_id, thread_id, direction, subject, body_preview, from_address, to_address, date)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(personId, msg.id, detail.data.threadId, direction, subject, snippet, headers['from'] || '', headers['to'] || '', date)
-        synced++
+        if (ins.changes > 0) synced++
+
+        // If a contact we mailed a letter to just replied, surface it as a hot play
+        if (ins.changes > 0 && direction === 'inbound') {
+          const mailed = db.prepare(`SELECT sent_by_user_id FROM handwrytten_sends WHERE contact_id = ? AND status = 'sent' ORDER BY sent_at DESC LIMIT 1`).get(personId)
+          if (mailed) {
+            const person = db.prepare('SELECT name FROM people WHERE id = ?').get(personId)
+            db.prepare(`
+              INSERT OR IGNORE INTO plays (user_id, source, play_type, title, detail, route, priority, status, dedupe_key, created_at)
+              VALUES (?, 'system', 'mailer_reply', ?, ?, ?, 100, 'open', ?, datetime('now'))
+            `).run(
+              mailed.sent_by_user_id || null,
+              `📬 ${person?.name || 'A contact'} replied to your letter`,
+              subject,
+              `/people?open=${personId}`,
+              `mailer-reply-${msg.id}`,
+            )
+            replies++
+          }
+        }
       } catch (_) {}
     }
   } while (pageToken)
@@ -90,7 +110,8 @@ export async function syncGmail() {
     WHERE provider = 'google'
   `).run()
 
-  return { synced }
+  if (synced || replies) console.log(`[gmailSync] ${synced} email(s) logged, ${replies} mailer repl${replies === 1 ? 'y' : 'ies'}`)
+  return { synced, replies }
 }
 
 function extractEmail(str) {

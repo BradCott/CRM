@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle, Download, Database } from 'lucide-react'
-import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl } from '../../api/client'
+import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, syncGmailNow, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl } from '../../api/client'
 import Button from '../ui/Button'
 
 export default function SettingsPage() {
@@ -12,6 +12,21 @@ export default function SettingsPage() {
   const [backupInfo, setBackupInfo] = useState(null)
   const [folderInput, setFolderInput] = useState('')
   const [pinning, setPinning]   = useState(false)
+  const [gmailSyncing, setGmailSyncing] = useState(false)
+
+  async function handleGmailSync() {
+    setGmailSyncing(true)
+    setMsg(null)
+    try {
+      const r = await syncGmailNow()
+      setMsg({ type: 'success', text:
+        `Gmail synced — ${r.synced} email${r.synced === 1 ? '' : 's'} logged to contacts${r.replies > 0 ? `, including ${r.replies} repl${r.replies === 1 ? 'y' : 'ies'} to a mailer (see Today's Plays).` : '.'}` })
+    } catch (err) {
+      setMsg({ type: 'error', text: err.message })
+    } finally {
+      setGmailSyncing(false)
+    }
+  }
 
   async function handlePinFolder() {
     if (!folderInput.trim()) return
@@ -173,6 +188,21 @@ export default function SettingsPage() {
                       {pinning ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Pinning…</> : <><FolderOpen className="w-3.5 h-3.5" /> Pin & scan</>}
                     </button>
                   </div>
+                </div>
+
+                {/* Pull recent Gmail into contact timelines (auto-runs every 15 min) */}
+                <div className="mb-3 p-3 rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-slate-600">Sync Gmail to contacts</p>
+                    <p className="text-[11px] text-slate-400">Logs emails to/from your contacts and flags replies to mailers. Runs automatically every 15 min.</p>
+                  </div>
+                  <button
+                    onClick={handleGmailSync}
+                    disabled={gmailSyncing}
+                    className="flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 px-3 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors disabled:opacity-50 shrink-0"
+                  >
+                    {gmailSyncing ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Syncing…</> : <><RefreshCw className="w-3.5 h-3.5" /> Sync now</>}
+                  </button>
                 </div>
 
                 {diag && (

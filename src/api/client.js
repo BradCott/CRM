@@ -150,6 +150,7 @@ export const disconnectGoogle = ()     => req('DELETE', '/auth/google')
 export const diagnoseDrive    = ()       => req('GET',  '/loi-import/diagnose')
 export const runDriveWatcher  = (reset)  => req('POST', `/loi-import/run${reset ? '?reset=1' : ''}`)
 export const setLoiFolder     = (folder) => req('POST', '/loi-import/set-folder', { folder })
+export const syncGmailNow     = ()       => req('POST', '/emails/sync')
 
 // Emails
 export const getEmails    = (personId) => req('GET',    `/emails?person_id=${personId}`)

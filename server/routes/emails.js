@@ -1,7 +1,18 @@
 import { Router } from 'express'
 import db from '../db.js'
+import { syncGmail } from '../services/gmailSync.js'
 
 const router = Router()
+
+// POST /api/emails/sync — pull recent Gmail and log emails to matching contacts
+router.post('/sync', async (_req, res) => {
+  try {
+    const result = await syncGmail()
+    res.json({ ok: true, ...result })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
+})
 
 // GET /api/emails?person_id=X
 router.get('/', (req, res) => {

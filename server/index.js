@@ -117,4 +117,10 @@ app.listen(PORT, '0.0.0.0', () => {
   import('./services/dripEngine.js').then(({ startDripEngine }) => {
     startDripEngine()
   }).catch(err => console.warn('[drip] could not start:', err.message))
+  // Gmail sync — log emails to matching contacts + flag mailer replies (every 15 min)
+  import('./services/gmailSync.js').then(({ syncGmail }) => {
+    const run = () => syncGmail().catch(err => console.error('[gmailSync] error:', err.message))
+    setTimeout(run, 20_000)            // shortly after boot
+    setInterval(run, 15 * 60 * 1000)   // then every 15 minutes
+  }).catch(err => console.warn('[gmailSync] could not start:', err.message))
 })
