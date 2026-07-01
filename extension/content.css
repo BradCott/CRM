@@ -1,30 +1,28 @@
-/* Knox CRM — Gmail chip + panel styles */
+/* Knox CRM — Gmail floating button + panel styles */
 
-.knox-chip {
-  display: inline-flex;
-  align-items: center;
-  height: 28px;
-  padding: 0 12px;
-  margin-right: 6px;
+.knox-fab {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2147483647;
+  padding: 11px 18px;
+  background: #1a73e8;
+  color: #fff;
+  border: none;
+  border-radius: 22px;
   font-family: 'Google Sans', Roboto, Arial, sans-serif;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 500;
-  color: #1967d2;
-  background: #e8f0fe;
-  border: 1px solid #d2e3fc;
-  border-radius: 14px;
   cursor: pointer;
-  white-space: nowrap;
-  vertical-align: middle;
-  transition: background 0.15s, color 0.15s;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
 }
-.knox-chip:hover { background: #d2e3fc; color: #185abc; }
-.knox-chip.knox-known { color: #137333; background: #e6f4ea; border-color: #ceead6; }
-.knox-chip.knox-maybe { color: #b06000; background: #feefc3; border-color: #fde293; }
+.knox-fab:hover { background: #1765cc; }
 
-/* Panel */
+/* Panel — anchored above the floating button */
 .knox-panel {
   position: fixed;
+  bottom: 76px;
+  right: 24px;
   z-index: 2147483647;
   width: 320px;
   max-height: 60vh;

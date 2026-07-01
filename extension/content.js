@@ -1,7 +1,7 @@
 // Knox CRM — Gmail content script
-// Injects a "Knox CRM" chip into each open email's action toolbar. Clicking it
-// opens a panel that lets you (1) attach the sender's address to an existing
-// CRM contact and (2) log the email onto that contact.
+// A floating "Knox CRM" button sits in the bottom-right of Gmail. Click it while
+// reading an email to (1) attach the sender's address to an existing CRM contact
+// and (2) log the email onto that contact. No dependency on Gmail's own buttons.
 
 const CRM_URL_KEY = 'knoxCrmUrl'
 const CRM_KEY_KEY = 'knoxCrmKey'
@@ -17,7 +17,9 @@ chrome.storage.onChanged.addListener((c) => {
   if (c[CRM_KEY_KEY]) crmKey = c[CRM_KEY_KEY].newValue
 })
 
-// ── API helpers ─────────────────────────────────────────────────────────────
+// DOM-visible marker so we can confirm the script loaded from the page console.
+document.documentElement.setAttribute('data-knox-loaded', '1')
+
 async function api(path, opts = {}) {
   const res = await fetch(`${crmUrl}${path}`, {
     ...opts,
@@ -26,81 +28,25 @@ async function api(path, opts = {}) {
   return res.json()
 }
 
-// ── Polling — inject a chip next to Reply in each email's action toolbar ──────
-setInterval(scan, 1000)
-scan()
-
-function scan() {
-  // Anchor on the Forward button — it only appears in the bottom action toolbar,
-  // so the chip lands there rather than in the email header.
-  const forwardBtns = [
-    ...document.querySelectorAll('[aria-label="Forward"]'),
-    ...document.querySelectorAll('[data-tooltip="Forward"]'),
-    ...document.querySelectorAll('[title="Forward"]'),
-  ]
-
-  for (const fwdBtn of forwardBtns) {
-    if (fwdBtn.dataset.knoxDone) continue
-
-    let toolbar = fwdBtn.parentElement
-    let replyBtn = null
-    for (let i = 0; i < 3; i++) {
-      if (!toolbar) break
-      replyBtn =
-        toolbar.querySelector('[aria-label="Reply"]:not([aria-label*="all"])') ||
-        toolbar.querySelector('[data-tooltip="Reply"]') ||
-        toolbar.querySelector('[title="Reply"]')
-      if (replyBtn) break
-      toolbar = toolbar.parentElement
-    }
-    if (!replyBtn || !toolbar) continue
-    if (toolbar.querySelector('.knox-chip')) continue
-
-    fwdBtn.dataset.knoxDone = '1'
-
-    const emailEl =
-      fwdBtn.closest('[data-message-id]') ||
-      fwdBtn.closest('[data-legacy-message-id]') ||
-      null
-
-    replyBtn.insertAdjacentElement('afterend', buildChip(emailEl))
-  }
+// ── Floating button ───────────────────────────────────────────────────────────
+function ensureFab() {
+  if (document.getElementById('knox-fab')) return
+  if (!document.body) return
+  const fab = document.createElement('button')
+  fab.id = 'knox-fab'
+  fab.className = 'knox-fab'
+  fab.textContent = 'Knox CRM'
+  fab.title = 'Add sender / log this email to Knox CRM'
+  fab.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); onFabClick(fab) })
+  document.body.appendChild(fab)
 }
+setInterval(ensureFab, 1500)
+ensureFab()
 
-// ── Chip ──────────────────────────────────────────────────────────────────────
-function buildChip(emailEl) {
-  const chip = document.createElement('button')
-  chip.className   = 'knox-chip'
-  chip.textContent = 'Knox CRM'
-  chip.title       = 'Add to / log in Knox CRM'
-  chip.addEventListener('click', (e) => {
-    e.stopPropagation()
-    e.preventDefault()
-    togglePanel(chip, emailEl)
-  })
-
-  // Reflect known/unknown at a glance once we can read the sender.
-  refreshChipState(chip, emailEl)
-  return chip
-}
-
-async function refreshChipState(chip, emailEl) {
-  const data = extractEmailData(emailEl)
-  chip._email = data
-  if (!crmKey || !data.contactEmail) return
-  try {
-    const r = await api(`/api/ext/lookup?email=${encodeURIComponent(data.contactEmail)}&name=${encodeURIComponent(data.fromName || '')}`)
-    chip._lookup = r
-    if (r.matched) {
-      chip.classList.add('knox-known')
-      chip.textContent = `✓ ${r.matched.name}`
-    } else if (r.candidates && r.candidates.length) {
-      chip.classList.add('knox-maybe')
-      chip.textContent = '＋ Add to CRM'
-    } else {
-      chip.textContent = 'Knox CRM'
-    }
-  } catch (_) { /* offline / bad key — leave the neutral chip, panel shows the error */ }
+// The most recently rendered message in the open conversation.
+function currentMessageEl() {
+  const msgs = Array.from(document.querySelectorAll('[data-message-id], [data-legacy-message-id]'))
+  return msgs.length ? msgs[msgs.length - 1] : null
 }
 
 // ── Panel ─────────────────────────────────────────────────────────────────────
@@ -111,75 +57,75 @@ function closePanel() {
   document.removeEventListener('mousedown', onDocDown, true)
 }
 function onDocDown(e) {
-  if (openPanel && !openPanel.contains(e.target) && !e.target.classList.contains('knox-chip')) closePanel()
+  if (openPanel && !openPanel.contains(e.target) && e.target.id !== 'knox-fab') closePanel()
 }
 
-async function togglePanel(chip, emailEl) {
-  if (openPanel && openPanel._chip === chip) { closePanel(); return }
-  closePanel()
+async function onFabClick(fab) {
+  if (openPanel) { closePanel(); return }
 
-  const data = chip._email || extractEmailData(emailEl)
   const panel = document.createElement('div')
   panel.className = 'knox-panel'
-  panel._chip = chip
-  positionPanel(panel, chip)
+  panel._anchor = fab
   document.body.appendChild(panel)
   openPanel = panel
   setTimeout(() => document.addEventListener('mousedown', onDocDown, true), 0)
 
   if (!crmKey) {
-    panel.innerHTML = row('⚠ Set your CRM server URL and key in the extension popup first.', 'knox-warn')
-    return
-  }
-  if (!data.contactEmail) {
-    panel.innerHTML = row('Could not read the sender address from this email.', 'knox-warn')
+    panel.innerHTML = wrapHd('Not set up', '') + `<div class="knox-bd">${row('⚠ Open the extension popup (puzzle-piece icon) and set the CRM URL + key first.', 'knox-warn')}</div>`
     return
   }
 
-  panel.innerHTML = `<div class="knox-hd">${esc(data.fromName || data.contactEmail)}<span>${esc(data.contactEmail)}</span></div><div class="knox-bd">Loading…</div>`
+  const data = extractEmailData(currentMessageEl())
+  if (!data.contactEmail) {
+    panel.innerHTML = wrapHd('No email open', '') + `<div class="knox-bd">${row('Open an email (click one so you\'re reading it), then click Knox CRM again.', 'knox-warn')}</div>`
+    return
+  }
+
+  panel.innerHTML = wrapHd(data.fromName || data.contactEmail, data.contactEmail) + `<div class="knox-bd">Loading…</div>`
   const body = panel.querySelector('.knox-bd')
 
-  let lookup = chip._lookup
+  let lookup
   try {
-    if (!lookup) lookup = await api(`/api/ext/lookup?email=${encodeURIComponent(data.contactEmail)}&name=${encodeURIComponent(data.fromName || '')}`)
+    lookup = await api(`/api/ext/lookup?email=${encodeURIComponent(data.contactEmail)}&name=${encodeURIComponent(data.fromName || '')}`)
   } catch (_) {
-    body.innerHTML = row('CRM unreachable — check the server URL in the popup.', 'knox-warn')
+    body.innerHTML = row('CRM unreachable — check the server URL/key in the popup.', 'knox-warn')
+    return
+  }
+  if (lookup && lookup.error) {
+    body.innerHTML = row(`✗ ${lookup.error}`, 'knox-warn')
     return
   }
 
-  renderLookup(panel, body, data, lookup, chip)
+  renderLookup(body, data, lookup, fab)
 }
 
-function renderLookup(panel, body, data, lookup, chip) {
+function renderLookup(body, data, lookup, fab) {
   body.innerHTML = ''
 
   if (lookup.matched) {
     body.appendChild(el(`<div class="knox-line knox-ok">✓ In CRM: <b>${esc(lookup.matched.name)}</b></div>`))
-    body.appendChild(logButton(data, lookup.matched.id, chip))
-    body.appendChild(searchBlock(panel, body, data, chip, 'Log to a different contact'))
+    body.appendChild(logButton(data, lookup.matched.id, fab))
+    body.appendChild(searchBlock(body, data, fab, 'Log to a different contact'))
     return
   }
 
-  // Unknown address → offer to attach it to a contact, then log.
   const head = lookup.candidates && lookup.candidates.length
     ? `Add <b>${esc(data.contactEmail)}</b> to:`
     : `No contact has this address. Search to attach it:`
   body.appendChild(el(`<div class="knox-line">${head}</div>`))
 
-  for (const c of (lookup.candidates || [])) {
-    body.appendChild(candidateRow(c, data, panel, body, chip))
-  }
-  body.appendChild(searchBlock(panel, body, data, chip, lookup.candidates?.length ? 'Search for someone else' : 'Search contacts'))
+  for (const c of (lookup.candidates || [])) body.appendChild(candidateRow(c, data, body, fab))
+  body.appendChild(searchBlock(body, data, fab, lookup.candidates?.length ? 'Search for someone else' : 'Search contacts'))
 }
 
-function candidateRow(person, data, panel, body, chip) {
+function candidateRow(person, data, body, fab) {
   const sub = [person.city, person.state].filter(Boolean).join(', ')
   const btn = el(`<button class="knox-cand"><span><b>${esc(person.name)}</b>${sub ? ` · ${esc(sub)}` : ''}</span><small>${person.email ? esc(person.email) : 'no email on file'}</small></button>`)
-  btn.addEventListener('click', () => attachThenLog(person, data, panel, body, chip))
+  btn.addEventListener('click', () => attachThenLog(person, data, body, fab))
   return btn
 }
 
-function searchBlock(panel, body, data, chip, label) {
+function searchBlock(body, data, fab, label) {
   const wrap = el(`<div class="knox-search"><div class="knox-line knox-muted">${label}</div><input class="knox-input" placeholder="Type a name…" /><div class="knox-results"></div></div>`)
   const input   = wrap.querySelector('input')
   const results = wrap.querySelector('.knox-results')
@@ -192,7 +138,7 @@ function searchBlock(panel, body, data, chip, label) {
       try {
         const rows = await api(`/api/ext/search?q=${encodeURIComponent(q)}`)
         results.innerHTML = ''
-        for (const p of rows) results.appendChild(candidateRow(p, data, panel, body, chip))
+        for (const p of rows) results.appendChild(candidateRow(p, data, body, fab))
         if (!rows.length) results.innerHTML = '<div class="knox-line knox-muted">No matches</div>'
       } catch (_) { results.innerHTML = '<div class="knox-line knox-warn">Search failed</div>' }
     }, 250)
@@ -200,7 +146,7 @@ function searchBlock(panel, body, data, chip, label) {
   return wrap
 }
 
-async function attachThenLog(person, data, panel, body, chip) {
+async function attachThenLog(person, data, body, fab) {
   body.innerHTML = ''
   const status = el(`<div class="knox-line">Attaching to <b>${esc(person.name)}</b>…</div>`)
   body.appendChild(status)
@@ -210,20 +156,16 @@ async function attachThenLog(person, data, panel, body, chip) {
       body: JSON.stringify({ person_id: person.id, email: data.contactEmail }),
     })
     if (!r.ok) { status.className = 'knox-line knox-warn'; status.textContent = `✗ ${r.error}`; return }
-    const note = r.already ? 'already on file' : (r.slot === 'email2' ? 'saved as 2nd email' : 'saved')
+    const note = r.already ? 'already on file' : (r.slot === 'email2' ? 'saved as 2nd email' : 'email saved')
     status.className = 'knox-line knox-ok'
     status.innerHTML = `✓ ${esc(person.name)} — ${note}`
-    body.appendChild(logButton(data, person.id, chip))
-    // Reflect the new link on the chip.
-    chip.classList.remove('knox-maybe'); chip.classList.add('knox-known')
-    chip.textContent = `✓ ${person.name}`
-    chip._lookup = { matched: { id: person.id, name: person.name }, candidates: [] }
+    body.appendChild(logButton(data, person.id, fab))
   } catch (_) {
     status.className = 'knox-line knox-warn'; status.textContent = '✗ CRM unreachable'
   }
 }
 
-function logButton(data, personId, chip) {
+function logButton(data, personId, fab) {
   const btn = el('<button class="knox-primary">Log this email</button>')
   btn.addEventListener('click', async () => {
     btn.disabled = true; btn.textContent = 'Logging…'
@@ -270,8 +212,8 @@ function extractEmailData(emailEl) {
     document.querySelector('h2')?.textContent?.trim() || ''
 
   let dateIso = new Date().toISOString()
-  for (const el of Array.from(root.querySelectorAll('[title]'))) {
-    const t = el.getAttribute('title') || ''
+  for (const node of Array.from(root.querySelectorAll('[title]'))) {
+    const t = node.getAttribute('title') || ''
     if (/\d{4}/.test(t)) {
       const parsed = new Date(t)
       if (!isNaN(parsed)) { dateIso = parsed.toISOString(); break }
@@ -279,7 +221,7 @@ function extractEmailData(emailEl) {
   }
 
   let bodyPreview = ''
-  const bodyEl = root.querySelector('[dir="ltr"]') || root.querySelector('.a3s') || null
+  const bodyEl = root.querySelector('.a3s') || root.querySelector('[dir="ltr"]') || null
   if (bodyEl) {
     const clone = bodyEl.cloneNode(true)
     clone.querySelectorAll('.gmail_quote, blockquote, style, script').forEach(n => n.remove())
@@ -292,10 +234,8 @@ function extractEmailData(emailEl) {
   ).toLowerCase().trim()
 
   const direction    = myEmail && fromEmail === myEmail ? 'outbound' : 'inbound'
-  const contactEmail = direction === 'inbound' ? fromEmail : toEmail
+  const contactEmail = direction === 'inbound' ? fromEmail : (toEmail || fromEmail)
 
-  // Gmail's legacy message id equals the Gmail API id, so logging here dedupes
-  // against the background sync.
   const legacyId =
     emailEl?.getAttribute?.('data-legacy-message-id') ||
     emailEl?.getAttribute?.('data-message-id') || null
@@ -308,14 +248,8 @@ function extractEmailData(emailEl) {
   }
 }
 
-// ── Tiny DOM helpers ────────────────────────────────────────────────────────
+// ── Tiny helpers ──────────────────────────────────────────────────────────────
 function el(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstElementChild }
 function row(text, cls = '') { return `<div class="knox-line ${cls}">${esc(text)}</div>` }
+function wrapHd(title, sub) { return `<div class="knox-hd">${esc(title)}${sub ? `<span>${esc(sub)}</span>` : ''}</div>` }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])) }
-
-function positionPanel(panel, chip) {
-  const r = chip.getBoundingClientRect()
-  panel.style.position = 'fixed'
-  panel.style.top  = `${Math.min(r.bottom + 6, window.innerHeight - 40)}px`
-  panel.style.left = `${Math.min(r.left, window.innerWidth - 320)}px`
-}
