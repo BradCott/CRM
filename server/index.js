@@ -26,8 +26,9 @@ import handwryttenRouter   from './routes/handwrytten.js'
 import playsRouter          from './routes/plays.js'
 import assistantRouter      from './routes/assistant.js'
 import backupRouter         from './routes/backup.js'
+import extRouter             from './routes/ext.js'
 
-import { requireAuth, requireWrite, requireRole } from './middleware/auth.js'
+import { requireAuth, requireWrite, requireRole, requireExtKey } from './middleware/auth.js'
 
 // Initialize DB schema (also runs migrations)
 import './db.js'
@@ -51,6 +52,9 @@ if (isProd && existsSync(distPath)) {
 
 // ── Public API routes (no auth required) ─────────────────────────────────────
 app.use('/api/auth', authRouter)
+
+// ── Gmail browser extension (shared-key auth, not the login cookie) ──────────
+app.use('/api/ext', requireExtKey, extRouter)
 
 // ── Protected API routes (requireAuth applied per-route, not globally) ────────
 // Admin-only

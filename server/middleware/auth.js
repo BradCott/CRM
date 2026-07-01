@@ -38,6 +38,22 @@ export function requireAuth(req, res, next) {
   }
 }
 
+// ── Browser-extension auth ────────────────────────────────────────────────────
+// The Gmail extension can't send the httpOnly login cookie cross-site, so its
+// endpoints authenticate with a shared secret sent in the `x-crm-key` header.
+export const EXTENSION_API_KEY = process.env.EXTENSION_API_KEY || 'dev-ext-key'
+
+if (!process.env.EXTENSION_API_KEY) {
+  console.warn('[auth] WARNING: EXTENSION_API_KEY not set — using insecure default. Set EXTENSION_API_KEY in .env for the Gmail extension.')
+}
+
+/** Require a valid extension API key in the x-crm-key header. */
+export function requireExtKey(req, res, next) {
+  const key = req.get('x-crm-key') || ''
+  if (key && key === EXTENSION_API_KEY) return next()
+  return res.status(401).json({ ok: false, error: 'Invalid or missing CRM key' })
+}
+
 /** Require one of the given roles. Must be used after requireAuth. */
 export function requireRole(...roles) {
   return (req, res, next) => {

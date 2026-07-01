@@ -81,8 +81,11 @@
   </div>
   <div class="body">
     <label for="crmUrl">CRM Server URL</label>
-    <input type="url" id="crmUrl" placeholder="http://localhost:3001" />
-    <p class="hint">Leave as localhost for local dev, or paste your Railway URL.</p>
+    <input type="url" id="crmUrl" placeholder="https://crm.knoxcre.com" />
+    <p class="hint">https://crm.knoxcre.com for production, or http://localhost:3001 for local dev.</p>
+    <label for="crmKey" style="margin-top:14px;">CRM Key</label>
+    <input type="password" id="crmKey" placeholder="paste your extension key" />
+    <p class="hint">The EXTENSION_API_KEY value set on the server. Ask Brad if you don't have it.</p>
     <button class="save-btn" id="saveBtn">Save</button>
     <p class="saved-msg" id="savedMsg">✓ Saved</p>
   </div>

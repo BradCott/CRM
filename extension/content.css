@@ -1,6 +1,6 @@
-/* Knox CRM — Gmail button styles */
+/* Knox CRM — Gmail chip + panel styles */
 
-.knox-log-btn {
+.knox-chip {
   display: inline-flex;
   align-items: center;
   height: 28px;
@@ -15,28 +15,87 @@
   border-radius: 14px;
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s, color 0.15s;
   vertical-align: middle;
+  transition: background 0.15s, color 0.15s;
 }
+.knox-chip:hover { background: #d2e3fc; color: #185abc; }
+.knox-chip.knox-known { color: #137333; background: #e6f4ea; border-color: #ceead6; }
+.knox-chip.knox-maybe { color: #b06000; background: #feefc3; border-color: #fde293; }
 
-.knox-log-btn:hover {
-  background: #d2e3fc;
-  color: #185abc;
+/* Panel */
+.knox-panel {
+  position: fixed;
+  z-index: 2147483647;
+  width: 320px;
+  max-height: 60vh;
+  overflow-y: auto;
+  background: #fff;
+  border: 1px solid #dadce0;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-family: 'Google Sans', Roboto, Arial, sans-serif;
+  font-size: 13px;
+  color: #202124;
 }
+.knox-hd {
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid #eee;
+  font-weight: 600;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.knox-hd span { font-weight: 400; font-size: 11px; color: #5f6368; }
+.knox-bd { padding: 10px 14px 14px; display: flex; flex-direction: column; gap: 8px; }
 
-.knox-log-btn:disabled {
-  cursor: default;
-  opacity: 0.8;
-}
+.knox-line { font-size: 13px; line-height: 1.4; }
+.knox-line b { font-weight: 600; }
+.knox-ok   { color: #137333; }
+.knox-warn { color: #c5221f; }
+.knox-muted { color: #5f6368; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; margin-top: 4px; }
 
-.knox-log-btn.knox-logged {
-  color: #137333;
-  background: #e6f4ea;
-  border-color: #ceead6;
+.knox-cand {
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 9px;
+  border: 1px solid #e4e7eb;
+  border-radius: 8px;
+  background: #f8f9fa;
+  cursor: pointer;
+  font-family: inherit;
 }
+.knox-cand:hover { background: #eef2f7; border-color: #c9d3df; }
+.knox-cand span  { font-size: 13px; }
+.knox-cand small { color: #5f6368; font-size: 11px; }
 
-.knox-log-btn.knox-error {
-  color: #c5221f;
-  background: #fce8e6;
-  border-color: #f5c6c5;
+.knox-primary {
+  padding: 8px 12px;
+  border: none;
+  border-radius: 8px;
+  background: #1a73e8;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
 }
+.knox-primary:hover:not(:disabled) { background: #1765cc; }
+.knox-primary:disabled { opacity: 0.75; cursor: default; }
+.knox-primary.knox-done { background: #e6f4ea; color: #137333; }
+.knox-primary.knox-warn { background: #fce8e6; color: #c5221f; }
+
+.knox-search { display: flex; flex-direction: column; gap: 6px; }
+.knox-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  box-sizing: border-box;
+}
+.knox-input:focus { border-color: #1a73e8; box-shadow: 0 0 0 2px #d2e3fc; }
+.knox-results { display: flex; flex-direction: column; gap: 6px; }
