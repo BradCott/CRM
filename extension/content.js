@@ -81,12 +81,12 @@ async function onFabClick(fab) {
     return
   }
 
-  panel.innerHTML = wrapHd(data.fromName || data.contactEmail, data.contactEmail) + `<div class="knox-bd">Loading…</div>`
+  panel.innerHTML = wrapHd(data.contactName || data.contactEmail, data.contactEmail) + `<div class="knox-bd">Loading…</div>`
   const body = panel.querySelector('.knox-bd')
 
   let lookup
   try {
-    lookup = await api(`/api/ext/lookup?email=${encodeURIComponent(data.contactEmail)}&name=${encodeURIComponent(data.fromName || '')}`)
+    lookup = await api(`/api/ext/lookup?email=${encodeURIComponent(data.contactEmail)}&name=${encodeURIComponent(data.contactName || '')}`)
   } catch (_) {
     body.innerHTML = row('CRM unreachable — check the server URL/key in the popup.', 'knox-warn')
     return
@@ -201,11 +201,26 @@ function logButton(data, personId, fab) {
 function extractEmailData(emailEl) {
   const root = emailEl || document
 
+  const myEmail = (
+    document.querySelector('a[aria-label*="Google Account"]')?.getAttribute('aria-label')?.match(/\(([^)]+)\)/)?.[1] ||
+    document.querySelector('[data-email]')?.getAttribute('data-email') || ''
+  ).toLowerCase().trim()
+
   const allEmailEls = Array.from(root.querySelectorAll('[email]'))
   const senderEl    = allEmailEls[0] || null
   const fromEmail   = (senderEl?.getAttribute('email') || '').toLowerCase().trim()
   const fromName    = senderEl?.getAttribute('name') || senderEl?.textContent?.trim() || fromEmail
   const toEmail     = (allEmailEls[1]?.getAttribute('email') || '').toLowerCase().trim()
+
+  // The contact is the OTHER party — the first participant that isn't me. Look in
+  // this message first, then the whole thread. This avoids picking my own reply.
+  const isExternal = (e) => { const a = (e.getAttribute('email') || '').toLowerCase().trim(); return a && a !== myEmail }
+  const contactEl =
+    allEmailEls.find(isExternal) ||
+    Array.from(document.querySelectorAll('[email]')).find(isExternal) ||
+    senderEl
+  const contactEmail = (contactEl?.getAttribute('email') || '').toLowerCase().trim()
+  const contactName  = contactEl?.getAttribute('name') || contactEl?.textContent?.trim() || contactEmail
 
   const subject =
     document.querySelector('h2[data-thread-perm-id]')?.textContent?.trim() ||
@@ -228,13 +243,7 @@ function extractEmailData(emailEl) {
     bodyPreview = (clone.innerText || '').trim().slice(0, 8000)
   }
 
-  const myEmail = (
-    document.querySelector('a[aria-label*="Google Account"]')?.getAttribute('aria-label')?.match(/\(([^)]+)\)/)?.[1] ||
-    document.querySelector('[data-email]')?.getAttribute('data-email') || ''
-  ).toLowerCase().trim()
-
-  const direction    = myEmail && fromEmail === myEmail ? 'outbound' : 'inbound'
-  const contactEmail = direction === 'inbound' ? fromEmail : (toEmail || fromEmail)
+  const direction = myEmail && fromEmail === myEmail ? 'outbound' : 'inbound'
 
   const legacyId =
     emailEl?.getAttribute?.('data-legacy-message-id') ||
@@ -242,7 +251,7 @@ function extractEmailData(emailEl) {
   const threadId = document.querySelector('[data-thread-perm-id]')?.getAttribute('data-thread-perm-id') || null
 
   return {
-    contactEmail, fromEmail, toEmail, fromName, subject, dateIso, bodyPreview, direction,
+    contactEmail, contactName, fromEmail, toEmail, fromName, subject, dateIso, bodyPreview, direction,
     legacyId, threadId,
     fromDisplay: fromName && fromName !== fromEmail ? `${fromName} <${fromEmail}>` : fromEmail,
   }
