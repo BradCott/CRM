@@ -13,7 +13,7 @@ function bareEmail(str = '') {
   return (m ? m[1] : String(str)).toLowerCase().trim()
 }
 
-const PERSON_COLS = 'id, name, email, email2, role, city, state, company_id, do_not_contact'
+const PERSON_COLS = 'id, name, email, email2, phone, mobile, role, city, state, company_id, do_not_contact'
 
 // Token-aware name score: 1.0 when every word of the query appears in the
 // candidate (so "Sara McGregor" fully matches "Sara Kenny McGregor"), otherwise
@@ -101,6 +101,40 @@ router.post('/attach-email', (req, res) => {
     slot = 'email2'
   } else {
     return res.json({ ok: false, error: `${p.name} already has two email addresses on file`, personName: p.name })
+  }
+
+  res.json({ ok: true, personId: p.id, personName: p.name, slot })
+})
+
+// POST /api/ext/attach-phone { person_id, phone }
+// Save a phone number (pulled from the email) onto a contact: fills `phone`,
+// then `mobile`. Stores the pretty-formatted string the extension sends.
+router.post('/attach-phone', (req, res) => {
+  const personId = Number(req.body?.person_id)
+  const raw      = String(req.body?.phone || '').trim()
+  const digits   = raw.replace(/\D/g, '')
+  if (!personId || digits.length < 10) {
+    return res.status(400).json({ ok: false, error: 'person_id and a valid phone are required' })
+  }
+
+  const p = db.prepare('SELECT id, name, phone, mobile FROM people WHERE id = ?').get(personId)
+  if (!p) return res.status(404).json({ ok: false, error: 'Contact not found' })
+
+  const norm = (s) => { let d = (s || '').replace(/\D/g, ''); if (d.length === 11 && d[0] === '1') d = d.slice(1); return d }
+  const want = norm(raw)
+  if ([p.phone, p.mobile].some(x => norm(x) === want && want)) {
+    return res.json({ ok: true, personId: p.id, personName: p.name, slot: 'existing', already: true })
+  }
+
+  let slot
+  if (!p.phone || !p.phone.trim()) {
+    db.prepare('UPDATE people SET phone = ? WHERE id = ?').run(raw, personId)
+    slot = 'phone'
+  } else if (!p.mobile || !p.mobile.trim()) {
+    db.prepare('UPDATE people SET mobile = ? WHERE id = ?').run(raw, personId)
+    slot = 'mobile'
+  } else {
+    return res.json({ ok: false, error: `${p.name} already has a phone and mobile on file`, personName: p.name })
   }
 
   res.json({ ok: true, personId: p.id, personName: p.name, slot })

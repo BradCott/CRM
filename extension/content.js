@@ -105,6 +105,8 @@ function renderLookup(body, data, lookup, fab) {
   if (lookup.matched) {
     body.appendChild(el(`<div class="knox-line knox-ok">✓ In CRM: <b>${esc(lookup.matched.name)}</b></div>`))
     body.appendChild(logButton(data, lookup.matched.id, fab))
+    const ph = addPhoneButton(lookup.matched, data)
+    if (ph) body.appendChild(ph)
     body.appendChild(searchBlock(body, data, fab, 'Log to a different contact'))
     return
   }
@@ -160,6 +162,8 @@ async function attachThenLog(person, data, body, fab) {
     status.className = 'knox-line knox-ok'
     status.innerHTML = `✓ ${esc(person.name)} — ${note}`
     body.appendChild(logButton(data, person.id, fab))
+    const ph = addPhoneButton(person, data)
+    if (ph) body.appendChild(ph)
   } catch (_) {
     status.className = 'knox-line knox-warn'; status.textContent = '✗ CRM unreachable'
   }
@@ -245,6 +249,11 @@ function extractEmailData(emailEl) {
 
   const direction = myEmail && fromEmail === myEmail ? 'outbound' : 'inbound'
 
+  // Pull a phone number out of the CONTACT's own message(s) — not my replies —
+  // so a signature phone can be offered for the contact.
+  const phoneDigits = contactPhoneDigits(contactEmail)
+  const phone = fmtPhone(phoneDigits)
+
   const legacyId =
     emailEl?.getAttribute?.('data-legacy-message-id') ||
     emailEl?.getAttribute?.('data-message-id') || null
@@ -252,9 +261,60 @@ function extractEmailData(emailEl) {
 
   return {
     contactEmail, contactName, fromEmail, toEmail, fromName, subject, dateIso, bodyPreview, direction,
-    legacyId, threadId,
+    phone, phoneDigits, legacyId, threadId,
     fromDisplay: fromName && fromName !== fromEmail ? `${fromName} <${fromEmail}>` : fromEmail,
   }
+}
+
+// ── Phone detection ─────────────────────────────────────────────────────────
+function normPhone(s) { let d = (s || '').replace(/\D/g, ''); if (d.length === 11 && d[0] === '1') d = d.slice(1); return d.length === 10 ? d : '' }
+function fmtPhone(d)  { return d && d.length === 10 ? `(${d.slice(0, 3)}) ${d.slice(3, 6)}-${d.slice(6)}` : '' }
+function findPhone(text) {
+  if (!text) return ''
+  const matches = text.match(/(?:\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4}/g) || []
+  for (const m of matches) { const d = normPhone(m); if (d) return d }
+  return ''
+}
+// Scan messages authored by the contact (by sender email) for a phone number.
+function contactPhoneDigits(contactEmail) {
+  if (!contactEmail) return ''
+  const msgs = Array.from(document.querySelectorAll('[data-message-id], [data-legacy-message-id]'))
+  for (const m of msgs) {
+    const sender = (m.querySelector('[email]')?.getAttribute('email') || '').toLowerCase().trim()
+    if (sender && sender === contactEmail) {
+      const d = findPhone((m.querySelector('.a3s') || m).innerText || '')
+      if (d) return d
+    }
+  }
+  return ''
+}
+
+// An "Add phone" button — shown when the email has a phone the contact lacks.
+function phoneOnFile(person, digits) {
+  const n = (s) => { let d = (s || '').replace(/\D/g, ''); if (d.length === 11 && d[0] === '1') d = d.slice(1); return d }
+  return [person.phone, person.mobile].some(p => n(p) === digits && digits)
+}
+function addPhoneButton(person, data) {
+  if (!data.phoneDigits || phoneOnFile(person, data.phoneDigits)) return null
+  const btn = el(`<button class="knox-primary knox-alt">Add phone ${esc(data.phone)}</button>`)
+  btn.addEventListener('click', async () => {
+    btn.disabled = true; btn.textContent = 'Adding…'
+    try {
+      const r = await api('/api/ext/attach-phone', {
+        method: 'POST',
+        body: JSON.stringify({ person_id: person.id, phone: data.phone }),
+      })
+      if (r.ok) {
+        btn.className = 'knox-primary knox-done'
+        btn.textContent = r.already ? '✓ Phone already on file' : '✓ Phone added'
+      } else {
+        btn.className = 'knox-primary knox-warn'; btn.textContent = `✗ ${r.error}`; btn.disabled = false
+      }
+    } catch (_) {
+      btn.className = 'knox-primary knox-warn'; btn.textContent = '✗ CRM unreachable'; btn.disabled = false
+    }
+  })
+  return btn
 }
 
 // ── Tiny helpers ──────────────────────────────────────────────────────────────

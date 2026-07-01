@@ -81,6 +81,8 @@
 }
 .knox-primary:hover:not(:disabled) { background: #1765cc; }
 .knox-primary:disabled { opacity: 0.75; cursor: default; }
+.knox-primary.knox-alt  { background: #e8f0fe; color: #1a73e8; }
+.knox-primary.knox-alt:hover:not(:disabled) { background: #d2e3fc; }
 .knox-primary.knox-done { background: #e6f4ea; color: #137333; }
 .knox-primary.knox-warn { background: #fce8e6; color: #c5221f; }
 
