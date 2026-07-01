@@ -11,6 +11,21 @@ export function normalizeName(s) {
     .trim()
 }
 
+// Token-aware search clause: every whitespace-separated word must match at least
+// one of the given columns (LIKE %word%). Word order and gaps don't matter, so
+// "Sara McGregor" finds "Sara Kenny McGregor" and "Wabash Lakeland" finds a
+// Lakeland property on Wabash Ave. Returns { clause, params } — clause is ''
+// when the search is empty. Callers AND this into their WHERE conditions.
+export function tokenSearch(columns, search) {
+  const toks = String(search || '').trim().split(/\s+/).filter(Boolean).slice(0, 8)
+  if (!toks.length) return { clause: '', params: [] }
+  const perTok = `(${columns.map(c => `${c} LIKE ?`).join(' OR ')})`
+  const clause = `(${toks.map(() => perTok).join(' AND ')})`
+  const params = []
+  for (const _t of toks) { const like = `%${_t}%`; for (const _c of columns) params.push(like) }
+  return { clause, params }
+}
+
 export function normalizeAddr(street, city, state, zip) {
   const s = (street || '')
     .toLowerCase()

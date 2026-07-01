@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import db from '../db.js'
-import { normalizeName, matchPerson } from '../utils/normalize.js'
+import { normalizeName, matchPerson, tokenSearch } from '../utils/normalize.js'
 import { normalizeName as fuzzyNormalize, nameSimilarity } from '../services/investorMatch.js'
 
 const router = Router()
@@ -21,9 +21,8 @@ function buildPeopleWhere(query) {
   const params = []
 
   if (search) {
-    conditions.push(`(p.name LIKE ? OR p.email LIKE ? OR p.phone LIKE ? OR p.city LIKE ?)`)
-    const q = `%${search}%`
-    params.push(q, q, q, q)
+    const { clause, params: sp } = tokenSearch(['p.name', 'p.email', 'p.phone', 'p.city'], search)
+    if (clause) { conditions.push(clause); params.push(...sp) }
   }
   if (role) { conditions.push(`p.role = ?`); params.push(role) }
   if (sub_label) { conditions.push(`p.sub_label = ?`); params.push(sub_label) }

@@ -2,7 +2,7 @@ import { Router } from 'express'
 import db from '../db.js'
 import { requireRole } from '../middleware/auth.js'
 import { seedDefaultTasks } from './management.js'
-import { normalizeAddr } from '../utils/normalize.js'
+import { normalizeAddr, tokenSearch } from '../utils/normalize.js'
 
 const router = Router()
 
@@ -85,9 +85,8 @@ function buildPropertyWhere(query) {
   const params = []
 
   if (search) {
-    conditions.push(`(p.address LIKE ? OR p.city LIKE ? OR o.name LIKE ? OR t.name LIKE ?)`)
-    const q = `%${search}%`
-    params.push(q, q, q, q)
+    const { clause, params: sp } = tokenSearch(['p.address', 'p.city', 'o.name', 't.name'], search)
+    if (clause) { conditions.push(clause); params.push(...sp) }
   }
 
   // Multi-value tenant filter (comma-separated) — falls back to legacy single param

@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import db from '../db.js'
+import { tokenSearch } from '../utils/normalize.js'
 
 const router = Router()
 
@@ -74,9 +75,8 @@ function buildWhere(q) {
 
   // Free text search
   if (q.search) {
-    conditions.push(`(p.address LIKE ? OR p.city LIKE ? OR o.name LIKE ?)`)
-    const like = `%${q.search}%`
-    params.push(like, like, like)
+    const { clause, params: sp } = tokenSearch(['p.address', 'p.city', 'o.name'], q.search)
+    if (clause) { conditions.push(clause); params.push(...sp) }
   }
 
   return { where: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', params }

@@ -3,6 +3,7 @@ import multer from 'multer'
 import * as XLSX from 'xlsx'
 import db from '../db.js'
 import { normalizeName, nameSimilarity, autoLinkInvestors } from '../services/investorMatch.js'
+import { tokenSearch } from '../utils/normalize.js'
 
 const router  = Router()
 const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
@@ -570,9 +571,8 @@ router.get('/', (req, res) => {
   const params = []
 
   if (search) {
-    conds.push(`(i.name LIKE ? OR i.email LIKE ? OR i.city LIKE ? OR i.phone LIKE ?)`)
-    const like = `%${search}%`
-    params.push(like, like, like, like)
+    const { clause, params: sp } = tokenSearch(['i.name', 'i.email', 'i.city', 'i.phone'], search)
+    if (clause) { conds.push(clause); params.push(...sp) }
   }
   if (entity_type) { conds.push(`i.entity_type = ?`); params.push(entity_type) }
   if (incomplete === '1') { conds.push(`i.is_incomplete = 1`) }
