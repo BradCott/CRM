@@ -109,7 +109,9 @@ router.get('/google', (_req, res) => {
   const auth = getOAuth2Client()
   const url  = auth.generateAuthUrl({
     access_type: 'offline',
-    prompt:      'consent',
+    // select_account shows the account chooser (so you can pick your WORK Google,
+    // not whatever's signed into the browser); consent re-grants the scopes.
+    prompt:      'select_account consent',
     scope:       DRIVE_SCOPES,
   })
   res.redirect(url)
