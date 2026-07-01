@@ -15,6 +15,18 @@ function bareEmail(str = '') {
 
 const PERSON_COLS = 'id, name, email, email2, role, city, state, company_id, do_not_contact'
 
+// Token-aware name score: 1.0 when every word of the query appears in the
+// candidate (so "Sara McGregor" fully matches "Sara Kenny McGregor"), otherwise
+// falls back to fuzzy whole-string similarity. Handles middle names + word order.
+function nameMatchScore(query, candidate) {
+  const q = normalizeName(query).split(' ').filter(Boolean)
+  const c = normalizeName(candidate).split(' ').filter(Boolean)
+  if (!q.length || !c.length) return 0
+  const cset = new Set(c)
+  const overlap = q.filter(t => cset.has(t)).length
+  return Math.max(overlap / q.length, nameSimilarity(query, candidate))
+}
+
 // GET /api/ext/lookup?email=&name=
 // Is this sender already a known contact (matched by email)? If not, return
 // fuzzy name-matched candidates so the user can attach the address to one.
@@ -32,11 +44,10 @@ router.get('/lookup', (req, res) => {
 
   let candidates = []
   if (!matched && name) {
-    const norm = normalizeName(name)
-    const all  = db.prepare(`SELECT ${PERSON_COLS} FROM people`).all()
+    const all = db.prepare(`SELECT ${PERSON_COLS} FROM people`).all()
     for (const p of all) {
-      const score = norm && normalizeName(p.name) === norm ? 1 : nameSimilarity(name, p.name)
-      if (score >= 0.55) candidates.push({ ...p, score: +score.toFixed(2) })
+      const score = nameMatchScore(name, p.name)
+      if (score >= 0.6) candidates.push({ ...p, score: +score.toFixed(2) })
     }
     candidates.sort((a, b) => b.score - a.score)
     candidates = candidates.slice(0, 8)
@@ -49,12 +60,18 @@ router.get('/lookup', (req, res) => {
 router.get('/search', (req, res) => {
   const q = String(req.query.q || '').trim()
   if (!q) return res.json([])
-  const like = `%${q}%`
+  // Each word must match somewhere (name/email), so word order and middle names
+  // don't matter: "Sara McGregor" finds "Sara Kenny McGregor".
+  const toks = q.split(/\s+/).filter(Boolean).slice(0, 6)
+  const conds = [], params = []
+  for (const t of toks) {
+    conds.push('(name LIKE ? OR email LIKE ? OR email2 LIKE ?)')
+    const like = `%${t}%`
+    params.push(like, like, like)
+  }
   const rows = db.prepare(
-    `SELECT ${PERSON_COLS} FROM people
-     WHERE name LIKE ? OR email LIKE ? OR email2 LIKE ?
-     ORDER BY name LIMIT 15`
-  ).all(like, like, like)
+    `SELECT ${PERSON_COLS} FROM people WHERE ${conds.join(' AND ')} ORDER BY name LIMIT 15`
+  ).all(...params)
   res.json(rows)
 })
 
