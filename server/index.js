@@ -27,6 +27,7 @@ import playsRouter          from './routes/plays.js'
 import assistantRouter      from './routes/assistant.js'
 import backupRouter         from './routes/backup.js'
 import extRouter             from './routes/ext.js'
+import tenantRolesRouter     from './routes/tenantRoles.js'
 
 import { requireAuth, requireWrite, requireRole, requireExtKey } from './middleware/auth.js'
 
@@ -68,6 +69,7 @@ app.use('/api/investors',        requireAuth, requireRole('admin', 'full_agent')
 
 // All authenticated users can read; only admin can write
 app.use('/api/tenant-brands',    requireAuth, requireWrite, tenantBrandsRouter)
+app.use('/api/tenant-roles',     requireAuth, requireWrite, tenantRolesRouter)
 app.use('/api/people',           requireAuth, requireWrite, peopleRouter)
 app.use('/api/properties',       requireAuth, requireWrite, propertiesRouter)
 app.use('/api/deals',            requireAuth, requireWrite, dealsRouter)

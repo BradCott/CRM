@@ -3,6 +3,7 @@ import { AppProvider }   from './context/AppContext'
 import { AuthProvider, useAuth, ROLE_ACCESS } from './context/AuthContext'
 import AppShell         from './components/layout/AppShell'
 import PeoplePage       from './components/people/PeoplePage'
+import TenantContactsPage from './components/people/TenantContactsPage'
 import PipelinePage     from './components/pipeline/PipelinePage'
 import PropertiesPage   from './components/properties/PropertiesPage'
 import ImportPage       from './components/import/ImportPage'
@@ -88,6 +89,7 @@ export default function App() {
               {/* All authenticated roles */}
               <Route path="/dashboard"  element={<DashboardPage />} />
               <Route path="/people"     element={<PeoplePage />} />
+              <Route path="/tenant-contacts" element={<TenantContactsPage />} />
               <Route path="/properties" element={<PropertiesPage />} />
               <Route path="/pipeline"   element={<PipelinePage />} />
               <Route path="/reports"    element={<ReportsPage />} />

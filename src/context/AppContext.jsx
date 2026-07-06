@@ -73,6 +73,7 @@ export function AppProvider({ children }) {
     const row = await createTenantBrand(data)
     setTenantBrands(prev => [...prev, row].sort((a,b) => a.name.localeCompare(b.name)))
     notify('Tenant brand created')
+    return row
   }, [notify])
 
   const editTenantBrand = useCallback(async (id, data) => {

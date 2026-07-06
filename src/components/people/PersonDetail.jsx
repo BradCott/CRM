@@ -25,6 +25,12 @@ function fmt$(v) {
   return `$${Number(v).toLocaleString()}`
 }
 
+function parseArr(v) {
+  if (Array.isArray(v)) return v
+  if (typeof v === 'string' && v.trim()) { try { const a = JSON.parse(v); return Array.isArray(a) ? a : [] } catch { return [] } }
+  return []
+}
+
 export default function PersonDetail({ personId, onClose, onEdit }) {
   const navigate = useNavigate()
   const [data, setData]         = useState(null)
@@ -136,17 +142,59 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
       {/* ── Body ────────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
 
-        {/* Owner type */}
-        <Section icon={User} title="Classification">
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-slate-400 w-20 shrink-0">Owner type</span>
-            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
-              data.owner_type === 'LLC'         ? 'bg-purple-50 text-purple-700' :
-              data.owner_type === 'Institution' ? 'bg-teal-50 text-teal-700' :
-              'bg-slate-100 text-slate-600'
-            }`}>{data.owner_type || 'Individual'}</span>
-          </div>
-        </Section>
+        {/* Tenant details (tenant contacts) OR Owner type (everyone else) */}
+        {data.role === 'tenant_contact' ? (
+          <Section icon={Building2} title="Tenant Details">
+            <div className="space-y-3">
+              {data.tenant_brand_name && (
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-400 w-20 shrink-0">Tenant</span>
+                  <span className="text-sm font-semibold text-slate-800">{data.tenant_brand_name}</span>
+                </div>
+              )}
+              {data.title && (
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-400 w-20 shrink-0">Title</span>
+                  <span className="text-sm text-slate-700">{data.title}</span>
+                </div>
+              )}
+              {parseArr(data.tenant_roles).length > 0 && (
+                <div className="flex items-start gap-3">
+                  <span className="text-xs text-slate-400 w-20 shrink-0 pt-0.5">Roles</span>
+                  <div className="flex flex-wrap gap-1">
+                    {parseArr(data.tenant_roles).map(r => <span key={r} className="text-xs font-medium px-2 py-0.5 rounded-full bg-blue-50 text-blue-700">{r}</span>)}
+                  </div>
+                </div>
+              )}
+              {(parseArr(data.territory_regions).length > 0 || parseArr(data.territory_states).length > 0) ? (
+                <div className="flex items-start gap-3">
+                  <span className="text-xs text-slate-400 w-20 shrink-0 pt-0.5">Territory</span>
+                  <div className="flex flex-wrap gap-1">
+                    {[...parseArr(data.territory_regions), ...parseArr(data.territory_states)].map(t => (
+                      <span key={t} className="text-xs font-medium px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700">{t}</span>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <span className="text-xs text-slate-400 w-20 shrink-0">Territory</span>
+                  <span className="text-sm text-slate-400 italic">No territory set</span>
+                </div>
+              )}
+            </div>
+          </Section>
+        ) : (
+          <Section icon={User} title="Classification">
+            <div className="flex items-center gap-3">
+              <span className="text-xs text-slate-400 w-20 shrink-0">Owner type</span>
+              <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
+                data.owner_type === 'LLC'         ? 'bg-purple-50 text-purple-700' :
+                data.owner_type === 'Institution' ? 'bg-teal-50 text-teal-700' :
+                'bg-slate-100 text-slate-600'
+              }`}>{data.owner_type || 'Individual'}</span>
+            </div>
+          </Section>
+        )}
 
         {/* Contact info */}
         <Section icon={Phone} title="Contact Info">

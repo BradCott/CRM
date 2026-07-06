@@ -453,6 +453,32 @@ const migrations = [
     notes             TEXT,
     updated_at        TEXT DEFAULT (datetime('now'))
   )`,
+
+  // ── Tenant RE contacts ──────────────────────────────────────────────────────
+  // People with role='tenant_contact' represent a tenant's real-estate team
+  // (e.g. Sherwin Williams' RE dept). They link to a tenant_brand and carry
+  // job roles + a territory. Multi-value fields are stored as JSON arrays.
+  `ALTER TABLE people ADD COLUMN tenant_brand_id   INTEGER REFERENCES tenant_brands(id) ON DELETE SET NULL`,
+  `ALTER TABLE people ADD COLUMN title             TEXT`,
+  `ALTER TABLE people ADD COLUMN tenant_roles      TEXT`,   // JSON array of role labels
+  `ALTER TABLE people ADD COLUMN territory_states  TEXT`,   // JSON array of 2-letter state codes
+  `ALTER TABLE people ADD COLUMN territory_regions TEXT`,   // JSON array of region labels
+  `CREATE INDEX IF NOT EXISTS idx_people_tenant_brand ON people(tenant_brand_id)`,
+
+  // Extensible list of tenant-contact job roles (Lease Admin, Estoppel, …).
+  `CREATE TABLE IF NOT EXISTS tenant_role_types (
+    id     INTEGER PRIMARY KEY AUTOINCREMENT,
+    label  TEXT UNIQUE NOT NULL,
+    sort   INTEGER DEFAULT 0,
+    active INTEGER DEFAULT 1
+  )`,
+  `INSERT OR IGNORE INTO tenant_role_types (label, sort) VALUES
+    ('Lease Admin', 1),
+    ('Lease Negotiator', 2),
+    ('Accounting', 3),
+    ('CAM', 4),
+    ('Estoppel', 5),
+    ('Other', 99)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

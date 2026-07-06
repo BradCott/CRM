@@ -7,16 +7,19 @@ const router = Router()
 
 const BASE_SELECT = `
   SELECT p.*,
-    c.name AS company_name
+    c.name  AS company_name,
+    tb.name AS tenant_brand_name
   FROM people p
   LEFT JOIN people c ON c.id = p.company_id
+  LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
 `
 
 const PEOPLE_SORT_MAP = { name: 'p.name', date_added: 'p.created_at', last_updated: 'p.updated_at' }
 
 // Shared WHERE builder for the list + export endpoints.
 function buildPeopleWhere(query) {
-  const { search = '', role = '', sub_label = '', do_not_contact = '', owner_type = '' } = query
+  const { search = '', role = '', sub_label = '', do_not_contact = '', owner_type = '',
+          tenant_brand_id = '', tenant_role = '', territory_state = '' } = query
   const conditions = []
   const params = []
 
@@ -25,6 +28,10 @@ function buildPeopleWhere(query) {
     if (clause) { conditions.push(clause); params.push(...sp) }
   }
   if (role) { conditions.push(`p.role = ?`); params.push(role) }
+  if (tenant_brand_id) { conditions.push(`p.tenant_brand_id = ?`); params.push(Number(tenant_brand_id)) }
+  // tenant_roles / territory_states are JSON arrays — match the quoted value.
+  if (tenant_role) { conditions.push(`p.tenant_roles LIKE ?`); params.push(`%"${tenant_role}"%`) }
+  if (territory_state) { conditions.push(`p.territory_states LIKE ?`); params.push(`%"${territory_state.toUpperCase()}"%`) }
   if (sub_label) { conditions.push(`p.sub_label = ?`); params.push(sub_label) }
   if (do_not_contact !== '') { conditions.push(`p.do_not_contact = ?`); params.push(parseInt(do_not_contact)) }
   if (owner_type === 'Individual') {
@@ -174,6 +181,13 @@ router.get('/:id/duplicates', (req, res) => {
   res.json({ person, candidates: top })
 })
 
+// Serialize an array-or-JSON-string field to a JSON string (or null when empty).
+function jsonArr(v) {
+  if (v == null || v === '') return null
+  const arr = Array.isArray(v) ? v : (() => { try { return JSON.parse(v) } catch { return null } })()
+  return arr && arr.length ? JSON.stringify(arr) : null
+}
+
 router.post('/', (req, res) => {
   const f = req.body
   if (!f.name) return res.status(400).json({ error: 'name is required' })
@@ -181,8 +195,9 @@ router.post('/', (req, res) => {
     INSERT INTO people
       (name,first_name,last_name,role,sub_label,company_id,phone,phone2,mobile,
        email,email2,address,city,state,zip,address2,city2,state2,zip2,
-       do_not_contact,notes,sf_id,owner_type,name_key)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       do_not_contact,notes,sf_id,owner_type,name_key,
+       tenant_brand_id,title,tenant_roles,territory_states,territory_regions)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     f.name, f.first_name||null, f.last_name||null,
     f.role||'owner', f.sub_label||null, f.company_id||null,
@@ -192,7 +207,9 @@ router.post('/', (req, res) => {
     f.address2||null, f.city2||null, f.state2||null, f.zip2||null,
     f.do_not_contact ? 1 : 0, f.notes||null, f.sf_id||null,
     f.owner_type||'Individual',
-    normalizeName(f.name)
+    normalizeName(f.name),
+    f.tenant_brand_id||null, f.title||null,
+    jsonArr(f.tenant_roles), jsonArr(f.territory_states), jsonArr(f.territory_regions)
   )
   res.status(201).json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(r.lastInsertRowid))
 })
@@ -206,7 +223,8 @@ router.put('/:id', (req, res) => {
       phone=?,phone2=?,mobile=?,email=?,email2=?,
       address=?,city=?,state=?,zip=?,
       address2=?,city2=?,state2=?,zip2=?,
-      do_not_contact=?,notes=?,sf_id=?,owner_type=?,name_key=?
+      do_not_contact=?,notes=?,sf_id=?,owner_type=?,name_key=?,
+      tenant_brand_id=?,title=?,tenant_roles=?,territory_states=?,territory_regions=?
     WHERE id=?
   `).run(
     f.name, f.first_name||null, f.last_name||null,
@@ -218,6 +236,8 @@ router.put('/:id', (req, res) => {
     f.do_not_contact ? 1 : 0, f.notes||null, f.sf_id||null,
     f.owner_type||'Individual',
     normalizeName(f.name),
+    f.tenant_brand_id||null, f.title||null,
+    jsonArr(f.tenant_roles), jsonArr(f.territory_states), jsonArr(f.territory_regions),
     req.params.id
   )
   res.json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id))

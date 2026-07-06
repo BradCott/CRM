@@ -21,6 +21,10 @@ export const createTenantBrand = (data)   => req('POST',   '/tenant-brands', dat
 export const updateTenantBrand = (id, d)  => req('PUT',    `/tenant-brands/${id}`, d)
 export const deleteTenantBrand = (id)     => req('DELETE', `/tenant-brands/${id}`)
 
+// Tenant-contact job roles (extensible list)
+export const getTenantRoles   = ()       => req('GET',  '/tenant-roles')
+export const createTenantRole = (label)  => req('POST', '/tenant-roles', { label })
+
 // People — paginated
 export const getPeople    = (params = {}) => {
   const qs = new URLSearchParams(params).toString()
