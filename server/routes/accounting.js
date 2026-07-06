@@ -807,17 +807,20 @@ router.delete('/rules/:id', (req, res) => {
 router.get('/:propertyId/investors', (req, res) => {
   const { propertyId } = req.params
   const rows = db.prepare(`
-    SELECT id, property_id, name, address, contribution, percentage, class, preferred_return, created_at
+    SELECT id, property_id, name, address, contribution, percentage, class, preferred_return, created_at, investor_id
     FROM property_investors
     WHERE property_id = ?
     ORDER BY contribution DESC
   `).all(propertyId)
 
-  // Resolve each cap-table name to a global investor profile so the UI can link.
-  // Normalized match (strips LLC/Inc/etc.) first, then a high-confidence fuzzy pass.
+  // A manual investor_id (set via /link) wins. Otherwise resolve the name to a
+  // global investor profile: normalized match (ignores LLC/Inc), then a
+  // high-confidence fuzzy pass. `linked` flags a manual (user-confirmed) link.
   const investors = db.prepare('SELECT id, name FROM investors').all()
   const normd = investors.map(iv => ({ id: iv.id, name: iv.name, key: normalizeName(iv.name) }))
   for (const r of rows) {
+    r.linked = r.investor_id != null
+    if (r.investor_id != null) continue
     const rk = normalizeName(r.name)
     let inv = rk && normd.find(x => x.key === rk)
     if (!inv) {
@@ -888,6 +891,18 @@ router.patch('/investors/:id', (req, res) => {
   db.prepare('UPDATE property_investors SET contribution = ? WHERE id = ?').run(amount, req.params.id)
   const row = db.prepare('SELECT id, property_id, name, address, contribution, percentage, class, preferred_return FROM property_investors WHERE id = ?').get(req.params.id)
   if (!row) return res.status(404).json({ error: 'Investor not found' })
+  res.json(row)
+})
+
+// Manually link (or unlink) a cap-table row to a global investor profile.
+router.patch('/investors/:id/link', (req, res) => {
+  const investorId = req.body?.investor_id ? Number(req.body.investor_id) : null
+  if (investorId && !db.prepare('SELECT 1 FROM investors WHERE id = ?').get(investorId)) {
+    return res.status(404).json({ error: 'Investor not found' })
+  }
+  db.prepare('UPDATE property_investors SET investor_id = ? WHERE id = ?').run(investorId, req.params.id)
+  const row = db.prepare('SELECT id, property_id, name, investor_id FROM property_investors WHERE id = ?').get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'Cap-table row not found' })
   res.json(row)
 })
 

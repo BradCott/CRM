@@ -479,6 +479,10 @@ const migrations = [
     ('CAM', 4),
     ('Estoppel', 5),
     ('Other', 99)`,
+
+  // Manual link from a property cap-table row to a global investor profile
+  // (overrides the automatic name match).
+  `ALTER TABLE property_investors ADD COLUMN investor_id INTEGER REFERENCES investors(id) ON DELETE SET NULL`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

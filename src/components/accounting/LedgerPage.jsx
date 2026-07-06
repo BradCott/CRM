@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization } from '../../api/client'
+import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles, Link2 } from 'lucide-react'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, getCRMInvestors, linkCapTableInvestor } from '../../api/client'
 import OpeningBalancesModal from './OpeningBalancesModal'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
@@ -77,6 +77,18 @@ export default function LedgerPage() {
   const [amortRefresh, setAmortRefresh]     = useState(0)
   const [amortUploading, setAmortUploading] = useState(false)
   const amortInputRef                       = useRef(null)
+  const [crmInvestors, setCrmInvestors]     = useState([])   // global investor profiles for the link picker
+  const [linkingId, setLinkingId]           = useState(null) // cap-table row id being linked
+
+  useEffect(() => { getCRMInvestors({ limit: 1000 }).then(r => setCrmInvestors(r.rows || [])).catch(() => {}) }, [])
+
+  async function handleSetLink(rowId, investorId) {
+    try {
+      await linkCapTableInvestor(rowId, investorId || null)
+      setInvestors(prev => prev.map(i => i.id === rowId ? { ...i, investor_id: investorId || null, linked: !!investorId } : i))
+    } catch (e) { setError(e.message) }
+    setLinkingId(null)
+  }
 
   async function handleAmortUpload(file) {
     if (!file) return
@@ -581,13 +593,27 @@ export default function LedgerPage() {
                 return (
                   <tr key={inv.id} className="border-b border-slate-100 bg-white hover:bg-slate-50/60">
                     <td className="px-4 pl-6 py-2.5 font-medium text-slate-900">
-                      {inv.investor_id ? (
+                      {linkingId === inv.id ? (
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-slate-500 text-xs shrink-0">{inv.name} →</span>
+                          <select
+                            autoFocus
+                            defaultValue={inv.investor_id || ''}
+                            onChange={e => handleSetLink(inv.id, e.target.value ? Number(e.target.value) : null)}
+                            className="text-xs border border-blue-400 rounded px-2 py-1 outline-none focus:ring-2 focus:ring-blue-400 bg-white max-w-[200px]"
+                          >
+                            <option value="">— Not linked —</option>
+                            {crmInvestors.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+                          </select>
+                          <button onClick={() => setLinkingId(null)} className="text-slate-400 hover:text-slate-600" title="Cancel"><X className="w-3.5 h-3.5" /></button>
+                        </div>
+                      ) : inv.investor_id ? (
                         <button
                           onClick={() => navigate(`/investors/${inv.investor_id}`)}
                           className="text-blue-600 hover:text-blue-800 hover:underline text-left"
                           title="Open investor profile"
                         >
-                          {inv.name}
+                          {inv.name}{inv.linked && <span className="ml-1 text-emerald-500" title="Manually linked">✓</span>}
                         </button>
                       ) : inv.name}
                     </td>
@@ -622,6 +648,13 @@ export default function LedgerPage() {
                     </td>
                     <td className="px-4 pr-6 py-2.5">
                       <div className="flex items-center justify-end gap-1">
+                        <button
+                          onClick={() => setLinkingId(linkingId === inv.id ? null : inv.id)}
+                          className={`p-1 rounded transition-colors ${inv.linked ? 'text-emerald-500 hover:bg-emerald-50' : inv.investor_id ? 'text-slate-300 hover:text-blue-500 hover:bg-blue-50' : 'text-amber-500 hover:bg-amber-50'}`}
+                          title={inv.linked ? 'Linked to investor profile — change' : inv.investor_id ? 'Auto-matched — set an explicit link' : 'Not linked — link to an investor profile'}
+                        >
+                          <Link2 className="w-3.5 h-3.5" />
+                        </button>
                         {isEditing ? (
                           <button
                             onClick={() => handleSaveContrib(inv.id)}

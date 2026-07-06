@@ -245,6 +245,7 @@ export const saveJournalEntry   = (propertyId, d) => req('POST', `/accounting/${
 export const getInvestors              = (propertyId)    => req('GET',    `/accounting/${propertyId}/investors`)
 export const saveInvestors             = (propertyId, d) => req('POST',   `/accounting/${propertyId}/investors`, d)
 export const updateInvestorContribution = (id, amount)   => req('PATCH',  `/accounting/investors/${id}`, { contribution: amount })
+export const linkCapTableInvestor       = (id, investorId)=> req('PATCH',  `/accounting/investors/${id}/link`, { investor_id: investorId })
 export const deleteInvestor            = (id)            => req('DELETE', `/accounting/investors/${id}`)
 export async function uploadInvestorContributions(propertyId, file) {
   const fd = new FormData()
