@@ -1,0 +1,15 @@
+{
+  "type": "object",
+  "properties": {
+    "crmUrl": {
+      "title": "CRM Server URL",
+      "description": "e.g. https://crm.knoxcre.com",
+      "type": "string"
+    },
+    "crmKey": {
+      "title": "CRM API Key",
+      "description": "The EXTENSION_API_KEY value from the CRM server",
+      "type": "string"
+    }
+  }
+}

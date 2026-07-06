@@ -27,6 +27,7 @@ export const createTenantRole = (label)  => req('POST', '/tenant-roles', { label
 
 // Browser extension
 export const getPluginInfo    = ()       => req('GET', '/plugin/info')
+export const getPluginManaged = ()       => req('GET', '/plugin/managed')
 export const pluginDownloadUrl = ()      => `${BASE}/plugin/download`
 
 // People — paginated

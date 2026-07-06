@@ -1,7 +1,24 @@
 import { useEffect, useState } from 'react'
-import { Chrome, Download, CheckCircle2, Mail } from 'lucide-react'
+import { Chrome, Download, CheckCircle2, Mail, Building2, Copy, Check, AlertTriangle } from 'lucide-react'
 import TopBar from '../layout/TopBar'
-import { getPluginInfo, pluginDownloadUrl } from '../../api/client'
+import { getPluginInfo, getPluginManaged, pluginDownloadUrl } from '../../api/client'
+import { useAuth } from '../../context/AuthContext'
+
+function CopyRow({ label, value, mono = true }) {
+  const [done, setDone] = useState(false)
+  const copy = () => { navigator.clipboard.writeText(value).then(() => { setDone(true); setTimeout(() => setDone(false), 1500) }) }
+  return (
+    <div>
+      <p className="text-xs font-medium text-slate-500 mb-1">{label}</p>
+      <div className="flex items-center gap-2">
+        <code className={`flex-1 min-w-0 truncate px-3 py-2 bg-slate-900 text-slate-100 rounded-lg text-xs ${mono ? 'font-mono' : ''}`}>{value}</code>
+        <button onClick={copy} className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50" title="Copy">
+          {done ? <Check className="w-4 h-4 text-emerald-600" /> : <Copy className="w-4 h-4" />}
+        </button>
+      </div>
+    </div>
+  )
+}
 
 const STEPS = [
   { t: 'Download & unzip', d: 'Click the button above, then unzip the file somewhere permanent (e.g. your Documents folder — not Downloads, since the extension runs from wherever these files live).' },
@@ -12,8 +29,16 @@ const STEPS = [
 ]
 
 export default function ExtensionPage() {
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
   const [info, setInfo] = useState(null)
+  const [managed, setManaged] = useState(null)
   useEffect(() => { getPluginInfo().then(setInfo).catch(() => {}) }, [])
+  useEffect(() => { if (isAdmin) getPluginManaged().then(setManaged).catch(() => {}) }, [isAdmin])
+
+  const managedJson = managed
+    ? JSON.stringify({ crmUrl: managed.crmUrl, crmKey: managed.crmKey }, null, 2)
+    : ''
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -75,6 +100,57 @@ export default function ExtensionPage() {
               </p>
             </div>
           </div>
+
+          {/* Admin: deploy to the whole team via Workspace */}
+          {isAdmin && managed && (
+            <div className="bg-white rounded-2xl border border-blue-200 shadow-sm p-6">
+              <div className="flex items-center gap-2 mb-1">
+                <Building2 className="w-4 h-4 text-blue-600" />
+                <h3 className="text-sm font-bold text-slate-900">Deploy to your team (Google Workspace)</h3>
+              </div>
+              <p className="text-sm text-slate-600 mb-4 leading-relaxed">
+                Force-install for everyone in your organization — it auto-installs and auto-updates, with no action needed from teammates.
+              </p>
+
+              {!managed.signingConfigured && (
+                <div className="flex gap-2.5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 mb-4 text-sm text-amber-800">
+                  <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>Server signing key isn’t set yet. Add the <code className="font-mono">CRX_PRIVATE_KEY</code> value to Railway (ask your developer for it) before the update URL will work.</span>
+                </div>
+              )}
+
+              <div className="space-y-3 mb-5">
+                <CopyRow label="Extension ID" value={managed.extensionId || '—'} />
+                <CopyRow label="Update URL (custom/self-hosted)" value={managed.updateUrl} />
+                <div>
+                  <p className="text-xs font-medium text-slate-500 mb-1">Policy for extensions (managed config JSON)</p>
+                  <div className="flex items-start gap-2">
+                    <pre className="flex-1 min-w-0 overflow-x-auto px-3 py-2 bg-slate-900 text-slate-100 rounded-lg text-xs font-mono">{managedJson}</pre>
+                    <button onClick={() => navigator.clipboard.writeText(managedJson)} className="shrink-0 w-9 h-9 flex items-center justify-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50" title="Copy">
+                      <Copy className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <ol className="space-y-3 text-sm">
+                {[
+                  <>Go to <b>admin.google.com</b> → <b>Devices → Chrome → Apps &amp; extensions → Users &amp; browsers</b>. Pick the org unit (or top-level for everyone).</>,
+                  <>Click the yellow <b>+</b> (bottom-right) → <b>Add Chrome app or extension by ID</b>.</>,
+                  <>Paste the <b>Extension ID</b>, and under source choose <b>From a custom URL</b> — paste the <b>Update URL</b> above.</>,
+                  <>Set installation policy to <b>Force install</b> (optionally “…and pin to toolbar”).</>,
+                  <>In that extension’s <b>Policy for extensions</b> box, paste the <b>managed config JSON</b> above (this delivers the CRM URL + key securely — it is never in the package).</>,
+                  <>Click <b>Save</b>. Within a bit, everyone signed into Chrome with their Workspace account gets it automatically.</>,
+                ].map((t, i) => (
+                  <li key={i} className="flex gap-3">
+                    <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-xs font-bold flex items-center justify-center shrink-0 mt-0.5">{i + 1}</span>
+                    <span className="text-slate-700 leading-relaxed">{t}</span>
+                  </li>
+                ))}
+              </ol>
+              <p className="text-xs text-slate-400 mt-4">To push an update later, the developer bumps the extension version — Chrome re-pulls it from the update URL automatically.</p>
+            </div>
+          )}
 
           {/* Troubleshooting */}
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-5">

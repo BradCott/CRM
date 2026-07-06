@@ -29,6 +29,7 @@ import backupRouter         from './routes/backup.js'
 import extRouter             from './routes/ext.js'
 import tenantRolesRouter     from './routes/tenantRoles.js'
 import pluginRouter          from './routes/plugin.js'
+import extDistRouter         from './routes/extDist.js'
 
 import { requireAuth, requireWrite, requireRole, requireExtKey } from './middleware/auth.js'
 
@@ -57,6 +58,9 @@ app.use('/api/auth', authRouter)
 
 // ── Gmail browser extension (shared-key auth, not the login cookie) ──────────
 app.use('/api/ext', requireExtKey, extRouter)
+
+// ── Self-hosted managed-install package (public; Chrome updater is unauthenticated) ──
+app.use('/ext-dist', extDistRouter)
 
 // ── Protected API routes (requireAuth applied per-route, not globally) ────────
 // Admin-only

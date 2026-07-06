@@ -3,6 +3,10 @@
   "name": "Knox CRM",
   "version": "1.7.0",
   "description": "Add contacts and log emails to Knox CRM from Gmail",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAo+gL8YP5cYeOMEFTGiyLYhWv9+c97VdRjHFvkWrBH88kF4fVf6kP3xTQdFXOjQedyiLsX5hOL26wSC2PbOGYMHVlHBKxa5LnbuA/yHfQu/TCoEi2G/AvICXv1g5R8DdY87/qYv6xaC8VLcvyyebKmJdq0jT2yN+9I28d4FQx8ED4bBLBTgGEb+mAFCjIwSKCILk9LVQWqsDFqRgujpJT5Xk3Su9Wn9eKNhVEy7CZbWl43iCRXbaq9F2uCHyCUzPxgCmdYZwnGLDs4+Ld1gLoMsGr55ZK1cN7JMrP9ghhkHwUYkfCHarCwJbL71yT4CeFeSMZuzQSFzHejPLvPkzf+wIDAQAB",
+  "storage": {
+    "managed_schema": "schema.json"
+  },
   "permissions": [
     "storage",
     "activeTab"

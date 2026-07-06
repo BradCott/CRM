@@ -5,19 +5,22 @@
 
 const CRM_URL_KEY = 'knoxCrmUrl'
 const CRM_KEY_KEY = 'knoxCrmKey'
-// Defaults come from config.js (baked in when downloaded from the CRM); the popup
-// can still override them via chrome.storage.
+// Config precedence: Google Workspace managed policy (chrome.storage.managed) →
+// popup settings (chrome.storage.sync) → baked-in config.js defaults.
 let crmUrl = (typeof KNOX_CFG !== 'undefined' && KNOX_CFG.url) || 'http://localhost:3001'
 let crmKey = (typeof KNOX_CFG !== 'undefined' && KNOX_CFG.key) || ''
 
-chrome.storage.sync.get([CRM_URL_KEY, CRM_KEY_KEY], (r) => {
-  if (r[CRM_URL_KEY]) crmUrl = r[CRM_URL_KEY]
-  if (r[CRM_KEY_KEY]) crmKey = r[CRM_KEY_KEY]
-})
-chrome.storage.onChanged.addListener((c) => {
-  if (c[CRM_URL_KEY]) crmUrl = c[CRM_URL_KEY].newValue
-  if (c[CRM_KEY_KEY]) crmKey = c[CRM_KEY_KEY].newValue
-})
+function applyConfig() {
+  chrome.storage.managed.get(['crmUrl', 'crmKey'], (m) => {
+    const mUrl = m && m.crmUrl, mKey = m && m.crmKey
+    chrome.storage.sync.get([CRM_URL_KEY, CRM_KEY_KEY], (r) => {
+      crmUrl = mUrl || r[CRM_URL_KEY] || crmUrl
+      crmKey = mKey || r[CRM_KEY_KEY] || crmKey
+    })
+  })
+}
+applyConfig()
+chrome.storage.onChanged.addListener(applyConfig)
 
 // DOM-visible marker so we can confirm the script loaded from the page console.
 document.documentElement.setAttribute('data-knox-loaded', '1')

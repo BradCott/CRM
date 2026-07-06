@@ -9,10 +9,18 @@ const savedMsg = document.getElementById('savedMsg')
 const cfgUrl = (typeof KNOX_CFG !== 'undefined' && KNOX_CFG.url) || 'https://crm.knoxcre.com'
 const cfgKey = (typeof KNOX_CFG !== 'undefined' && KNOX_CFG.key) || ''
 
-// Load saved values (fall back to the baked-in config)
-chrome.storage.sync.get([CRM_URL_KEY, CRM_KEY_KEY], (result) => {
-  urlInput.value = result[CRM_URL_KEY] || cfgUrl
-  keyInput.value = result[CRM_KEY_KEY] || cfgKey
+// Precedence: managed policy → saved popup values → baked-in config.
+chrome.storage.managed.get(['crmUrl', 'crmKey'], (m) => {
+  const managed = m && (m.crmUrl || m.crmKey)
+  chrome.storage.sync.get([CRM_URL_KEY, CRM_KEY_KEY], (result) => {
+    urlInput.value = (m && m.crmUrl) || result[CRM_URL_KEY] || cfgUrl
+    keyInput.value = (m && m.crmKey) || result[CRM_KEY_KEY] || cfgKey
+    if (managed) {
+      // Values come from your Workspace admin — lock the fields.
+      urlInput.disabled = true; keyInput.disabled = true
+      saveBtn.disabled = true; saveBtn.textContent = 'Managed by your organization'
+    }
+  })
 })
 
 saveBtn.addEventListener('click', () => {
