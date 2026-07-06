@@ -66,6 +66,14 @@ export default function LedgerPage() {
   const [ledgerOpen, setLedgerOpen]         = useState(false)
   const [sortState, setSortState]           = useState({ col: 'date', dir: 'desc' })
   const [invSort, setInvSort]               = useState({ col: 'contribution', dir: 'desc' })
+  const [invCollapsed, setInvCollapsed]     = useState(() => {
+    try { return localStorage.getItem('ledger_inv_collapsed') === '1' } catch { return false }
+  })
+  const toggleInvCollapsed = () => setInvCollapsed(v => {
+    const next = !v
+    try { localStorage.setItem('ledger_inv_collapsed', next ? '1' : '0') } catch { /* ignore */ }
+    return next
+  })
   const [reviewFilter, setReviewFilter]     = useState('all') // 'all' | 'review' | 'recorded'
   const [reviewCats, setReviewCats]         = useState({})     // tx.id → category override
   const [recordingId, setRecordingId]       = useState(null)
@@ -515,11 +523,22 @@ export default function LedgerPage() {
       {/* Investors section — only in ledger view */}
       {activeView === 'ledger' && investors.length > 0 && (
         <div className="shrink-0 bg-slate-50 border-b border-slate-200">
-          <div className="px-6 pt-3 pb-1">
+          <button
+            onClick={toggleInvCollapsed}
+            className="w-full flex items-center gap-1.5 px-6 pt-3 pb-2 text-left hover:bg-slate-100/60 transition-colors"
+            title={invCollapsed ? 'Show investors' : 'Hide investors'}
+          >
+            {invCollapsed ? <ChevronRight className="w-3.5 h-3.5 text-slate-400" /> : <ChevronDown className="w-3.5 h-3.5 text-slate-400" />}
             <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
               Investors — {investors.length}
             </h3>
-          </div>
+            {invCollapsed && (
+              <span className="ml-2 text-xs text-slate-400 normal-case font-normal">
+                {fmt$(equityContributed)} total equity ·<span className="text-blue-500"> show</span>
+              </span>
+            )}
+          </button>
+          {!invCollapsed && (
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="border-y border-slate-200">
@@ -614,6 +633,7 @@ export default function LedgerPage() {
               </tr>
             </tfoot>
           </table>
+          )}
         </div>
       )}
 
