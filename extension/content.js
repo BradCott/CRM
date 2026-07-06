@@ -20,6 +20,9 @@ chrome.storage.onChanged.addListener((c) => {
 // DOM-visible marker so we can confirm the script loaded from the page console.
 document.documentElement.setAttribute('data-knox-loaded', '1')
 
+// Broad territory regions (mirror of the CRM's list).
+const REGIONS = ['Nationwide', 'Northeast', 'Southeast', 'Midwest', 'Southwest', 'West']
+
 async function api(path, opts = {}) {
   const res = await fetch(`${crmUrl}${path}`, {
     ...opts,
@@ -118,6 +121,81 @@ function renderLookup(body, data, lookup, fab) {
 
   for (const c of (lookup.candidates || [])) body.appendChild(candidateRow(c, data, body, fab))
   body.appendChild(searchBlock(body, data, fab, lookup.candidates?.length ? 'Search for someone else' : 'Search contacts'))
+
+  const createBtn = el('<button class="knox-primary knox-alt">＋ New tenant contact</button>')
+  createBtn.addEventListener('click', () => openCreateForm(body, data, fab))
+  body.appendChild(createBtn)
+}
+
+// ── Create a tenant contact from the open email ──────────────────────────────
+function fieldInput(label, val) {
+  const row = el(`<label class="knox-field"><span>${esc(label)}</span><input class="knox-input" /></label>`)
+  const input = row.querySelector('input'); input.value = val || ''
+  return { row, input }
+}
+function chipToggle(label, set) {
+  const b = el(`<button type="button" class="knox-toggle">${esc(label)}</button>`)
+  b.addEventListener('click', () => {
+    if (set.has(label)) { set.delete(label); b.classList.remove('on') }
+    else { set.add(label); b.classList.add('on') }
+  })
+  return b
+}
+
+async function openCreateForm(body, data, fab) {
+  body.innerHTML = ''
+  body.appendChild(el('<div class="knox-line knox-muted">New tenant contact</div>'))
+
+  const nameI  = fieldInput('Name', data.contactName || data.contactEmail)
+  const phoneI = fieldInput('Phone', data.phone || '')
+  const tenantI = fieldInput('Tenant (company)', '')
+  const titleI = fieldInput('Title', '')
+  const statesI = fieldInput('States (comma-sep, e.g. TN, GA)', '')
+
+  const datalist = el('<datalist id="knox-brands"></datalist>')
+  tenantI.input.setAttribute('list', 'knox-brands')
+
+  const emailNote  = el(`<div class="knox-sub">${esc(data.contactEmail)}</div>`)
+  const rolesBox   = el('<div><div class="knox-sub">Roles</div><div class="knox-chips"></div></div>')
+  const regionsBox = el('<div><div class="knox-sub">Regions</div><div class="knox-chips"></div></div>')
+  const saveBtn    = el('<button class="knox-primary">Create + log email</button>')
+
+  body.append(nameI.row, emailNote, phoneI.row, tenantI.row, datalist, titleI.row, rolesBox, regionsBox, statesI.row, saveBtn)
+
+  const roles = new Set(), regions = new Set()
+  for (const rg of REGIONS) regionsBox.querySelector('.knox-chips').appendChild(chipToggle(rg, regions))
+  try {
+    const [roleTypes, brands] = await Promise.all([api('/api/ext/roles'), api('/api/ext/brands')])
+    for (const rt of roleTypes) rolesBox.querySelector('.knox-chips').appendChild(chipToggle(rt.label, roles))
+    for (const br of brands) { const o = document.createElement('option'); o.value = br.name; datalist.appendChild(o) }
+  } catch (_) { /* offline — the form still works for name/email */ }
+
+  saveBtn.addEventListener('click', async () => {
+    const nm = nameI.input.value.trim()
+    if (!nm) { nameI.input.focus(); return }
+    saveBtn.disabled = true; saveBtn.textContent = 'Creating…'
+    const states = statesI.input.value.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+    try {
+      const r = await api('/api/ext/create-contact', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: nm, email: data.contactEmail, phone: phoneI.input.value.trim(), title: titleI.input.value.trim(),
+          tenant_brand_name: tenantI.input.value.trim(),
+          tenant_roles: [...roles], territory_states: states, territory_regions: [...regions],
+        }),
+      })
+      if (r.ok) {
+        body.innerHTML = ''
+        body.appendChild(el(`<div class="knox-line knox-ok">✓ Created <b>${esc(r.personName)}</b></div>`))
+        body.appendChild(logButton(data, r.personId, fab))
+        fab.textContent = `✓ ${r.personName}`
+      } else {
+        saveBtn.className = 'knox-primary knox-warn'; saveBtn.textContent = `✗ ${r.error}`; saveBtn.disabled = false
+      }
+    } catch (_) {
+      saveBtn.className = 'knox-primary knox-warn'; saveBtn.textContent = '✗ CRM unreachable'; saveBtn.disabled = false
+    }
+  })
 }
 
 function candidateRow(person, data, body, fab) {

@@ -99,3 +99,20 @@
 }
 .knox-input:focus { border-color: #1a73e8; box-shadow: 0 0 0 2px #d2e3fc; }
 .knox-results { display: flex; flex-direction: column; gap: 6px; }
+
+/* Create-contact form */
+.knox-sub { font-size: 11px; color: #5f6368; margin: 2px 0 4px; }
+.knox-field { display: flex; flex-direction: column; gap: 3px; }
+.knox-field > span { font-size: 11px; color: #5f6368; }
+.knox-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.knox-toggle {
+  padding: 4px 9px;
+  border-radius: 12px;
+  border: 1px solid #cbd5e1;
+  background: #fff;
+  color: #475569;
+  font-size: 11px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.knox-toggle.on { background: #1a73e8; border-color: #1a73e8; color: #fff; }

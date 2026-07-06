@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import db from '../db.js'
 import { normalizeName, nameSimilarity } from '../services/investorMatch.js'
+import { normalizeName as nameKey } from '../utils/normalize.js'
 
 // Endpoints for the Knox CRM Gmail browser extension.
 // Auth is the shared x-crm-key header (requireExtKey), NOT the login cookie —
@@ -104,6 +105,49 @@ router.post('/attach-email', (req, res) => {
   }
 
   res.json({ ok: true, personId: p.id, personName: p.name, slot })
+})
+
+// GET /api/ext/brands?q= — tenant brands for the create-contact picker.
+router.get('/brands', (req, res) => {
+  const q = String(req.query.q || '').trim()
+  const rows = q
+    ? db.prepare('SELECT id, name FROM tenant_brands WHERE name LIKE ? ORDER BY name LIMIT 50').all(`%${q}%`)
+    : db.prepare('SELECT id, name FROM tenant_brands ORDER BY name LIMIT 500').all()
+  res.json(rows)
+})
+
+// GET /api/ext/roles — tenant-contact job roles for the create form.
+router.get('/roles', (_req, res) => {
+  res.json(db.prepare('SELECT id, label FROM tenant_role_types WHERE active = 1 ORDER BY sort, label').all())
+})
+
+// POST /api/ext/create-contact — create a tenant_contact from an email.
+// Resolves (or creates) the tenant brand by name.
+router.post('/create-contact', (req, res) => {
+  const b = req.body || {}
+  const name = String(b.name || '').trim()
+  if (!name) return res.status(400).json({ ok: false, error: 'name is required' })
+
+  let brandId = b.tenant_brand_id ? Number(b.tenant_brand_id) : null
+  const brandName = String(b.tenant_brand_name || '').trim()
+  if (!brandId && brandName) {
+    const existing = db.prepare('SELECT id FROM tenant_brands WHERE LOWER(name) = LOWER(?)').get(brandName)
+    brandId = existing ? existing.id : db.prepare('INSERT INTO tenant_brands (name) VALUES (?)').run(brandName).lastInsertRowid
+  }
+
+  const toJson = (v) => (Array.isArray(v) && v.length ? JSON.stringify(v) : null)
+  const roles   = Array.isArray(b.tenant_roles) ? b.tenant_roles : []
+  const states  = (Array.isArray(b.territory_states) ? b.territory_states : []).map(s => String(s).toUpperCase().trim()).filter(Boolean)
+  const regions = Array.isArray(b.territory_regions) ? b.territory_regions : []
+  const email   = bareEmail(b.email || '')
+
+  const r = db.prepare(`
+    INSERT INTO people
+      (name, role, email, phone, title, tenant_brand_id, tenant_roles, territory_states, territory_regions, name_key)
+    VALUES (?, 'tenant_contact', ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(name, email || null, b.phone || null, b.title || null, brandId, toJson(roles), toJson(states), toJson(regions), nameKey(name))
+
+  res.json({ ok: true, personId: r.lastInsertRowid, personName: name })
 })
 
 // POST /api/ext/attach-phone { person_id, phone }
