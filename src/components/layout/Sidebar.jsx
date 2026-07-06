@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   Users, KanbanSquare, Building2, Upload, FileSearch,
-  Landmark, TrendingUp, LayoutDashboard, Settings, BookOpen, ShieldCheck, LogOut, ClipboardList, Mail, Shield, Contact,
+  Landmark, TrendingUp, LayoutDashboard, Settings, BookOpen, ShieldCheck, LogOut, ClipboardList, Mail, Shield, Contact, Chrome,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import knoxKC from '../../assets/Knox-KC.jpg'
@@ -22,6 +22,7 @@ const NAV = [
 ]
 
 const BOTTOM_NAV = [
+  { to: '/extension', label: 'Gmail Extension', icon: Chrome, roles: ['admin', 'full_agent', 'junior_agent'] },
   { to: '/import',   label: 'Import',   icon: Upload,       roles: ['admin'] },
   { to: '/settings', label: 'Settings', icon: Settings,     roles: ['admin'] },
   { to: '/admin',    label: 'Admin',    icon: ShieldCheck,  roles: ['admin'] },

@@ -28,6 +28,7 @@ import assistantRouter      from './routes/assistant.js'
 import backupRouter         from './routes/backup.js'
 import extRouter             from './routes/ext.js'
 import tenantRolesRouter     from './routes/tenantRoles.js'
+import pluginRouter          from './routes/plugin.js'
 
 import { requireAuth, requireWrite, requireRole, requireExtKey } from './middleware/auth.js'
 
@@ -79,6 +80,7 @@ app.use('/api/dashboard',        requireAuth, dashboardRouter)
 app.use('/api/plays',            requireAuth, playsRouter)
 app.use('/api/assistant',        requireAuth, assistantRouter)
 app.use('/api/emails',           requireAuth, requireWrite, emailsRouter)
+app.use('/api/plugin',           requireAuth, pluginRouter)
 
 // Property management — admin + full_agent
 app.use('/api/management',       requireAuth, requireRole('admin', 'full_agent'), managementRouter)

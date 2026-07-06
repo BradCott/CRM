@@ -5,8 +5,10 @@
 
 const CRM_URL_KEY = 'knoxCrmUrl'
 const CRM_KEY_KEY = 'knoxCrmKey'
-let crmUrl = 'http://localhost:3001'
-let crmKey = ''
+// Defaults come from config.js (baked in when downloaded from the CRM); the popup
+// can still override them via chrome.storage.
+let crmUrl = (typeof KNOX_CFG !== 'undefined' && KNOX_CFG.url) || 'http://localhost:3001'
+let crmKey = (typeof KNOX_CFG !== 'undefined' && KNOX_CFG.key) || ''
 
 chrome.storage.sync.get([CRM_URL_KEY, CRM_KEY_KEY], (r) => {
   if (r[CRM_URL_KEY]) crmUrl = r[CRM_URL_KEY]

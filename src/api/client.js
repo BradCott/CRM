@@ -25,6 +25,10 @@ export const deleteTenantBrand = (id)     => req('DELETE', `/tenant-brands/${id}
 export const getTenantRoles   = ()       => req('GET',  '/tenant-roles')
 export const createTenantRole = (label)  => req('POST', '/tenant-roles', { label })
 
+// Browser extension
+export const getPluginInfo    = ()       => req('GET', '/plugin/info')
+export const pluginDownloadUrl = ()      => `${BASE}/plugin/download`
+
 // People — paginated
 export const getPeople    = (params = {}) => {
   const qs = new URLSearchParams(params).toString()
