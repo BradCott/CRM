@@ -185,7 +185,7 @@ async function openCreateForm(body, data, fab) {
   const tenantBlock = el('<div class="knox-tenant-block"></div>')
   tenantBlock.append(tenantI.row, datalist, rolesBox, regionsBox, statesBox)
 
-  const saveBtn = el('<button class="knox-primary">Create + log email</button>')
+  const saveBtn = el('<button class="knox-primary">Create contact</button>')
 
   body.append(roleRow, nameI.row, emailNote, phoneI.row, titleI.row, tenantBlock, saveBtn)
 
@@ -220,6 +220,7 @@ async function openCreateForm(body, data, fab) {
       if (r.ok) {
         body.innerHTML = ''
         body.appendChild(el(`<div class="knox-line knox-ok">✓ Created <b>${esc(r.personName)}</b></div>`))
+        body.appendChild(el('<div class="knox-sub">Optionally log this email to them:</div>'))
         body.appendChild(logButton(data, r.personId, fab))
         fab.textContent = `✓ ${r.personName}`
       } else {
