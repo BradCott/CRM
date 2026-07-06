@@ -111,20 +111,26 @@ function renderLookup(body, data, lookup, fab) {
     const ph = addPhoneButton(lookup.matched, data)
     if (ph) body.appendChild(ph)
     body.appendChild(searchBlock(body, data, fab, 'Log to a different contact'))
+    body.appendChild(createContactBtn(body, data, fab))
     return
   }
 
   const head = lookup.candidates && lookup.candidates.length
-    ? `Add <b>${esc(data.contactEmail)}</b> to:`
-    : `No contact has this address. Search to attach it:`
+    ? `<b>${esc(data.contactName || data.contactEmail)}</b> isn't in the CRM — add new, or link to:`
+    : `<b>${esc(data.contactName || data.contactEmail)}</b> isn't in the CRM yet.`
   body.appendChild(el(`<div class="knox-line">${head}</div>`))
 
-  for (const c of (lookup.candidates || [])) body.appendChild(candidateRow(c, data, body, fab))
-  body.appendChild(searchBlock(body, data, fab, lookup.candidates?.length ? 'Search for someone else' : 'Search contacts'))
+  // "Add as new" is the primary action for an unknown sender — show it first.
+  body.appendChild(createContactBtn(body, data, fab))
 
-  const createBtn = el('<button class="knox-primary knox-alt">＋ New tenant contact</button>')
-  createBtn.addEventListener('click', () => openCreateForm(body, data, fab))
-  body.appendChild(createBtn)
+  for (const c of (lookup.candidates || [])) body.appendChild(candidateRow(c, data, body, fab))
+  body.appendChild(searchBlock(body, data, fab, lookup.candidates?.length ? 'Or search for someone else' : 'Or search contacts'))
+}
+
+function createContactBtn(body, data, fab) {
+  const b = el('<button class="knox-primary knox-alt">＋ New tenant contact</button>')
+  b.addEventListener('click', () => openCreateForm(body, data, fab))
+  return b
 }
 
 // ── Create a tenant contact from the open email ──────────────────────────────
