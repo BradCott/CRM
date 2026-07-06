@@ -126,16 +126,18 @@ function renderLookup(body, data, lookup, fab) {
     return
   }
 
-  const head = lookup.candidates && lookup.candidates.length
-    ? `<b>${esc(data.contactName || data.contactEmail)}</b> isn't in the CRM — add new, or link to:`
-    : `<b>${esc(data.contactName || data.contactEmail)}</b> isn't in the CRM yet.`
+  const head = `<b>${esc(data.contactName || data.contactEmail)}</b> isn't in the CRM yet.`
   body.appendChild(el(`<div class="knox-line">${head}</div>`))
 
-  // "Add as new" is the primary action for an unknown sender — show it first.
+  // Two primary actions up top so neither gets lost: create new, and search.
   body.appendChild(createContactBtn(body, data, fab))
+  body.appendChild(searchBlock(body, data, fab, 'Search all contacts'))
 
-  for (const c of (lookup.candidates || [])) body.appendChild(candidateRow(c, data, body, fab))
-  body.appendChild(searchBlock(body, data, fab, lookup.candidates?.length ? 'Or search for someone else' : 'Or search contacts'))
+  // Suggested auto-matches last (usually few).
+  if (lookup.candidates?.length) {
+    body.appendChild(el('<div class="knox-sub">Suggested matches</div>'))
+    for (const c of lookup.candidates) body.appendChild(candidateRow(c, data, body, fab))
+  }
 }
 
 function createContactBtn(body, data, fab) {
@@ -163,7 +165,7 @@ async function openCreateForm(body, data, fab) {
   body.innerHTML = ''
   body.appendChild(el('<div class="knox-line knox-muted">New contact</div>'))
 
-  // Role select
+  // Contact-type select
   const roleRow = el('<label class="knox-field"><span>Type of contact</span></label>')
   const roleSel = document.createElement('select')
   roleSel.className = 'knox-input'
@@ -176,18 +178,29 @@ async function openCreateForm(body, data, fab) {
   const emailNote = el(`<div class="knox-sub">${esc(data.contactEmail)}</div>`)
 
   // ── Tenant-only block ──
-  const tenantI = fieldInput('Tenant (company)', '')
-  const datalist = el('<datalist id="knox-brands"></datalist>')
-  tenantI.input.setAttribute('list', 'knox-brands')
+  const tenantWrap = el('<div class="knox-field"><span>Tenant (company)</span></div>')
+  const tenantSel  = document.createElement('select'); tenantSel.className = 'knox-input'
+  tenantSel.innerHTML = '<option value="">— Select tenant —</option>'
+  const newTenantI = el('<input class="knox-input knox-newtenant" placeholder="New tenant name" />')
+  newTenantI.style.display = 'none'
+  tenantWrap.append(tenantSel, newTenantI)
+
   const rolesBox   = el('<div><div class="knox-sub">Roles</div><div class="knox-chips"></div></div>')
   const regionsBox = el('<div><div class="knox-sub">Regions</div><div class="knox-chips"></div></div>')
   const statesBox  = el('<div><div class="knox-sub">States</div><div class="knox-chips knox-states"></div></div>')
   const tenantBlock = el('<div class="knox-tenant-block"></div>')
-  tenantBlock.append(tenantI.row, datalist, rolesBox, regionsBox, statesBox)
+  tenantBlock.append(tenantWrap, rolesBox, regionsBox, statesBox)
 
   const saveBtn = el('<button class="knox-primary">Create contact</button>')
 
   body.append(roleRow, nameI.row, emailNote, phoneI.row, titleI.row, tenantBlock, saveBtn)
+
+  // Reveal the "new tenant" text box when the ➕ option is chosen.
+  tenantSel.addEventListener('change', () => {
+    const isNew = tenantSel.value === '__new__'
+    newTenantI.style.display = isNew ? '' : 'none'
+    if (isNew) newTenantI.focus()
+  })
 
   const roles = new Set(), regions = new Set(), states = new Set()
   for (const rg of REGIONS)  regionsBox.querySelector('.knox-chips').appendChild(chipToggle(rg, regions))
@@ -195,8 +208,10 @@ async function openCreateForm(body, data, fab) {
   try {
     const [roleTypes, brands] = await Promise.all([api('/api/ext/roles'), api('/api/ext/brands')])
     for (const rt of roleTypes) rolesBox.querySelector('.knox-chips').appendChild(chipToggle(rt.label, roles))
-    for (const br of brands) { const o = document.createElement('option'); o.value = br.name; datalist.appendChild(o) }
+    for (const br of brands) { const o = document.createElement('option'); o.value = String(br.id); o.textContent = br.name; tenantSel.appendChild(o) }
   } catch (_) { /* offline — the form still works for name/email */ }
+  const addOpt = document.createElement('option'); addOpt.value = '__new__'; addOpt.textContent = '➕ Add a new tenant…'
+  tenantSel.appendChild(addOpt)
 
   // Show tenant fields only for tenant contacts
   const syncTenant = () => { tenantBlock.style.display = roleSel.value === 'tenant_contact' ? '' : 'none' }
@@ -207,21 +222,29 @@ async function openCreateForm(body, data, fab) {
     const nm = nameI.input.value.trim()
     if (!nm) { nameI.input.focus(); return }
     saveBtn.disabled = true; saveBtn.textContent = 'Creating…'
+
+    let tenant_brand_id = null, tenant_brand_name = ''
+    if (tenantSel.value === '__new__') tenant_brand_name = newTenantI.value.trim()
+    else if (tenantSel.value) tenant_brand_id = Number(tenantSel.value)
+
     try {
       const r = await api('/api/ext/create-contact', {
         method: 'POST',
         body: JSON.stringify({
           role: roleSel.value,
           name: nm, email: data.contactEmail, phone: phoneI.input.value.trim(), title: titleI.input.value.trim(),
-          tenant_brand_name: tenantI.input.value.trim(),
+          tenant_brand_id, tenant_brand_name,
           tenant_roles: [...roles], territory_states: [...states], territory_regions: [...regions],
         }),
       })
       if (r.ok) {
         body.innerHTML = ''
         body.appendChild(el(`<div class="knox-line knox-ok">✓ Created <b>${esc(r.personName)}</b></div>`))
-        body.appendChild(el('<div class="knox-sub">Optionally log this email to them:</div>'))
+        body.appendChild(el('<div class="knox-sub">Log this email to them, or skip:</div>'))
         body.appendChild(logButton(data, r.personId, fab))
+        const done = el('<button class="knox-primary knox-alt">Done (skip logging)</button>')
+        done.addEventListener('click', closePanel)
+        body.appendChild(done)
         fab.textContent = `✓ ${r.personName}`
       } else {
         saveBtn.className = 'knox-primary knox-warn'; saveBtn.textContent = `✗ ${r.error}`; saveBtn.disabled = false
