@@ -1,7 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction } from '../../api/client'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization } from '../../api/client'
 import OpeningBalancesModal from './OpeningBalancesModal'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
@@ -74,6 +74,25 @@ export default function LedgerPage() {
     try { localStorage.setItem('ledger_inv_collapsed', next ? '1' : '0') } catch { /* ignore */ }
     return next
   })
+  const [amortRefresh, setAmortRefresh]     = useState(0)
+  const [amortUploading, setAmortUploading] = useState(false)
+  const amortInputRef                       = useRef(null)
+
+  async function handleAmortUpload(file) {
+    if (!file) return
+    setAmortUploading(true)
+    setError(null)
+    try {
+      await uploadAmortization(propertyId, file)
+      setAmortRefresh(n => n + 1)   // remount the card so it shows the new schedule
+      reload()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setAmortUploading(false)
+      if (amortInputRef.current) amortInputRef.current.value = ''
+    }
+  }
   const [reviewFilter, setReviewFilter]     = useState('all') // 'all' | 'review' | 'recorded'
   const [reviewCats, setReviewCats]         = useState({})     // tx.id → category override
   const [recordingId, setRecordingId]       = useState(null)
@@ -406,6 +425,12 @@ export default function LedgerPage() {
             <Button variant="secondary" onClick={() => setShowBank(true)}>
               <Landmark className="w-4 h-4" /> Bank Statement
             </Button>
+            <input ref={amortInputRef} type="file" accept=".pdf,.xlsx,.xls,.csv" className="hidden"
+              onChange={e => handleAmortUpload(e.target.files[0])} />
+            <Button variant="secondary" onClick={() => amortInputRef.current?.click()} disabled={amortUploading}
+              title="Upload a loan amortization schedule — mortgage payments auto-split on sync">
+              {amortUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />} Amortization
+            </Button>
             <Button variant="secondary" onClick={() => setShowInvestors(true)}>
               <Users className="w-4 h-4" /> Investor Contributions
             </Button>
@@ -644,7 +669,7 @@ export default function LedgerPage() {
 
       {/* Loan amortization — only in ledger view */}
       {activeView === 'ledger' && (
-        <AmortizationCard propertyId={propertyId} />
+        <AmortizationCard key={amortRefresh} propertyId={propertyId} hideUploader />
       )}
 
       {/* Transaction Ledger — collapsible, only in ledger view */}

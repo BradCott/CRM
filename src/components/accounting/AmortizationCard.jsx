@@ -12,7 +12,7 @@ function fmtDate(iso) {
   return new Date(iso.slice(0, 10) + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export default function AmortizationCard({ propertyId }) {
+export default function AmortizationCard({ propertyId, hideUploader = false }) {
   const [data, setData]       = useState(null)   // { schedule, next, used }
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
@@ -49,6 +49,8 @@ export default function AmortizationCard({ propertyId }) {
   if (loading) return null
 
   const s = data?.schedule
+  // Upload now lives in the top toolbar; with no schedule there's nothing to show.
+  if (!s && hideUploader) return null
 
   return (
     <div className="shrink-0 bg-white border-b border-slate-200">
