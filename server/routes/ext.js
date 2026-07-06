@@ -121,31 +121,38 @@ router.get('/roles', (_req, res) => {
   res.json(db.prepare('SELECT id, label FROM tenant_role_types WHERE active = 1 ORDER BY sort, label').all())
 })
 
-// POST /api/ext/create-contact — create a tenant_contact from an email.
-// Resolves (or creates) the tenant brand by name.
+// POST /api/ext/create-contact — create a contact from an email.
+// Defaults to a tenant_contact; tenant fields only apply for that role.
+const CONTACT_ROLES = ['owner', 'owner_company', 'broker', 'tenant_contact']
 router.post('/create-contact', (req, res) => {
   const b = req.body || {}
   const name = String(b.name || '').trim()
   if (!name) return res.status(400).json({ ok: false, error: 'name is required' })
 
-  let brandId = b.tenant_brand_id ? Number(b.tenant_brand_id) : null
-  const brandName = String(b.tenant_brand_name || '').trim()
-  if (!brandId && brandName) {
-    const existing = db.prepare('SELECT id FROM tenant_brands WHERE LOWER(name) = LOWER(?)').get(brandName)
-    brandId = existing ? existing.id : db.prepare('INSERT INTO tenant_brands (name) VALUES (?)').run(brandName).lastInsertRowid
+  const role    = CONTACT_ROLES.includes(b.role) ? b.role : 'tenant_contact'
+  const isTenant = role === 'tenant_contact'
+  const email   = bareEmail(b.email || '')
+
+  let brandId = null
+  if (isTenant) {
+    brandId = b.tenant_brand_id ? Number(b.tenant_brand_id) : null
+    const brandName = String(b.tenant_brand_name || '').trim()
+    if (!brandId && brandName) {
+      const existing = db.prepare('SELECT id FROM tenant_brands WHERE LOWER(name) = LOWER(?)').get(brandName)
+      brandId = existing ? existing.id : db.prepare('INSERT INTO tenant_brands (name) VALUES (?)').run(brandName).lastInsertRowid
+    }
   }
 
   const toJson = (v) => (Array.isArray(v) && v.length ? JSON.stringify(v) : null)
-  const roles   = Array.isArray(b.tenant_roles) ? b.tenant_roles : []
-  const states  = (Array.isArray(b.territory_states) ? b.territory_states : []).map(s => String(s).toUpperCase().trim()).filter(Boolean)
-  const regions = Array.isArray(b.territory_regions) ? b.territory_regions : []
-  const email   = bareEmail(b.email || '')
+  const roles   = isTenant && Array.isArray(b.tenant_roles) ? b.tenant_roles : []
+  const states  = isTenant ? (Array.isArray(b.territory_states) ? b.territory_states : []).map(s => String(s).toUpperCase().trim()).filter(Boolean) : []
+  const regions = isTenant && Array.isArray(b.territory_regions) ? b.territory_regions : []
 
   const r = db.prepare(`
     INSERT INTO people
       (name, role, email, phone, title, tenant_brand_id, tenant_roles, territory_states, territory_regions, name_key)
-    VALUES (?, 'tenant_contact', ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(name, email || null, b.phone || null, b.title || null, brandId, toJson(roles), toJson(states), toJson(regions), nameKey(name))
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(name, role, email || null, b.phone || null, b.title || null, brandId, toJson(roles), toJson(states), toJson(regions), nameKey(name))
 
   res.json({ ok: true, personId: r.lastInsertRowid, personName: name })
 })

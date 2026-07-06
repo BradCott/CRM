@@ -116,3 +116,5 @@
   cursor: pointer;
 }
 .knox-toggle.on { background: #1a73e8; border-color: #1a73e8; color: #fff; }
+.knox-tenant-block { display: flex; flex-direction: column; gap: 10px; }
+.knox-states { max-height: 116px; overflow-y: auto; padding: 2px; }

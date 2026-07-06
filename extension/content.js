@@ -22,6 +22,17 @@ document.documentElement.setAttribute('data-knox-loaded', '1')
 
 // Broad territory regions (mirror of the CRM's list).
 const REGIONS = ['Nationwide', 'Northeast', 'Southeast', 'Midwest', 'Southwest', 'West']
+const US_STATES = [
+  'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA','KS','KY',
+  'LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ','NM','NY','NC','ND',
+  'OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT','VA','WA','WV','WI','WY','DC',
+]
+const CONTACT_ROLES = [
+  { value: 'tenant_contact', label: 'Tenant Contact' },
+  { value: 'owner',          label: 'Owner' },
+  { value: 'broker',         label: 'Broker' },
+  { value: 'owner_company',  label: 'Owner Company' },
+]
 
 async function api(path, opts = {}) {
   const res = await fetch(`${crmUrl}${path}`, {
@@ -128,7 +139,7 @@ function renderLookup(body, data, lookup, fab) {
 }
 
 function createContactBtn(body, data, fab) {
-  const b = el('<button class="knox-primary knox-alt">＋ New tenant contact</button>')
+  const b = el('<button class="knox-primary knox-alt">＋ New contact</button>')
   b.addEventListener('click', () => openCreateForm(body, data, fab))
   return b
 }
@@ -150,44 +161,60 @@ function chipToggle(label, set) {
 
 async function openCreateForm(body, data, fab) {
   body.innerHTML = ''
-  body.appendChild(el('<div class="knox-line knox-muted">New tenant contact</div>'))
+  body.appendChild(el('<div class="knox-line knox-muted">New contact</div>'))
+
+  // Role select
+  const roleRow = el('<label class="knox-field"><span>Type of contact</span></label>')
+  const roleSel = document.createElement('select')
+  roleSel.className = 'knox-input'
+  for (const r of CONTACT_ROLES) { const o = document.createElement('option'); o.value = r.value; o.textContent = r.label; roleSel.appendChild(o) }
+  roleRow.appendChild(roleSel)
 
   const nameI  = fieldInput('Name', data.contactName || data.contactEmail)
   const phoneI = fieldInput('Phone', data.phone || '')
-  const tenantI = fieldInput('Tenant (company)', '')
-  const titleI = fieldInput('Title', '')
-  const statesI = fieldInput('States (comma-sep, e.g. TN, GA)', '')
+  const titleI = fieldInput('Title (optional)', '')
+  const emailNote = el(`<div class="knox-sub">${esc(data.contactEmail)}</div>`)
 
+  // ── Tenant-only block ──
+  const tenantI = fieldInput('Tenant (company)', '')
   const datalist = el('<datalist id="knox-brands"></datalist>')
   tenantI.input.setAttribute('list', 'knox-brands')
-
-  const emailNote  = el(`<div class="knox-sub">${esc(data.contactEmail)}</div>`)
   const rolesBox   = el('<div><div class="knox-sub">Roles</div><div class="knox-chips"></div></div>')
   const regionsBox = el('<div><div class="knox-sub">Regions</div><div class="knox-chips"></div></div>')
-  const saveBtn    = el('<button class="knox-primary">Create + log email</button>')
+  const statesBox  = el('<div><div class="knox-sub">States</div><div class="knox-chips knox-states"></div></div>')
+  const tenantBlock = el('<div class="knox-tenant-block"></div>')
+  tenantBlock.append(tenantI.row, datalist, rolesBox, regionsBox, statesBox)
 
-  body.append(nameI.row, emailNote, phoneI.row, tenantI.row, datalist, titleI.row, rolesBox, regionsBox, statesI.row, saveBtn)
+  const saveBtn = el('<button class="knox-primary">Create + log email</button>')
 
-  const roles = new Set(), regions = new Set()
-  for (const rg of REGIONS) regionsBox.querySelector('.knox-chips').appendChild(chipToggle(rg, regions))
+  body.append(roleRow, nameI.row, emailNote, phoneI.row, titleI.row, tenantBlock, saveBtn)
+
+  const roles = new Set(), regions = new Set(), states = new Set()
+  for (const rg of REGIONS)  regionsBox.querySelector('.knox-chips').appendChild(chipToggle(rg, regions))
+  for (const st of US_STATES) statesBox.querySelector('.knox-chips').appendChild(chipToggle(st, states))
   try {
     const [roleTypes, brands] = await Promise.all([api('/api/ext/roles'), api('/api/ext/brands')])
     for (const rt of roleTypes) rolesBox.querySelector('.knox-chips').appendChild(chipToggle(rt.label, roles))
     for (const br of brands) { const o = document.createElement('option'); o.value = br.name; datalist.appendChild(o) }
   } catch (_) { /* offline — the form still works for name/email */ }
 
+  // Show tenant fields only for tenant contacts
+  const syncTenant = () => { tenantBlock.style.display = roleSel.value === 'tenant_contact' ? '' : 'none' }
+  roleSel.addEventListener('change', syncTenant)
+  syncTenant()
+
   saveBtn.addEventListener('click', async () => {
     const nm = nameI.input.value.trim()
     if (!nm) { nameI.input.focus(); return }
     saveBtn.disabled = true; saveBtn.textContent = 'Creating…'
-    const states = statesI.input.value.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
     try {
       const r = await api('/api/ext/create-contact', {
         method: 'POST',
         body: JSON.stringify({
+          role: roleSel.value,
           name: nm, email: data.contactEmail, phone: phoneI.input.value.trim(), title: titleI.input.value.trim(),
           tenant_brand_name: tenantI.input.value.trim(),
-          tenant_roles: [...roles], territory_states: states, territory_regions: [...regions],
+          tenant_roles: [...roles], territory_states: [...states], territory_regions: [...regions],
         }),
       })
       if (r.ok) {
