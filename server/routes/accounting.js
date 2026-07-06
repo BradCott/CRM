@@ -2,7 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import * as XLSX from 'xlsx'
 import db from '../db.js'
-import { autoLinkInvestors, investorRosterWithAliases, matchInvestorWire } from '../services/investorMatch.js'
+import { autoLinkInvestors, investorRosterWithAliases, matchInvestorWire, normalizeName, nameSimilarity } from '../services/investorMatch.js'
 import { categorizeBatch, learnRules, ruleConfidence } from '../utils/categorize.js'
 import { generateSchedule } from '../utils/amortization.js'
 
@@ -812,6 +812,21 @@ router.get('/:propertyId/investors', (req, res) => {
     WHERE property_id = ?
     ORDER BY contribution DESC
   `).all(propertyId)
+
+  // Resolve each cap-table name to a global investor profile so the UI can link.
+  // Normalized match (strips LLC/Inc/etc.) first, then a high-confidence fuzzy pass.
+  const investors = db.prepare('SELECT id, name FROM investors').all()
+  const normd = investors.map(iv => ({ id: iv.id, name: iv.name, key: normalizeName(iv.name) }))
+  for (const r of rows) {
+    const rk = normalizeName(r.name)
+    let inv = rk && normd.find(x => x.key === rk)
+    if (!inv) {
+      let best = null, score = 0
+      for (const x of normd) { const s = nameSimilarity(r.name, x.name); if (s > score) { score = s; best = x } }
+      if (best && score >= 0.85) inv = best
+    }
+    r.investor_id = inv ? inv.id : null
+  }
   res.json(rows)
 })
 

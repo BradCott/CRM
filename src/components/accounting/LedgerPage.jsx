@@ -580,7 +580,17 @@ export default function LedgerPage() {
                 const isEditing = editingContrib?.id === inv.id
                 return (
                   <tr key={inv.id} className="border-b border-slate-100 bg-white hover:bg-slate-50/60">
-                    <td className="px-4 pl-6 py-2.5 font-medium text-slate-900">{inv.name}</td>
+                    <td className="px-4 pl-6 py-2.5 font-medium text-slate-900">
+                      {inv.investor_id ? (
+                        <button
+                          onClick={() => navigate(`/investors/${inv.investor_id}`)}
+                          className="text-blue-600 hover:text-blue-800 hover:underline text-left"
+                          title="Open investor profile"
+                        >
+                          {inv.name}
+                        </button>
+                      ) : inv.name}
+                    </td>
                     <td className="px-4 py-2.5">
                       {inv.class ? (
                         <span className={`inline-block px-2 py-0.5 rounded-full text-xs font-medium ${
