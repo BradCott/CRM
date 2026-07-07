@@ -146,7 +146,7 @@ router.get('/:propertyId/transactions', (req, res) => {
 
   const transactions = db.prepare(`
     SELECT tx.id, tx.property_id, tx.date, tx.description, tx.category, tx.amount, tx.source, tx.vendor,
-           tx.reconciled, tx.review_status, tx.matched_note, tx.external_id, tx.created_at,
+           tx.reconciled, tx.review_status, tx.matched_note, tx.matched_to_id, tx.external_id, tx.created_at,
            tx.investor_id, i.name AS investor_name
     FROM accounting_transactions tx
     LEFT JOIN investors i ON i.id = tx.investor_id
@@ -582,9 +582,26 @@ router.patch('/transactions/:id/match', (req, res) => {
   const tx = db.prepare('SELECT id FROM accounting_transactions WHERE id = ?').get(req.params.id)
   if (!tx) return res.status(404).json({ error: 'Transaction not found' })
   const note = (req.body?.note || 'Matched — already in the books').toString().slice(0, 200)
-  db.prepare(`UPDATE accounting_transactions SET review_status = 'matched', matched_note = ? WHERE id = ?`)
-    .run(note, req.params.id)
+  const matchedToId = req.body?.matched_to_id ? Number(req.body.matched_to_id) : null
+  db.prepare(`UPDATE accounting_transactions SET review_status = 'matched', matched_note = ?, matched_to_id = ? WHERE id = ?`)
+    .run(note, matchedToId, req.params.id)
   res.json(db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id))
+})
+
+// Candidate entries already in the books that a bank line might reconcile against.
+// Closest-amount first, then the settlement statement's own entries, then recent.
+router.get('/:propertyId/match-candidates', (req, res) => {
+  const { propertyId } = req.params
+  const amount = Math.abs(Number(req.query.amount) || 0)
+  const exclude = Number(req.query.exclude) || 0
+  const rows = db.prepare(`
+    SELECT id, date, description, category, amount, source
+    FROM accounting_transactions
+    WHERE property_id = ? AND id != ? AND review_status = 'recorded'
+    ORDER BY ABS(ABS(amount) - ?) ASC, date DESC
+    LIMIT 12
+  `).all(propertyId, exclude, amount)
+  res.json(rows)
 })
 
 // Undo a match (matched → needs_review)

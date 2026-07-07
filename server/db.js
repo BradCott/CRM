@@ -488,6 +488,7 @@ const migrations = [
   // already in the books (e.g. the settlement statement) — review_status='matched',
   // excluded from financials (which filter review_status='recorded').
   `ALTER TABLE accounting_transactions ADD COLUMN matched_note TEXT`,
+  `ALTER TABLE accounting_transactions ADD COLUMN matched_to_id INTEGER`,
 
   // Mail campaign response tracking + timed mailing suppression
   `ALTER TABLE handwrytten_sends ADD COLUMN responded_at     TEXT`,

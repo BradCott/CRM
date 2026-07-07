@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles, Link2, AlertTriangle } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries, matchTransaction, unmatchTransaction } from '../../api/client'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries, matchTransaction, unmatchTransaction, getMatchCandidates } from '../../api/client'
 import OpeningBalancesModal from './OpeningBalancesModal'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
@@ -213,11 +213,18 @@ export default function LedgerPage() {
     }
   }
 
-  const [matchingId, setMatchingId] = useState(null)  // tx.id whose match menu is open
-  async function handleMatch(tx, note) {
+  const [matchingId, setMatchingId]         = useState(null)  // tx.id whose match menu is open
+  const [matchCandidates, setMatchCandidates] = useState([])  // candidate entries to match against
+  function openMatch(tx) {
+    if (matchingId === tx.id) { setMatchingId(null); return }
+    setMatchingId(tx.id)
+    setMatchCandidates([])
+    getMatchCandidates(propertyId, Math.abs(Number(tx.amount) || 0), tx.id).then(setMatchCandidates).catch(() => {})
+  }
+  async function handleMatch(tx, note, matchedToId = null) {
     setMatchingId(null)
     setRecordingId(tx.id)
-    try { await matchTransaction(tx.id, note); await reload() }
+    try { await matchTransaction(tx.id, note, matchedToId); await reload() }
     finally { setRecordingId(null) }
   }
   async function handleUnmatch(tx) {
@@ -1054,7 +1061,7 @@ export default function LedgerPage() {
                                 </button>
                                 <div className="relative">
                                   <button
-                                    onClick={() => setMatchingId(matchingId === tx.id ? null : tx.id)}
+                                    onClick={() => openMatch(tx)}
                                     disabled={recordingId === tx.id}
                                     className="flex items-center gap-1 text-xs font-medium text-slate-500 px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50"
                                     title="Match to something already in the books (e.g. the settlement) — reconciles it without double-counting"
@@ -1064,14 +1071,32 @@ export default function LedgerPage() {
                                   {matchingId === tx.id && (
                                     <>
                                       <div className="fixed inset-0 z-10" onClick={() => setMatchingId(null)} />
-                                      <div className="absolute right-0 top-8 z-20 w-52 bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-xs">
-                                        <p className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Already in the books — match to:</p>
-                                        {['Settlement statement', 'Loan proceeds', 'Earnest money', 'Investor equity', 'Transfer between accounts', 'Duplicate / other'].map(reason => (
-                                          <button key={reason} onClick={() => handleMatch(tx, reason)}
-                                            className="w-full text-left px-3 py-1.5 text-slate-700 hover:bg-slate-50">
-                                            {reason}
-                                          </button>
-                                        ))}
+                                      <div className="absolute right-0 top-8 z-20 w-72 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-xs">
+                                        <p className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Match to an entry already in the books</p>
+                                        {matchCandidates.length === 0 ? (
+                                          <p className="px-3 py-1.5 text-slate-400 italic">No recorded entries yet</p>
+                                        ) : matchCandidates.map(c => {
+                                          const close = Math.abs(Math.abs(c.amount) - Math.abs(tx.amount)) < 1
+                                          return (
+                                            <button key={c.id} onClick={() => handleMatch(tx, `${c.description} (${String(c.date).slice(0,10)})`, c.id)}
+                                              className="w-full text-left px-3 py-1.5 hover:bg-slate-50 flex items-center justify-between gap-2">
+                                              <span className="min-w-0">
+                                                <span className="block truncate text-slate-700">{c.description || c.category}</span>
+                                                <span className="text-[10px] text-slate-400">{String(c.date).slice(0,10)} · {c.source}</span>
+                                              </span>
+                                              <span className={`shrink-0 tabular-nums font-medium ${close ? 'text-emerald-600' : 'text-slate-500'}`}>{fmt$(c.amount)}{close ? ' ✓' : ''}</span>
+                                            </button>
+                                          )
+                                        })}
+                                        <div className="border-t border-slate-100 mt-1 pt-1">
+                                          <p className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Or just tag it (no single entry)</p>
+                                          {['Settlement statement', 'Loan proceeds', 'Earnest money', 'Investor equity', 'Transfer between accounts', 'Duplicate / other'].map(reason => (
+                                            <button key={reason} onClick={() => handleMatch(tx, reason)}
+                                              className="w-full text-left px-3 py-1.5 text-slate-600 hover:bg-slate-50">
+                                              {reason}
+                                            </button>
+                                          ))}
+                                        </div>
                                       </div>
                                     </>
                                   )}
