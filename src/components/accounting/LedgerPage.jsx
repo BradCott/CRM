@@ -336,19 +336,20 @@ export default function LedgerPage() {
   // Financial displays must use strictly 'recorded' so matched rows don't count.
   const recordedTx  = transactions.filter(t => t.review_status === 'recorded')
 
-  // Index recorded entries by rounded |amount| so we can flag needs-review lines
-  // that look like a duplicate of something already in the books ("suggest match").
-  const recordedByAmt = new Map()
-  for (const t of recordedTx) {
-    const k = Math.round(Math.abs(Number(t.amount) || 0))
-    if (k > 0 && !recordedByAmt.has(k)) recordedByAmt.set(k, t)
-  }
+  // Flag needs-review lines that look like a duplicate of something already in the
+  // books ("suggest match"). Widened to a near-amount window: within $10 or 1.5%
+  // of the amount (whichever is larger), nearest match wins.
   const suggestMatchFor = (tx) => {
     if (tx.review_status !== 'needs_review') return null
     const amt = Math.abs(Number(tx.amount) || 0)
     if (amt < 1) return null
-    const cand = recordedByAmt.get(Math.round(amt))
-    return cand && Math.abs(Math.abs(Number(cand.amount)) - amt) < 1 ? cand : null
+    const tol = Math.max(10, amt * 0.015)
+    let best = null, bestDiff = Infinity
+    for (const c of recordedTx) {
+      const diff = Math.abs(Math.abs(Number(c.amount) || 0) - amt)
+      if (diff <= tol && diff < bestDiff) { bestDiff = diff; best = c }
+    }
+    return best
   }
 
   // Compute running balance over recorded transactions only
