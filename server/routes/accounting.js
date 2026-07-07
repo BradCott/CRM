@@ -355,22 +355,58 @@ router.delete('/transactions/:id', (req, res) => {
 
 // ── Loan amortization schedules ───────────────────────────────────────────────
 
-const AMORT_PROMPT = `You are reading a mortgage AMORTIZATION SCHEDULE for a commercial property loan. Extract the loan TERMS (not every row). Return ONLY a JSON object:
+const AMORT_PROMPT = `You are reading a mortgage AMORTIZATION SCHEDULE for a commercial property loan. Return ONLY a JSON object:
 {
   "lender": "string or null",
-  "original_principal": number or null,   // original/beginning loan balance
-  "annual_interest_rate": number or null, // annual rate as a percent, e.g. 6.5
-  "monthly_payment": number or null,      // scheduled principal+interest payment (exclude escrow)
+  "original_principal": number or null,
+  "annual_interest_rate": number or null,   // percent, e.g. 7.96; null if not printed
+  "monthly_payment": number or null,         // the regular recurring TOTAL payment (principal+interest, exclude escrow)
   "first_payment_date": "YYYY-MM-DD or null",
-  "term_months": number or null           // total number of payments (e.g. 360, or 240)
+  "term_months": number or null,
+  "rows": [
+    { "period": 1, "date": "YYYY-MM-DD", "interest": number, "principal": number, "payment": number, "balance": number }
+  ]
 }
-Rules:
-- original_principal: the starting loan amount (top of the schedule / payment 1 beginning balance).
-- annual_interest_rate: the stated note rate as a percent number (e.g. 6.5 for 6.5%).
-- monthly_payment: the recurring principal + interest payment amount. If payments vary, use the regular/most common one. Exclude taxes/insurance escrow.
-- term_months: total scheduled payments. If you see a 30-year loan, that's 360; 20-year is 240; 25-year is 300.
-- If the rate isn't explicitly stated but principal, payment, and term are, still return what you can; leave rate null.
+CRITICAL — the "rows" array is the most important part:
+- TRANSCRIBE EVERY payment row EXACTLY as printed. Do NOT compute, infer, amortize, or round — copy the Interest and Principal columns verbatim from each row.
+- "interest" = that row's Interest column; "principal" = that row's Principal column; "payment" = the total payment; "balance" = the remaining balance after that payment.
+- Keep the rows in order, one object per payment. Include interest-only rows (principal 0) exactly as shown. NEVER swap the interest and principal values.
+- If the schedule is extremely long, include as many rows from the beginning as you can.
+Also: monthly_payment = the regular recurring total payment. Leave annual_interest_rate null if it isn't printed as a number.
 Return ONLY the JSON object, no markdown.`
+
+// Convert AI-transcribed rows into schedule rows, or null if they don't look valid.
+function scheduleRowsFromTerms(terms) {
+  const num = v => Number(String(v ?? '').replace(/[^0-9.\-]/g, '')) || 0
+  if (!Array.isArray(terms.rows) || terms.rows.length < 2) return null
+  const rows = terms.rows.map((r, i) => {
+    const interest = Math.abs(num(r.interest)), principal = Math.abs(num(r.principal))
+    return {
+      period:   Number(r.period) || i + 1,
+      due_date: cleanDate(r.date),
+      interest, principal,
+      payment:  Math.abs(num(r.payment)) || (interest + principal),
+      balance:  Math.abs(num(r.balance)),
+    }
+  }).filter(r => r.due_date && (r.interest > 0 || r.principal > 0))
+  if (rows.length < 2) return null
+  // Sanity guard against garbage/misread rows (NOT a swap guard — a swap still
+  // sums to the payment): require MOST rows to have interest + principal ≈ payment.
+  const good = rows.filter(r => Math.abs((r.interest + r.principal) - r.payment) <= Math.max(2, r.payment * 0.02)).length
+  return good / rows.length >= 0.6 ? rows : null
+}
+
+// Solve for the monthly rate given principal, payment, term (fallback only).
+function deriveMonthlyRate(P, pay, n) {
+  if (!P || !pay || !n || pay * n <= P) return null
+  let lo = 0.0000001, hi = 0.05
+  for (let i = 0; i < 80; i++) {
+    const r = (lo + hi) / 2
+    const calcPay = (P * r) / (1 - Math.pow(1 + r, -n))
+    if (calcPay > pay) hi = r; else lo = r
+  }
+  return (lo + hi) / 2
+}
 
 async function callClaudeTextJson(apiKey, text, prompt) {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
@@ -378,7 +414,7 @@ async function callClaudeTextJson(apiKey, text, prompt) {
     headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1024,
+      max_tokens: 8192,
       messages: [{ role: 'user', content: `${prompt}\n\nDocument:\n${text.slice(0, 16000)}` }],
     }),
   })
@@ -415,13 +451,34 @@ router.post('/:propertyId/amortization', upload.single('file'), async (req, res)
       return res.status(400).json({ error: 'Upload a PDF, XLSX, or CSV amortization schedule' })
     }
 
-    const schedule = generateSchedule({
-      original_principal: terms.original_principal,
-      annual_rate:        terms.annual_interest_rate,
-      monthly_payment:    terms.monthly_payment,
-      first_payment:      terms.first_payment_date,
-      term_months:        terms.term_months,
-    })
+    // Prefer the schedule's ACTUAL transcribed rows (matches the lender exactly,
+    // incl. interest-only periods and day-count interest). Only regenerate if the
+    // rows are missing/unreadable — and never as a 0% (all-principal) schedule.
+    let schedule
+    const actualRows = scheduleRowsFromTerms(terms)
+    if (actualRows) {
+      const counts = {}
+      for (const r of actualRows) { const k = Math.round(r.payment); counts[k] = (counts[k] || 0) + 1 }
+      const modalPay = Number(Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0])
+      schedule = {
+        payment_amount: terms.monthly_payment ? Math.round(Number(terms.monthly_payment) * 100) / 100 : modalPay,
+        rows: actualRows,
+      }
+    } else {
+      let rate = terms.annual_interest_rate
+      if (!rate || Number(rate) <= 0) {
+        const mr = deriveMonthlyRate(Number(terms.original_principal), Number(terms.monthly_payment), Number(terms.term_months))
+        rate = mr ? mr * 12 * 100 : null
+      }
+      if (!rate) throw new Error('Could not read the payment rows or the interest rate from that schedule — please check the file or enter the rate.')
+      schedule = generateSchedule({
+        original_principal: terms.original_principal,
+        annual_rate:        rate,
+        monthly_payment:    terms.monthly_payment,
+        first_payment:      terms.first_payment_date,
+        term_months:        terms.term_months,
+      })
+    }
 
     // Replace any existing schedule for this property (one loan per property for now)
     const existing = db.prepare('SELECT id FROM loan_schedules WHERE property_id = ?').all(propertyId)
@@ -1276,7 +1333,7 @@ async function callClaude(apiKey, pdfBuffer) {
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [{
         role: 'user',
         content: [
@@ -1300,7 +1357,7 @@ async function callClaudeWithPrompt(apiKey, buffer, prompt) {
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [{
         role: 'user',
         content: [
@@ -1447,7 +1504,7 @@ async function parseInvestorContributions(apiKey, excelText) {
     },
     body: JSON.stringify({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 4096,
+      max_tokens: 8192,
       messages: [{
         role: 'user',
         content: `${INVESTOR_PROMPT}\n\nHere is the spreadsheet data:\n\n${excelText}`,
