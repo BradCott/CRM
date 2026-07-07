@@ -612,7 +612,8 @@ export default function LedgerPage() {
                 <SortTh col="class"            sort={invSort} onSort={handleInvSort}>Class</SortTh>
                 <SortTh col="percentage"       sort={invSort} onSort={handleInvSort}>Ownership</SortTh>
                 <SortTh col="preferred_return" sort={invSort} onSort={handleInvSort}>Pref. Return</SortTh>
-                <SortTh col="contribution"     sort={invSort} onSort={handleInvSort} right>Contribution</SortTh>
+                <SortTh col="contribution"     sort={invSort} onSort={handleInvSort} right>Committed</SortTh>
+                <th className="px-4 py-2 text-right text-xs font-semibold text-slate-500 uppercase tracking-wide" title="Equity actually recorded from the bank feed and attributed to this investor">Recorded</th>
                 <th className="px-4 pr-6 py-2 w-16" />
               </tr>
             </thead>
@@ -675,6 +676,31 @@ export default function LedgerPage() {
                         <span className="font-semibold text-emerald-700">{fmt$(inv.contribution)}</span>
                       )}
                     </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums whitespace-nowrap">
+                      {(() => {
+                        const committed = Number(inv.contribution) || 0
+                        const recorded  = Number(inv.recorded) || 0
+                        const pending   = Number(inv.pending) || 0
+                        if (!inv.investor_id) return <span className="text-slate-300" title="Link this investor to reconcile recorded equity">—</span>
+                        const matched = committed > 0 && Math.abs(recorded - committed) < 1
+                        const over    = recorded - committed >= 1
+                        return (
+                          <span className="inline-flex items-center gap-1.5 justify-end">
+                            <span className={matched ? 'font-semibold text-emerald-700' : recorded > 0 ? 'text-slate-700' : 'text-slate-400'}>{fmt$(recorded)}</span>
+                            {matched ? (
+                              <Check className="w-3.5 h-3.5 text-emerald-500" title="Recorded matches committed" />
+                            ) : over ? (
+                              <span className="text-[10px] font-semibold text-red-600 bg-red-50 px-1.5 py-0.5 rounded-full" title="Recorded more than committed">+{fmt$(recorded - committed)}</span>
+                            ) : (
+                              <span className="text-[10px] font-semibold text-amber-600 bg-amber-50 px-1.5 py-0.5 rounded-full"
+                                title={pending > 0 ? `${fmt$(pending)} awaiting review` : `${fmt$(committed - recorded)} not yet recorded`}>
+                                {pending > 0 ? `${fmt$(pending)} pending` : `${fmt$(committed - recorded)} short`}
+                              </span>
+                            )}
+                          </span>
+                        )
+                      })()}
+                    </td>
                     <td className="px-4 pr-6 py-2.5">
                       <div className="flex items-center justify-end gap-1">
                         <button
@@ -721,10 +747,20 @@ export default function LedgerPage() {
             <tfoot>
               <tr className="border-t-2 border-slate-200 bg-slate-50">
                 <td colSpan={4} className="px-4 pl-6 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                  Total Equity Contributed
+                  Total Equity {(() => {
+                    const committed = investors.reduce((s, i) => s + Number(i.contribution || 0), 0)
+                    const recorded  = investors.reduce((s, i) => s + Number(i.recorded || 0), 0)
+                    const diff = committed - recorded
+                    if (Math.abs(diff) < 1) return <span className="ml-1 normal-case font-semibold text-emerald-600">· ✓ recorded equity reconciles</span>
+                    if (diff > 0)          return <span className="ml-1 normal-case font-semibold text-amber-600">· {fmt$(diff)} not yet recorded</span>
+                    return <span className="ml-1 normal-case font-semibold text-red-600">· {fmt$(-diff)} recorded over committed</span>
+                  })()}
                 </td>
                 <td className="px-4 py-2.5 text-right font-bold text-emerald-700 tabular-nums">
                   {fmt$(investors.reduce((s, i) => s + Number(i.contribution), 0))}
+                </td>
+                <td className="px-4 py-2.5 text-right font-bold text-slate-800 tabular-nums">
+                  {fmt$(investors.reduce((s, i) => s + Number(i.recorded || 0), 0))}
                 </td>
                 <td className="px-4 pr-6 py-2.5" />
               </tr>

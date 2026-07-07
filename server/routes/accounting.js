@@ -830,6 +830,24 @@ router.get('/:propertyId/investors', (req, res) => {
     }
     r.investor_id = inv ? inv.id : null
   }
+
+  // Reconciliation: how much equity has actually been booked from the bank for
+  // each investor (attributed Equity Contributions), split by recorded vs pending.
+  const equity = db.prepare(`
+    SELECT investor_id,
+      SUM(CASE WHEN review_status = 'recorded'     THEN amount ELSE 0 END) AS recorded,
+      SUM(CASE WHEN review_status = 'needs_review' THEN amount ELSE 0 END) AS pending
+    FROM accounting_transactions
+    WHERE property_id = ? AND category = 'Equity Contribution' AND amount > 0 AND investor_id IS NOT NULL
+    GROUP BY investor_id
+  `).all(propertyId)
+  const eqMap = new Map(equity.map(e => [e.investor_id, e]))
+  for (const r of rows) {
+    const e = r.investor_id ? eqMap.get(r.investor_id) : null
+    r.recorded = e ? Number(e.recorded) : 0
+    r.pending  = e ? Number(e.pending)  : 0
+  }
+
   res.json(rows)
 })
 
