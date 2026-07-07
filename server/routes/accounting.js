@@ -146,7 +146,7 @@ router.get('/:propertyId/transactions', (req, res) => {
 
   const transactions = db.prepare(`
     SELECT tx.id, tx.property_id, tx.date, tx.description, tx.category, tx.amount, tx.source, tx.vendor,
-           tx.reconciled, tx.review_status, tx.external_id, tx.created_at,
+           tx.reconciled, tx.review_status, tx.matched_note, tx.external_id, tx.created_at,
            tx.investor_id, i.name AS investor_name
     FROM accounting_transactions tx
     LEFT JOIN investors i ON i.id = tx.investor_id
@@ -572,6 +572,27 @@ router.patch('/transactions/:id/unrecord', (req, res) => {
     WHERE id = ?
   `).run(req.params.id)
 
+  res.json(db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id))
+})
+
+// ── Match: reconcile a bank transaction against something already in the books ─
+// (e.g. the settlement statement) without double-counting. review_status='matched'
+// is excluded from all financials (which require 'recorded').
+router.patch('/transactions/:id/match', (req, res) => {
+  const tx = db.prepare('SELECT id FROM accounting_transactions WHERE id = ?').get(req.params.id)
+  if (!tx) return res.status(404).json({ error: 'Transaction not found' })
+  const note = (req.body?.note || 'Matched — already in the books').toString().slice(0, 200)
+  db.prepare(`UPDATE accounting_transactions SET review_status = 'matched', matched_note = ? WHERE id = ?`)
+    .run(note, req.params.id)
+  res.json(db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id))
+})
+
+// Undo a match (matched → needs_review)
+router.patch('/transactions/:id/unmatch', (req, res) => {
+  const tx = db.prepare('SELECT id FROM accounting_transactions WHERE id = ?').get(req.params.id)
+  if (!tx) return res.status(404).json({ error: 'Transaction not found' })
+  db.prepare(`UPDATE accounting_transactions SET review_status = 'needs_review', matched_note = NULL WHERE id = ?`)
+    .run(req.params.id)
   res.json(db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id))
 })
 

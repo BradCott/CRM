@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles, Link2, AlertTriangle } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries } from '../../api/client'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries, matchTransaction, unmatchTransaction } from '../../api/client'
 import OpeningBalancesModal from './OpeningBalancesModal'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
@@ -213,6 +213,19 @@ export default function LedgerPage() {
     }
   }
 
+  const [matchingId, setMatchingId] = useState(null)  // tx.id whose match menu is open
+  async function handleMatch(tx, note) {
+    setMatchingId(null)
+    setRecordingId(tx.id)
+    try { await matchTransaction(tx.id, note); await reload() }
+    finally { setRecordingId(null) }
+  }
+  async function handleUnmatch(tx) {
+    setRecordingId(tx.id)
+    try { await unmatchTransaction(tx.id); await reload() }
+    finally { setRecordingId(null) }
+  }
+
   async function handleSetInvestor(txId, investorId) {
     // Optimistic update
     const inv = investorsList.find(i => i.id === Number(investorId))
@@ -312,7 +325,9 @@ export default function LedgerPage() {
   // QuickBooks-style split: 'needs_review' items are NOT in the books yet, so
   // they're excluded from every financial computation until recorded.
   const needsReview = transactions.filter(t => t.review_status === 'needs_review')
-  const recordedTx  = transactions.filter(t => t.review_status !== 'needs_review')
+  const matchedTx   = transactions.filter(t => t.review_status === 'matched')
+  // Financial displays must use strictly 'recorded' so matched rows don't count.
+  const recordedTx  = transactions.filter(t => t.review_status === 'recorded')
 
   // Compute running balance over recorded transactions only
   const withBalance = recordedTx.reduce((acc, tx) => {
@@ -813,6 +828,7 @@ export default function LedgerPage() {
                     { key: 'all',      label: `All ${transactions.length}` },
                     { key: 'review',   label: `Needs Review ${needsReview.length}`, amber: needsReview.length > 0 },
                     { key: 'recorded', label: `Recorded ${recordedTx.length}` },
+                    ...(matchedTx.length > 0 ? [{ key: 'matched', label: `Matched ${matchedTx.length}` }] : []),
                   ].map(p => (
                     <button
                       key={p.key}
@@ -875,12 +891,14 @@ export default function LedgerPage() {
                   {sorted
                     .filter(tx => reviewFilter === 'all' ? true
                       : reviewFilter === 'review' ? tx.review_status === 'needs_review'
-                      : tx.review_status !== 'needs_review')
+                      : reviewFilter === 'matched' ? tx.review_status === 'matched'
+                      : tx.review_status === 'recorded')
                     .map((tx, i) => {
                     const catStyle  = CATEGORY_COLORS[tx.category] || CATEGORY_COLORS['Other']
                     const srcConfig = SOURCE_LABELS[tx.source]     || SOURCE_LABELS['Manual']
                     const isPos     = Number(tx.amount) >= 0
                     const pending   = tx.review_status === 'needs_review'
+                    const matched   = tx.review_status === 'matched'
                     const editing   = editingId === tx.id
 
                     // ── Inline edit mode: every field editable ──────────────────
@@ -1023,16 +1041,56 @@ export default function LedgerPage() {
                         <td className="px-4 py-3 pr-6 border-b border-slate-100">
                           <div className="flex items-center gap-1 justify-end">
                             {pending ? (
-                              <button
-                                onClick={() => handleRecord(tx)}
-                                disabled={recordingId === tx.id}
-                                className="flex items-center gap-1 text-xs font-medium text-emerald-700 px-2 py-1 rounded-lg border border-emerald-200 hover:bg-emerald-50 transition-colors disabled:opacity-50"
-                                title="Record this transaction into the books"
-                              >
-                                {recordingId === tx.id
-                                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                                  : <><Check className="w-3 h-3" /> Record</>}
-                              </button>
+                              <>
+                                <button
+                                  onClick={() => handleRecord(tx)}
+                                  disabled={recordingId === tx.id}
+                                  className="flex items-center gap-1 text-xs font-medium text-emerald-700 px-2 py-1 rounded-lg border border-emerald-200 hover:bg-emerald-50 transition-colors disabled:opacity-50"
+                                  title="Record this transaction into the books"
+                                >
+                                  {recordingId === tx.id
+                                    ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                    : <><Check className="w-3 h-3" /> Record</>}
+                                </button>
+                                <div className="relative">
+                                  <button
+                                    onClick={() => setMatchingId(matchingId === tx.id ? null : tx.id)}
+                                    disabled={recordingId === tx.id}
+                                    className="flex items-center gap-1 text-xs font-medium text-slate-500 px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50"
+                                    title="Match to something already in the books (e.g. the settlement) — reconciles it without double-counting"
+                                  >
+                                    <Link2 className="w-3 h-3" /> Match
+                                  </button>
+                                  {matchingId === tx.id && (
+                                    <>
+                                      <div className="fixed inset-0 z-10" onClick={() => setMatchingId(null)} />
+                                      <div className="absolute right-0 top-8 z-20 w-52 bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-xs">
+                                        <p className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Already in the books — match to:</p>
+                                        {['Settlement statement', 'Loan proceeds', 'Earnest money', 'Investor equity', 'Transfer between accounts', 'Duplicate / other'].map(reason => (
+                                          <button key={reason} onClick={() => handleMatch(tx, reason)}
+                                            className="w-full text-left px-3 py-1.5 text-slate-700 hover:bg-slate-50">
+                                            {reason}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </>
+                                  )}
+                                </div>
+                              </>
+                            ) : matched ? (
+                              <div className="flex items-center gap-1.5">
+                                <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 bg-slate-100 px-2 py-1 rounded-lg" title={tx.matched_note || 'Matched — excluded from totals'}>
+                                  <Link2 className="w-3 h-3" /> Matched{tx.matched_note ? `: ${tx.matched_note}` : ''}
+                                </span>
+                                <button
+                                  onClick={() => handleUnmatch(tx)}
+                                  disabled={recordingId === tx.id}
+                                  className="flex items-center gap-1 text-xs font-medium text-amber-700 px-2 py-1 rounded-lg border border-amber-200 hover:bg-amber-50 transition-colors disabled:opacity-50 opacity-0 group-hover:opacity-100"
+                                  title="Undo the match (send back to Needs Review)"
+                                >
+                                  {recordingId === tx.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Unmatch'}
+                                </button>
+                              </div>
                             ) : (
                               <button
                                 onClick={() => handleUnrecord(tx)}

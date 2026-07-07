@@ -484,6 +484,11 @@ const migrations = [
   // (overrides the automatic name match).
   `ALTER TABLE property_investors ADD COLUMN investor_id INTEGER REFERENCES investors(id) ON DELETE SET NULL`,
 
+  // QuickBooks-style "match": a bank transaction reconciled against something
+  // already in the books (e.g. the settlement statement) — review_status='matched',
+  // excluded from financials (which filter review_status='recorded').
+  `ALTER TABLE accounting_transactions ADD COLUMN matched_note TEXT`,
+
   // Mail campaign response tracking + timed mailing suppression
   `ALTER TABLE handwrytten_sends ADD COLUMN responded_at     TEXT`,
   `ALTER TABLE handwrytten_sends ADD COLUMN response_channel TEXT`,   // 'email' | 'manual'

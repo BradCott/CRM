@@ -199,6 +199,8 @@ export const executeAssistantAction   = (action)            => req('POST', '/ass
 export const reconcileTransaction     = (id, val)       => req('PATCH',  `/accounting/transactions/${id}/reconcile`, { reconciled: val })
 export const recordTransaction        = (id, d = {})    => req('PATCH',  `/accounting/transactions/${id}/record`, d)
 export const unrecordTransaction      = (id)            => req('PATCH',  `/accounting/transactions/${id}/unrecord`)
+export const matchTransaction         = (id, note)      => req('PATCH',  `/accounting/transactions/${id}/match`, { note })
+export const unmatchTransaction       = (id)            => req('PATCH',  `/accounting/transactions/${id}/unmatch`)
 export const recordAllTransactions    = (propertyId)    => req('POST',   `/accounting/${propertyId}/transactions/record-all`)
 export const autoRecordTransactions   = (propertyId)    => req('POST',   `/accounting/${propertyId}/auto-record`)
 export const getReviewSuggestions     = (propertyId)    => req('GET',    `/accounting/${propertyId}/review-suggestions`)
