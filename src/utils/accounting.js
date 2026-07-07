@@ -182,6 +182,41 @@ export function computePL(transactions) {
   }
 }
 
+// Balance Sheet figures (mirrors BalanceSheet.jsx so exports match the screen).
+export function computeBalanceSheet(transactions, investors = [], opening = null) {
+  const sum = txs => txs.reduce((s, t) => s + Number(t.amount), 0)
+  const ob = opening || {}
+  const obCash = Number(ob.cash) || 0, obRealEstate = Number(ob.real_estate) || 0
+  const obLoan = Number(ob.loan_balance) || 0, obInvested = Number(ob.invested_capital) || 0
+
+  const building = Math.abs(sum(transactions.filter(t => t.description === 'Building Value')))
+  const land     = Math.abs(sum(transactions.filter(t => t.description === 'Land Value')))
+  const totalRealEstate = building + land + obRealEstate
+
+  const opCash  = sum(transactions.filter(t => (PL_CATS.has(t.category) || t.category === 'Sale') && t.category !== 'Other' && t.source !== 'Settlement Statement'))
+  const otherOp = sum(transactions.filter(t => t.category === 'Other' && t.source !== 'Settlement Statement'))
+  const equityContribCash = sum(transactions.filter(t => t.category === 'Equity Contribution'))
+  const principalPaid = sum(transactions.filter(t => t.category === 'Mortgage Principal'))
+  const totalCash = opCash + otherOp + equityContribCash + principalPaid + obCash
+  const totalAssets = totalRealEstate + totalCash
+
+  const loanBalance = sum(transactions.filter(t => t.category === 'Loan' && t.description !== '1031 Exchange Proceeds')) + principalPaid + obLoan
+  const totalLiabilities = loanBalance
+
+  const exchange1031 = sum(transactions.filter(t => t.description === '1031 Exchange Proceeds'))
+  const acquisitionCredits = sum(transactions.filter(t => ['Rent', 'Other'].includes(t.category) && t.source === 'Settlement Statement' && Number(t.amount) > 0))
+  const investedFromTable = investors.reduce((s, i) => s + Number(i.contribution || 0), 0)
+  const investedCapital = (equityContribCash !== 0 ? equityContribCash : investedFromTable) + obInvested
+  const totalEquity = totalAssets - totalLiabilities
+  const retainedEarnings = totalEquity - (exchange1031 + acquisitionCredits + investedCapital)
+
+  return {
+    building, land, totalRealEstate, totalCash, totalAssets,
+    loanBalance, totalLiabilities,
+    exchange1031, acquisitionCredits, investedCapital, retainedEarnings, totalEquity,
+  }
+}
+
 export function filterByPeriod(transactions, period, fromDate, toDate) {
   if (period === 'all') return transactions
   const now = new Date()

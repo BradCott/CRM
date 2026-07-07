@@ -8,6 +8,7 @@ import Button from '../ui/Button'
 import AddTransactionModal from './AddTransactionModal'
 import SettlementUpload from './SettlementUpload'
 import BankStatementReview from './BankStatementReview'
+import { exportAccountingExcel, exportAccountingPdf } from '../../utils/accountingExport'
 import InvestorUpload from './InvestorUpload'
 import BalanceSheet from './BalanceSheet'
 import ProfitLoss from './ProfitLoss'
@@ -56,6 +57,7 @@ export default function LedgerPage() {
   const [showAdd, setShowAdd]               = useState(false)
   const [showSettlement, setShowSettlement] = useState(false)
   const [showBank, setShowBank]             = useState(false)
+  const [exportOpen, setExportOpen]         = useState(false)
   const [showInvestors, setShowInvestors]   = useState(false)
   const [deleting, setDeleting]             = useState(null)
 
@@ -501,9 +503,32 @@ export default function LedgerPage() {
             <Button variant="secondary" onClick={() => setShowInvestors(true)}>
               <Users className="w-4 h-4" /> Investor Contributions
             </Button>
-            <Button variant="secondary" onClick={exportCSV} title="Download all transactions as CSV">
-              <Download className="w-4 h-4" /> Export
-            </Button>
+            <div className="relative">
+              <Button variant="secondary" onClick={() => setExportOpen(o => !o)} title="Export the ledger + reports">
+                <Download className="w-4 h-4" /> Export <ChevronDown className="w-3.5 h-3.5" />
+              </Button>
+              {exportOpen && (
+                <>
+                  <div className="fixed inset-0 z-30" onClick={() => setExportOpen(false)} />
+                  <div className="absolute right-0 top-11 z-40 w-60 bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-sm">
+                    <p className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Full package (Ledger + BS + P&L + Cash Flow + Sch. E)</p>
+                    <button className="w-full text-left px-3 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                      onClick={() => { setExportOpen(false); exportAccountingExcel(property, transactions, investors) }}>
+                      <FileSpreadsheet className="w-4 h-4 text-emerald-600" /> Excel workbook (.xlsx)
+                    </button>
+                    <button className="w-full text-left px-3 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+                      onClick={() => { setExportOpen(false); exportAccountingPdf(property, transactions, investors) }}>
+                      <FileText className="w-4 h-4 text-red-500" /> PDF (print / save)
+                    </button>
+                    <div className="border-t border-slate-100 my-1" />
+                    <button className="w-full text-left px-3 py-2 text-slate-600 hover:bg-slate-50 flex items-center gap-2"
+                      onClick={() => { setExportOpen(false); exportCSV() }}>
+                      <Download className="w-4 h-4 text-slate-400" /> Ledger only (.csv)
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
             <Button onClick={() => setShowAdd(true)}>
               <Plus className="w-4 h-4" /> Add Transaction
             </Button>
