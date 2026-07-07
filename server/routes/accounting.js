@@ -613,6 +613,16 @@ router.patch('/transactions/:id/unmatch', (req, res) => {
   res.json(db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id))
 })
 
+// Mark a batch of transactions reconciled (used by statement-upload reconciliation).
+router.post('/transactions/reconcile-batch', (req, res) => {
+  const ids = (Array.isArray(req.body?.ids) ? req.body.ids : []).map(Number).filter(Boolean)
+  if (!ids.length) return res.json({ reconciled: 0 })
+  const stmt = db.prepare('UPDATE accounting_transactions SET reconciled = 1 WHERE id = ?')
+  const run = db.transaction(list => { for (const id of list) stmt.run(id) })
+  run(ids)
+  res.json({ reconciled: ids.length })
+})
+
 // One-click: book a settlement earnest-money line as an investor's equity.
 // Earnest money is paid before closing (not in the bank feed), so it's added as a
 // recorded Equity Contribution (+amount) attributed to the chosen investor. The

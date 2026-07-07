@@ -1271,6 +1271,7 @@ export default function LedgerPage() {
       {showBank && (
         <BankStatementReview
           propertyId={propertyId}
+          existingTransactions={transactions}
           onSaved={reload}
           onClose={() => setShowBank(false)}
         />

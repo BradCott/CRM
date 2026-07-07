@@ -197,6 +197,7 @@ export async function uploadAmortization(propertyId, file) {
 export const askAssistant             = (messages, context) => req('POST', '/assistant/chat', { messages, context })
 export const executeAssistantAction   = (action)            => req('POST', '/assistant/execute', action)
 export const reconcileTransaction     = (id, val)       => req('PATCH',  `/accounting/transactions/${id}/reconcile`, { reconciled: val })
+export const reconcileBatch           = (ids)           => req('POST',   '/accounting/transactions/reconcile-batch', { ids })
 export const recordTransaction        = (id, d = {})    => req('PATCH',  `/accounting/transactions/${id}/record`, d)
 export const unrecordTransaction      = (id)            => req('PATCH',  `/accounting/transactions/${id}/unrecord`)
 export const matchTransaction         = (id, note, matchedToId = null) => req('PATCH', `/accounting/transactions/${id}/match`, { note, matched_to_id: matchedToId })
