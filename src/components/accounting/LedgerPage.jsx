@@ -1036,8 +1036,12 @@ export default function LedgerPage() {
                           {(() => {
                             const isEarnest = tx.source === 'Settlement Statement' && /earnest\s*money/i.test(tx.description || '')
                             if (!isEarnest) return null
-                            const done = transactions.some(t => t.matched_to_id === tx.id && t.category === 'Equity Contribution')
-                            if (done) return (
+                            const emdAmt = Math.abs(Number(tx.amount) || 0)
+                            // Recorded via this button (linked) — definitive.
+                            const linkedDone = transactions.some(t => t.matched_to_id === tx.id && t.category === 'Equity Contribution')
+                            // A same-amount equity contribution already exists (e.g. added by hand) — probably already booked.
+                            const amtDone = !linkedDone && transactions.some(t => t.category === 'Equity Contribution' && Number(t.amount) > 0 && Math.abs(Number(t.amount) - emdAmt) < 1)
+                            if (linkedDone) return (
                               <div className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-emerald-600">
                                 <Check className="w-3 h-3 shrink-0" /> Recorded as investor equity
                               </div>
@@ -1051,6 +1055,14 @@ export default function LedgerPage() {
                                   {investorsList.map(iv => <option key={iv.id} value={iv.id}>{iv.name}</option>)}
                                 </select>
                                 <button onClick={() => setEarnestPickId(null)} className="text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5" /></button>
+                              </div>
+                            )
+                            if (amtDone) return (
+                              <div className="mt-1.5 flex items-center gap-1.5 text-[11px]">
+                                <span className="inline-flex items-center gap-1 text-amber-600 font-medium" title="A recorded equity contribution of this amount already exists — you've likely already booked this earnest money by hand.">
+                                  <AlertTriangle className="w-3 h-3 shrink-0" /> {fmt$(emdAmt)} equity already booked
+                                </span>
+                                <button onClick={() => setEarnestPickId(tx.id)} className="text-blue-600 hover:underline">Record anyway</button>
                               </div>
                             )
                             return (
