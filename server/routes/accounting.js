@@ -123,7 +123,11 @@ router.get('/summary', (req, res) => {
       COALESCE(p.city, '')  AS city,
       COALESCE(p.state, '') AS state,
       tb.name               AS tenant,
-      COALESCE(SUM(tx.amount), 0) AS cash_balance,
+      COALESCE(SUM(CASE
+        WHEN tx.category IN ('Equity Contribution','Mortgage Principal') THEN tx.amount
+        WHEN tx.category IN ('Purchase','Loan','Loan Payment')          THEN 0
+        WHEN COALESCE(tx.source,'') = 'Settlement Statement'            THEN 0
+        ELSE tx.amount END), 0) AS cash_balance,
       COALESCE(SUM(CASE WHEN tx.category = 'Equity Contribution' AND tx.amount > 0 THEN tx.amount ELSE 0 END), 0) AS equity_contributed,
       COALESCE(SUM(CASE WHEN tx.category = 'Rent'               AND tx.amount > 0 THEN tx.amount ELSE 0 END), 0) AS rent_collected,
       COUNT(tx.id) AS tx_count

@@ -23,7 +23,7 @@ import PlaidConnect from './PlaidConnect'
 import SplitTransactionModal from './SplitTransactionModal'
 import AmortizationCard from './AmortizationCard'
 import CategorySelect from './CategorySelect'
-import { CATEGORY_COLORS } from '../../utils/accounting'
+import { CATEGORY_COLORS, computeBalanceSheet } from '../../utils/accounting'
 
 const SOURCE_LABELS = {
   'Manual':               { dot: 'bg-slate-400',   label: 'Manual' },
@@ -407,12 +407,10 @@ export default function LedgerPage() {
     return 0
   })
 
-  // Cash balance excludes Building Value and Land Value — those are asset entries,
-  // not cash movements, and would distort the cash position if included.
-  const NON_CASH = new Set(['Building Value', 'Land Value'])
-  const cashBalance = recordedTx
-    .filter(t => !NON_CASH.has(t.description))
-    .reduce((s, t) => s + Number(t.amount), 0)
+  // "Current Balance" = the Balance Sheet's Cash & Cash Equivalents, so the top
+  // stat matches the Balance Sheet tab (operational cash; the property purchase is
+  // an asset, and loan proceeds funded it — neither is spendable cash).
+  const cashBalance = computeBalanceSheet(recordedTx, investors, advanced ? openingBalances : null).totalCash
 
   // Equity Contributed comes from the investors table, not from transactions,
   // so that settlement-statement categories don't inflate the figure.
