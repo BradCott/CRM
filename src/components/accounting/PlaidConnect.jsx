@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { usePlaidLink } from 'react-plaid-link'
 import { Link2, RefreshCw, Trash2, Loader2, Building2, AlertCircle, CheckCircle, WifiOff } from 'lucide-react'
 import {
@@ -212,6 +212,12 @@ function PlaidLinkButton({ linkToken, onSuccess, onExit, children }) {
 
 // ── Main PlaidConnect component ───────────────────────────────────────────────
 
+// Module-level so it survives remounts. A post-sync reload briefly unmounts this
+// component (loading spinner) and would otherwise reset a per-instance guard,
+// causing auto-sync to fire again on every remount → infinite loop.
+const lastAutoSync = new Map()          // propertyId -> epoch ms
+const AUTO_SYNC_THROTTLE_MS = 60_000
+
 export default function PlaidConnect({ propertyId, onSaved }) {
   const [connections,    setConnections]    = useState([])
   const [loading,        setLoading]        = useState(true)
@@ -238,23 +244,27 @@ export default function PlaidConnect({ propertyId, onSaved }) {
 
   useEffect(() => { loadConnections() }, [loadConnections])
 
-  // Auto-sync each linked account once when the property page opens, so the
-  // ledger is always current without clicking Sync. Deduped server-side, so
+  // Auto-sync each linked account when the property page opens, so the ledger is
+  // current without clicking Sync. Throttled per-property (module-level) so the
+  // post-sync reload/remount can't retrigger it. Deduped server-side, so
   // already-imported transactions never come back.
-  const autoSyncedRef = useRef(false)
   useEffect(() => {
-    if (autoSyncedRef.current || connections.length === 0) return
-    autoSyncedRef.current = true
+    if (connections.length === 0) return
+    const last = lastAutoSync.get(propertyId) || 0
+    if (Date.now() - last < AUTO_SYNC_THROTTLE_MS) return
+    lastAutoSync.set(propertyId, Date.now())          // set BEFORE syncing so remounts skip
     connections.forEach(conn => autoSync(conn.id))
-  }, [connections]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [connections, propertyId]) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function autoSync(connId) {
     setSyncing(connId)
     try {
       const result = await syncPlaidConnection(connId)
       await loadConnections()
-      onSaved?.()
+      // Only reload the ledger when something actually came in — otherwise a
+      // no-op sync would needlessly flip the page (and remount this component).
       if (result.count > 0) {
+        onSaved?.()
         setSyncMsg(`${result.count} new transaction${result.count !== 1 ? 's' : ''} auto-synced for review${result.skipped ? ` (${result.skipped} already imported)` : ''}.`)
       }
     } catch (_) { /* silent on auto-sync */ } finally {
