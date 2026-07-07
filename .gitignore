@@ -5,3 +5,5 @@ data/
 *.db-shm
 *.db-wal
 .env
+
+.claude/worktrees/
