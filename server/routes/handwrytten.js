@@ -173,12 +173,14 @@ router.patch('/sends/:id/responded', (req, res) => {
 router.get('/response-summary', (_req, res) => {
   const overall = db.prepare(`
     SELECT COUNT(*) AS sent,
-           SUM(CASE WHEN responded_at IS NOT NULL THEN 1 ELSE 0 END) AS responses
+           SUM(CASE WHEN responded_at IS NOT NULL THEN 1 ELSE 0 END) AS responses,
+           AVG(CASE WHEN responded_at IS NOT NULL THEN julianday(responded_at) - julianday(sent_at) END) AS avg_days
     FROM handwrytten_sends WHERE status = 'sent'
   `).get()
   const sent = overall.sent || 0
   const responses = overall.responses || 0
-  res.json({ sent, responses, rate: sent ? +(responses / sent * 100).toFixed(1) : 0 })
+  const avgDays = overall.avg_days != null ? +Math.max(0, overall.avg_days).toFixed(1) : null
+  res.json({ sent, responses, rate: sent ? +(responses / sent * 100).toFixed(1) : 0, avgDays })
 })
 
 /** GET /api/handwrytten/campaigns — campaign list */

@@ -349,6 +349,14 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
                     </div>
                   </div>
                   <p className="text-sm text-slate-700 line-clamp-2 leading-relaxed">{l.message}</p>
+                  {l.responded_at && (
+                    <p className="text-xs text-emerald-600 mt-1 flex items-center gap-1">
+                      <Reply className="w-3 h-3" />
+                      Responded {fmtEmailDate(l.responded_at)}
+                      {daysToRespond(l.sent_at, l.responded_at) != null && ` · ${daysToRespond(l.sent_at, l.responded_at)} day${daysToRespond(l.sent_at, l.responded_at) === 1 ? '' : 's'} later`}
+                      {l.response_channel === 'email' && ' · email reply'}
+                    </p>
+                  )}
                   {l.tenant_brand_name && (
                     <p className="text-xs text-slate-400 mt-1">
                       {l.tenant_brand_name}{l.property_city ? ` · ${l.property_city}, ${l.property_state}` : ''}
@@ -536,6 +544,14 @@ function fmtEmailDate(iso) {
   if (!iso) return ''
   const d = new Date(iso)
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+// sent_at is stored as UTC "YYYY-MM-DD HH:MM:SS"; responded_at is ISO.
+function daysToRespond(sent, responded) {
+  if (!sent || !responded) return null
+  const s = new Date(sent.includes('T') ? sent : sent.replace(' ', 'T') + 'Z')
+  const r = new Date(responded)
+  return isNaN(s) || isNaN(r) ? null : Math.max(0, Math.round((r - s) / 86400000))
 }
 
 /* ── Sub-components ─────────────────────────────────────────── */

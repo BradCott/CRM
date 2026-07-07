@@ -13,6 +13,21 @@ function fmtDate(iso) {
   return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
 }
 
+// sent_at is stored as UTC "YYYY-MM-DD HH:MM:SS"; responded_at is ISO.
+function parseTs(ts) {
+  if (!ts) return null
+  const d = new Date(ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z')
+  return isNaN(d) ? null : d
+}
+function shortDate(ts) {
+  const d = parseTs(ts)
+  return d ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : ''
+}
+function daysBetween(a, b) {
+  const da = parseTs(a), db = parseTs(b)
+  return da && db ? Math.max(0, Math.round((db - da) / 86400000)) : null
+}
+
 function StatusBadge({ status }) {
   const map = {
     complete: { cls: 'bg-green-50 text-green-700',  icon: CheckCircle,     label: 'Complete'  },
@@ -40,17 +55,25 @@ function RespondedToggle({ send, onChange }) {
     catch (e) { alert(e.message) }
     setBusy(false)
   }
+  const days = responded ? daysBetween(send.sent_at, send.responded_at) : null
   return (
-    <button onClick={toggle} disabled={busy}
-      className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border transition-colors ${
-        responded ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
-                  : 'text-slate-400 border-slate-200 hover:bg-slate-50 hover:text-slate-600'
-      }`}
-      title={responded ? `Responded${send.response_channel === 'email' ? ' (email reply)' : ''} — click to clear` : 'Mark as responded'}
-    >
-      <Reply className="w-3.5 h-3.5" />
-      {responded ? 'Responded' : 'Mark'}
-    </button>
+    <div className="flex flex-col items-start gap-0.5">
+      <button onClick={toggle} disabled={busy}
+        className={`inline-flex items-center gap-1 text-xs font-medium px-2 py-1 rounded-lg border transition-colors ${
+          responded ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                    : 'text-slate-400 border-slate-200 hover:bg-slate-50 hover:text-slate-600'
+        }`}
+        title={responded ? `Responded${send.response_channel === 'email' ? ' (email reply)' : ''} — click to clear` : 'Mark as responded'}
+      >
+        <Reply className="w-3.5 h-3.5" />
+        {responded ? 'Responded' : 'Mark'}
+      </button>
+      {responded && send.responded_at && (
+        <span className="text-[10px] text-slate-400 pl-0.5">
+          {shortDate(send.responded_at)}{days != null ? ` · ${days}d` : ''}
+        </span>
+      )}
+    </div>
   )
 }
 
@@ -358,10 +381,11 @@ export default function CampaignsPage() {
 
       <div className="flex-1 overflow-auto p-6">
         {summary && summary.sent > 0 && (
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
-            <SummaryCard icon={Send}       label="Letters sent"    value={summary.sent.toLocaleString()}       tint="bg-blue-50 text-blue-600" />
-            <SummaryCard icon={Reply}      label="Responses"       value={summary.responses.toLocaleString()}  tint="bg-emerald-50 text-emerald-600" />
-            <SummaryCard icon={TrendingUp} label="Response rate"   value={`${summary.rate}%`}                   tint="bg-violet-50 text-violet-600" />
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+            <SummaryCard icon={Send}       label="Letters sent"      value={summary.sent.toLocaleString()}       tint="bg-blue-50 text-blue-600" />
+            <SummaryCard icon={Reply}      label="Responses"         value={summary.responses.toLocaleString()}  tint="bg-emerald-50 text-emerald-600" />
+            <SummaryCard icon={TrendingUp} label="Response rate"     value={`${summary.rate}%`}                   tint="bg-violet-50 text-violet-600" />
+            <SummaryCard icon={Clock}      label="Avg. time to respond" value={summary.avgDays != null ? `${summary.avgDays} days` : '—'} tint="bg-amber-50 text-amber-600" />
           </div>
         )}
         <DripsSection />
