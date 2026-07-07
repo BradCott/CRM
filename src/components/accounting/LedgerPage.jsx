@@ -8,7 +8,8 @@ import Button from '../ui/Button'
 import AddTransactionModal from './AddTransactionModal'
 import SettlementUpload from './SettlementUpload'
 import BankStatementReview from './BankStatementReview'
-import { exportAccountingExcel, exportAccountingPdf } from '../../utils/accountingExport'
+import { exportAccountingExcel, exportAccountingPdf, ledgerRows } from '../../utils/accountingExport'
+import ReportExportButton from './ReportExportButton'
 import InvestorUpload from './InvestorUpload'
 import BalanceSheet from './BalanceSheet'
 import ProfitLoss from './ProfitLoss'
@@ -406,6 +407,13 @@ export default function LedgerPage() {
     if (av > bv) return dir === 'asc' ?  1 : -1
     return 0
   })
+
+  // Transactions currently visible in the ledger table (respects the review-status pill)
+  const visibleLedger = sorted.filter(tx => reviewFilter === 'all' ? true
+    : reviewFilter === 'review' ? tx.review_status === 'needs_review'
+    : reviewFilter === 'matched' ? tx.review_status === 'matched'
+    : tx.review_status === 'recorded')
+  const ledgerFilterLabel = { all: 'All transactions', review: 'Needs review', matched: 'Matched', recorded: 'Recorded' }[reviewFilter] || 'All transactions'
 
   // "Current Balance" = the Balance Sheet's Cash & Cash Equivalents, so the top
   // stat matches the Balance Sheet tab (operational cash; the property purchase is
@@ -898,29 +906,33 @@ export default function LedgerPage() {
                     </button>
                   ))}
                 </div>
-                {needsReview.length > 0 && (
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={handleAutoRecord}
-                      disabled={autoRecording || recordingAll}
-                      title="Record everything the auto-pilot is confident about (learned from how you've categorized these merchants before). Questionable ones stay in Needs Review."
-                      className="flex items-center gap-1.5 text-xs font-medium text-blue-700 px-3 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors disabled:opacity-50"
-                    >
-                      {autoRecording
-                        ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Working…</>
-                        : <><Sparkles className="w-3.5 h-3.5" /> Auto-record{confidentCount > 0 ? ` ${confidentCount}` : ''}</>}
-                    </button>
-                    <button
-                      onClick={handleRecordAll}
-                      disabled={recordingAll || autoRecording}
-                      className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 px-3 py-1.5 rounded-lg border border-emerald-200 hover:bg-emerald-50 transition-colors disabled:opacity-50"
-                    >
-                      {recordingAll
-                        ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Recording…</>
-                        : <><Check className="w-3.5 h-3.5" /> Record all {needsReview.length}</>}
-                    </button>
-                  </div>
-                )}
+                <div className="flex items-center gap-2">
+                  {needsReview.length > 0 && (
+                    <>
+                      <button
+                        onClick={handleAutoRecord}
+                        disabled={autoRecording || recordingAll}
+                        title="Record everything the auto-pilot is confident about (learned from how you've categorized these merchants before). Questionable ones stay in Needs Review."
+                        className="flex items-center gap-1.5 text-xs font-medium text-blue-700 px-3 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors disabled:opacity-50"
+                      >
+                        {autoRecording
+                          ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Working…</>
+                          : <><Sparkles className="w-3.5 h-3.5" /> Auto-record{confidentCount > 0 ? ` ${confidentCount}` : ''}</>}
+                      </button>
+                      <button
+                        onClick={handleRecordAll}
+                        disabled={recordingAll || autoRecording}
+                        className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 px-3 py-1.5 rounded-lg border border-emerald-200 hover:bg-emerald-50 transition-colors disabled:opacity-50"
+                      >
+                        {recordingAll
+                          ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Recording…</>
+                          : <><Check className="w-3.5 h-3.5" /> Record all {needsReview.length}</>}
+                      </button>
+                    </>
+                  )}
+                  <ReportExportButton property={property} title="Ledger" subtitle={ledgerFilterLabel}
+                    isGrid buildRows={() => ledgerRows(visibleLedger)} />
+                </div>
               </div>
             )}
 
@@ -943,11 +955,7 @@ export default function LedgerPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {sorted
-                    .filter(tx => reviewFilter === 'all' ? true
-                      : reviewFilter === 'review' ? tx.review_status === 'needs_review'
-                      : reviewFilter === 'matched' ? tx.review_status === 'matched'
-                      : tx.review_status === 'recorded')
+                  {visibleLedger
                     .map((tx, i) => {
                     const catStyle  = CATEGORY_COLORS[tx.category] || CATEGORY_COLORS['Other']
                     const srcConfig = SOURCE_LABELS[tx.source]     || SOURCE_LABELS['Manual']
