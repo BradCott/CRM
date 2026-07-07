@@ -841,17 +841,15 @@ router.post('/:propertyId/investors', (req, res) => {
   const investors = Array.isArray(req.body) ? req.body : [req.body]
   if (!investors.length) return res.status(400).json({ error: 'No investors provided' })
 
-  const today = new Date().toISOString().slice(0, 10)
-
   const insertInvestor = db.prepare(`
     INSERT INTO property_investors (property_id, name, address, contribution, percentage, class, preferred_return)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `)
-  const insertTx = db.prepare(`
-    INSERT INTO accounting_transactions (property_id, date, description, category, amount, source)
-    VALUES (?, ?, ?, 'Equity Contribution', ?, 'Excel Upload')
-  `)
 
+  // NOTE: the cap table only. We intentionally do NOT create ledger
+  // "Equity Contribution" transactions here — those come from the bank feed
+  // (the spreadsheet just seeds the cap table + teaches the AI who to attribute
+  // incoming wires to). Otherwise every contribution would be double-counted.
   const saved = []
   for (const inv of investors) {
     const { name, address, contribution, percentage, class: cls, preferred_return } = inv
@@ -860,7 +858,6 @@ router.post('/:propertyId/investors', (req, res) => {
     }
     const amount = Math.abs(parseFloat(contribution))
     const r = insertInvestor.run(propertyId, name.trim(), address || null, amount, percentage ?? null, cls || null, preferred_return ?? null)
-    insertTx.run(propertyId, today, name.trim(), amount)
     saved.push({ id: r.lastInsertRowid, property_id: Number(propertyId), name: name.trim(), address, contribution: amount, percentage, class: cls, preferred_return })
   }
 
@@ -881,6 +878,16 @@ router.post('/:propertyId/investors', (req, res) => {
   }
 
   res.status(201).json({ saved, match_results })
+})
+
+// Remove the legacy "Excel Upload" equity-contribution transactions for a
+// property (these duplicated the bank wires). Cap table + bank feed are kept.
+router.delete('/:propertyId/investor-excel-entries', (req, res) => {
+  const r = db.prepare(`
+    DELETE FROM accounting_transactions
+    WHERE property_id = ? AND source = 'Excel Upload' AND category = 'Equity Contribution'
+  `).run(req.params.propertyId)
+  res.json({ deleted: r.changes })
 })
 
 router.patch('/investors/:id', (req, res) => {

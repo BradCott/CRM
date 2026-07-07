@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles, Link2 } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, getCRMInvestors, linkCapTableInvestor } from '../../api/client'
+import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles, Link2, AlertTriangle } from 'lucide-react'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries } from '../../api/client'
 import OpeningBalancesModal from './OpeningBalancesModal'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
@@ -88,6 +88,14 @@ export default function LedgerPage() {
       setInvestors(prev => prev.map(i => i.id === rowId ? { ...i, investor_id: investorId || null, linked: !!investorId } : i))
     } catch (e) { setError(e.message) }
     setLinkingId(null)
+  }
+
+  const [cleaningExcel, setCleaningExcel] = useState(false)
+  async function handleRemoveExcelEquity() {
+    setCleaningExcel(true)
+    try { await removeInvestorExcelEntries(propertyId); await reload() }
+    catch (e) { setError(e.message) }
+    finally { setCleaningExcel(false) }
   }
 
   async function handleAmortUpload(file) {
@@ -556,6 +564,27 @@ export default function LedgerPage() {
           <Distributions propertyId={propertyId} />
         </div>
       )}
+
+      {/* Legacy Excel-imported equity duplicates — offer one-click cleanup */}
+      {activeView === 'ledger' && (() => {
+        const dupes = transactions.filter(t => t.source === 'Excel Upload' && t.category === 'Equity Contribution')
+        if (!dupes.length) return null
+        const total = dupes.reduce((s, t) => s + Number(t.amount || 0), 0)
+        return (
+          <div className="shrink-0 mx-6 my-3 flex items-start gap-3 px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl">
+            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0 text-sm text-amber-800">
+              <p className="font-medium">{dupes.length} equity {dupes.length === 1 ? 'entry' : 'entries'} were imported from the investor spreadsheet</p>
+              <p className="text-xs mt-0.5">These duplicate your bank wire deposits. Remove them so equity is counted once (from the bank feed) — this won't touch the cap table.</p>
+            </div>
+            <button onClick={handleRemoveExcelEquity} disabled={cleaningExcel}
+              className="shrink-0 flex items-center gap-1.5 text-xs font-semibold text-white bg-amber-600 hover:bg-amber-700 px-3 py-1.5 rounded-lg disabled:opacity-50">
+              {cleaningExcel ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              Remove {fmt$(total)}
+            </button>
+          </div>
+        )
+      })()}
 
       {/* Investors section — only in ledger view */}
       {activeView === 'ledger' && investors.length > 0 && (

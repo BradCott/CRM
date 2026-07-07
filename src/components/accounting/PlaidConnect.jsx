@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { usePlaidLink } from 'react-plaid-link'
 import { Link2, RefreshCw, Trash2, Loader2, Building2, AlertCircle, CheckCircle, WifiOff } from 'lucide-react'
 import {
@@ -237,6 +237,30 @@ export default function PlaidConnect({ propertyId, onSaved }) {
   }, [propertyId])
 
   useEffect(() => { loadConnections() }, [loadConnections])
+
+  // Auto-sync each linked account once when the property page opens, so the
+  // ledger is always current without clicking Sync. Deduped server-side, so
+  // already-imported transactions never come back.
+  const autoSyncedRef = useRef(false)
+  useEffect(() => {
+    if (autoSyncedRef.current || connections.length === 0) return
+    autoSyncedRef.current = true
+    connections.forEach(conn => autoSync(conn.id))
+  }, [connections]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function autoSync(connId) {
+    setSyncing(connId)
+    try {
+      const result = await syncPlaidConnection(connId)
+      await loadConnections()
+      onSaved?.()
+      if (result.count > 0) {
+        setSyncMsg(`${result.count} new transaction${result.count !== 1 ? 's' : ''} auto-synced for review${result.skipped ? ` (${result.skipped} already imported)` : ''}.`)
+      }
+    } catch (_) { /* silent on auto-sync */ } finally {
+      setSyncing(null)
+    }
+  }
 
   async function handleConnect() {
     setFetchingToken(true)
