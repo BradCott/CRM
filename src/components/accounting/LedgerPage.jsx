@@ -336,6 +336,21 @@ export default function LedgerPage() {
   // Financial displays must use strictly 'recorded' so matched rows don't count.
   const recordedTx  = transactions.filter(t => t.review_status === 'recorded')
 
+  // Index recorded entries by rounded |amount| so we can flag needs-review lines
+  // that look like a duplicate of something already in the books ("suggest match").
+  const recordedByAmt = new Map()
+  for (const t of recordedTx) {
+    const k = Math.round(Math.abs(Number(t.amount) || 0))
+    if (k > 0 && !recordedByAmt.has(k)) recordedByAmt.set(k, t)
+  }
+  const suggestMatchFor = (tx) => {
+    if (tx.review_status !== 'needs_review') return null
+    const amt = Math.abs(Number(tx.amount) || 0)
+    if (amt < 1) return null
+    const cand = recordedByAmt.get(Math.round(amt))
+    return cand && Math.abs(Math.abs(Number(cand.amount)) - amt) < 1 ? cand : null
+  }
+
   // Compute running balance over recorded transactions only
   const withBalance = recordedTx.reduce((acc, tx) => {
     const prev = acc.length > 0 ? acc[acc.length - 1].running_balance : 0
@@ -968,6 +983,21 @@ export default function LedgerPage() {
                         <td className="px-4 py-3 border-b border-slate-100 text-slate-800 max-w-[260px] font-medium">
                           <span className="truncate block">{tx.description}</span>
                           {tx.vendor && <span className="text-xs text-slate-400 font-normal">{tx.vendor}</span>}
+                          {(() => {
+                            const cand = suggestMatchFor(tx)
+                            if (!cand) return null
+                            return (
+                              <button
+                                onClick={() => handleMatch(tx, `${cand.description} (${String(cand.date).slice(0, 10)})`, cand.id)}
+                                disabled={recordingId === tx.id}
+                                className="mt-1.5 w-full flex items-center gap-1.5 text-[11px] font-semibold text-violet-700 bg-violet-100 border border-violet-200 hover:bg-violet-200 rounded-lg px-2 py-1 transition-colors disabled:opacity-50"
+                                title={`Looks like a duplicate of "${cand.description}" (${fmt$(cand.amount)}) already in your books — click to match instead of recording`}
+                              >
+                                <Link2 className="w-3 h-3 shrink-0" />
+                                <span className="truncate">Likely match → {cand.description} · {fmt$(cand.amount)}</span>
+                              </button>
+                            )
+                          })()}
                           {(tx.category === 'Equity Contribution' || reviewCats[tx.id] === 'Equity Contribution' || investorSug[tx.id]) && (
                             <div className="mt-1 flex items-center gap-1.5">
                               <Users className="w-3 h-3 text-slate-400 shrink-0" />
