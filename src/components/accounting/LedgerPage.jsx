@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles, Link2, AlertTriangle } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries, matchTransaction, unmatchTransaction, getMatchCandidates } from '../../api/client'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries, matchTransaction, unmatchTransaction, getMatchCandidates, recordEarnestAsEquity } from '../../api/client'
 import OpeningBalancesModal from './OpeningBalancesModal'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
@@ -230,6 +230,15 @@ export default function LedgerPage() {
   async function handleUnmatch(tx) {
     setRecordingId(tx.id)
     try { await unmatchTransaction(tx.id); await reload() }
+    finally { setRecordingId(null) }
+  }
+
+  const [earnestPickId, setEarnestPickId] = useState(null)  // earnest-money tx.id whose investor picker is open
+  async function handleEarnestEquity(tx, investorId) {
+    if (!investorId) return
+    setEarnestPickId(null)
+    setRecordingId(tx.id)
+    try { await recordEarnestAsEquity(tx.id, investorId); await reload() }
     finally { setRecordingId(null) }
   }
 
@@ -996,6 +1005,34 @@ export default function LedgerPage() {
                               >
                                 <Link2 className="w-3 h-3 shrink-0" />
                                 <span className="truncate">Likely match → {cand.description} · {fmt$(cand.amount)}</span>
+                              </button>
+                            )
+                          })()}
+                          {(() => {
+                            const isEarnest = tx.source === 'Settlement Statement' && /earnest\s*money/i.test(tx.description || '')
+                            if (!isEarnest) return null
+                            const done = transactions.some(t => t.matched_to_id === tx.id && t.category === 'Equity Contribution')
+                            if (done) return (
+                              <div className="mt-1.5 flex items-center gap-1 text-[11px] font-medium text-emerald-600">
+                                <Check className="w-3 h-3 shrink-0" /> Recorded as investor equity
+                              </div>
+                            )
+                            if (earnestPickId === tx.id) return (
+                              <div className="mt-1.5 flex items-center gap-1.5">
+                                <select autoFocus defaultValue=""
+                                  onChange={e => e.target.value && handleEarnestEquity(tx, Number(e.target.value))}
+                                  className="text-[11px] border border-blue-300 rounded px-1.5 py-1 bg-white max-w-[170px] focus:outline-none focus:ring-1 focus:ring-blue-400">
+                                  <option value="">Whose equity?…</option>
+                                  {investorsList.map(iv => <option key={iv.id} value={iv.id}>{iv.name}</option>)}
+                                </select>
+                                <button onClick={() => setEarnestPickId(null)} className="text-slate-400 hover:text-slate-600"><X className="w-3.5 h-3.5" /></button>
+                              </div>
+                            )
+                            return (
+                              <button onClick={() => setEarnestPickId(tx.id)} disabled={recordingId === tx.id}
+                                className="mt-1.5 w-full flex items-center gap-1.5 text-[11px] font-semibold text-blue-700 bg-blue-100 border border-blue-200 hover:bg-blue-200 rounded-lg px-2 py-1 transition-colors disabled:opacity-50"
+                                title="Book this earnest money as an investor's equity contribution (it was paid before closing, not through the bank)">
+                                <HandCoins className="w-3 h-3 shrink-0" /> Record as investor equity
                               </button>
                             )
                           })()}

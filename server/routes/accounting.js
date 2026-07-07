@@ -613,6 +613,34 @@ router.patch('/transactions/:id/unmatch', (req, res) => {
   res.json(db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id))
 })
 
+// One-click: book a settlement earnest-money line as an investor's equity.
+// Earnest money is paid before closing (not in the bank feed), so it's added as a
+// recorded Equity Contribution (+amount) attributed to the chosen investor. The
+// original earnest-money deposit line stays, so the two net to zero cash.
+router.post('/transactions/:id/record-as-equity', (req, res) => {
+  const tx = db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id)
+  if (!tx) return res.status(404).json({ error: 'Transaction not found' })
+  const investorId = Number(req.body?.investor_id)
+  if (!investorId) return res.status(400).json({ error: 'investor_id is required' })
+  const inv = db.prepare('SELECT id, name FROM investors WHERE id = ?').get(investorId)
+  if (!inv) return res.status(404).json({ error: 'Investor not found' })
+
+  // Idempotent — don't create a second equity line for the same source transaction.
+  const existing = db.prepare(
+    `SELECT * FROM accounting_transactions WHERE matched_to_id = ? AND category = 'Equity Contribution'`
+  ).get(tx.id)
+  if (existing) return res.json({ ok: true, created: existing, duplicate: true })
+
+  const amount = Math.abs(Number(tx.amount) || 0)
+  const r = db.prepare(`
+    INSERT INTO accounting_transactions
+      (property_id, date, description, category, amount, source, investor_id, review_status, matched_to_id)
+    VALUES (?, ?, ?, 'Equity Contribution', ?, 'Manual', ?, 'recorded', ?)
+  `).run(tx.property_id, tx.date, `Earnest money — ${inv.name} equity`, amount, investorId, tx.id)
+
+  res.json({ ok: true, created: db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(r.lastInsertRowid) })
+})
+
 // Record all pending transactions for a property at once
 router.post('/:propertyId/transactions/record-all', (req, res) => {
   const pending = db.prepare(

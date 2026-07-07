@@ -203,6 +203,7 @@ export const matchTransaction         = (id, note, matchedToId = null) => req('P
 export const unmatchTransaction       = (id)            => req('PATCH',  `/accounting/transactions/${id}/unmatch`)
 export const getMatchCandidates       = (propertyId, amount, excludeId) =>
   req('GET', `/accounting/${propertyId}/match-candidates?amount=${encodeURIComponent(amount)}&exclude=${excludeId}`)
+export const recordEarnestAsEquity    = (id, investorId) => req('POST', `/accounting/transactions/${id}/record-as-equity`, { investor_id: investorId })
 export const recordAllTransactions    = (propertyId)    => req('POST',   `/accounting/${propertyId}/transactions/record-all`)
 export const autoRecordTransactions   = (propertyId)    => req('POST',   `/accounting/${propertyId}/auto-record`)
 export const getReviewSuggestions     = (propertyId)    => req('GET',    `/accounting/${propertyId}/review-suggestions`)
