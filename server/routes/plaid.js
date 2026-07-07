@@ -176,8 +176,12 @@ router.post('/connections/:id/sync', async (req, res) => {
       .filter(t => !conn.plaid_account_id || t.account_id === conn.plaid_account_id)
       .map(t => ({
         plaid_transaction_id: t.transaction_id,
+        // Prefer the raw bank description (t.name) so it matches the statement and
+        // the investor-wire matcher can see the real counterparty. Plaid's enriched
+        // merchant_name can mis-identify wires (e.g. tagging a wire as "Sherwin
+        // Williams"), so it's only a fallback when the raw name is empty.
         date:        t.date,
-        description: t.merchant_name || t.name || '',
+        description: t.name || t.merchant_name || '',
         amount:      -Number(t.amount),
         plaid_category: t.personal_finance_category?.primary || (t.category?.[0] ?? ''),
       }))
