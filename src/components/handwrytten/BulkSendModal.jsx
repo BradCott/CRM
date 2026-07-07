@@ -377,14 +377,17 @@ export default function BulkSendModal({ onClose, onDone }) {
       for (const p of withOwner) {
         if (!ownerFirstProp[p.owner_id]) ownerFirstProp[p.owner_id] = p
       }
+      const today           = new Date().toISOString().slice(0, 10)
+      const isPaused        = (p) => p.owner_mail_pause_until && p.owner_mail_pause_until >= today
       const uniqueOwners    = Object.values(ownerFirstProp)
       const dedupRemoved    = withOwner.length - uniqueOwners.length
       const dncCount        = uniqueOwners.filter(p => p.owner_do_not_contact).length
-      const withContact     = uniqueOwners.filter(p => !p.owner_do_not_contact)
+      const pausedCount     = uniqueOwners.filter(p => !p.owner_do_not_contact && isPaused(p)).length
+      const withContact     = uniqueOwners.filter(p => !p.owner_do_not_contact && !isPaused(p))
       const noAddress       = withContact.filter(p => !p.owner_address || !p.owner_city || !p.owner_state).length
       const readyToSend     = withContact.length - noAddress
 
-      setBreakdown({ totalFiltered, needsReviewCount, noOwner, dedupRemoved, dncCount, noAddress, readyToSend })
+      setBreakdown({ totalFiltered, needsReviewCount, noOwner, dedupRemoved, dncCount, pausedCount, noAddress, readyToSend })
 
       // ── Build final list ──────────────────────────────────────────────────
       const seen = new Set()
@@ -393,6 +396,7 @@ export default function BulkSendModal({ onClose, onDone }) {
         if (!p.owner_id) continue
         if (seen.has(p.owner_id)) continue
         if (p.owner_do_not_contact) continue   // never mail do-not-contact owners
+        if (p.owner_mail_pause_until && p.owner_mail_pause_until >= today) continue  // paused from mailing
         if (!p.owner_address || !p.owner_city || !p.owner_state) continue
         seen.add(p.owner_id)
         list.push({
@@ -712,6 +716,12 @@ export default function BulkSendModal({ onClose, onDone }) {
                       <span className="text-slate-500">− Owner on do-not-contact list</span>
                       <span className={`font-semibold ${breakdown.dncCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
                         {breakdown.dncCount > 0 ? `−${breakdown.dncCount.toLocaleString()}` : '0'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center px-3 py-2">
+                      <span className="text-slate-500">− Owner mailing paused</span>
+                      <span className={`font-semibold ${breakdown.pausedCount > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                        {breakdown.pausedCount > 0 ? `−${breakdown.pausedCount.toLocaleString()}` : '0'}
                       </span>
                     </div>
                     <div className="flex justify-between items-center px-3 py-2">

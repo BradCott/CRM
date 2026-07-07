@@ -27,6 +27,7 @@ const BASE_SELECT = `
     o.phone      AS owner_phone,
     o.email      AS owner_email,
     o.do_not_contact AS owner_do_not_contact,
+    o.mail_pause_until AS owner_mail_pause_until,
     o.owner_type AS owner_type,
     o.address    AS owner_address,
     o.city       AS owner_city,
