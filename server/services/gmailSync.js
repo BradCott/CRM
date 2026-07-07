@@ -84,8 +84,12 @@ export async function syncGmail() {
 
         // If a contact we mailed a letter to just replied, surface it as a hot play
         if (ins.changes > 0 && direction === 'inbound') {
-          const mailed = db.prepare(`SELECT sent_by_user_id FROM handwrytten_sends WHERE contact_id = ? AND status = 'sent' ORDER BY sent_at DESC LIMIT 1`).get(personId)
+          const mailed = db.prepare(`SELECT id, sent_by_user_id, responded_at FROM handwrytten_sends WHERE contact_id = ? AND status = 'sent' ORDER BY sent_at DESC LIMIT 1`).get(personId)
           if (mailed) {
+            // A reply from someone we mailed counts as a response (for success rates)
+            if (!mailed.responded_at) {
+              try { db.prepare(`UPDATE handwrytten_sends SET responded_at = ?, response_channel = 'email' WHERE id = ?`).run(date, mailed.id) } catch (_) {}
+            }
             const person = db.prepare('SELECT name FROM people WHERE id = ?').get(personId)
             db.prepare(`
               INSERT OR IGNORE INTO plays (user_id, source, play_type, title, detail, route, priority, status, dedupe_key, created_at)

@@ -115,6 +115,7 @@ router.get('/sends', (req, res) => {
       p.address    AS contact_address,
       p.city       AS contact_city,
       p.state      AS contact_state,
+      p.mail_pause_until AS contact_pause_until,
       pr.address   AS property_address,
       pr.city      AS property_city,
       pr.state     AS property_state,
@@ -157,13 +158,37 @@ router.get('/sends/contact/:contactId', (req, res) => {
   res.json(rows)
 })
 
+/** PATCH /api/handwrytten/sends/:id/responded — mark/unmark a letter as responded */
+router.patch('/sends/:id/responded', (req, res) => {
+  const responded = req.body?.responded !== false   // default true
+  const channel   = req.body?.channel || 'manual'
+  db.prepare(`UPDATE handwrytten_sends SET responded_at = ?, response_channel = ? WHERE id = ?`)
+    .run(responded ? new Date().toISOString() : null, responded ? channel : null, req.params.id)
+  const row = db.prepare(`SELECT id, contact_id, campaign_id, responded_at, response_channel FROM handwrytten_sends WHERE id = ?`).get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'Send not found' })
+  res.json(row)
+})
+
+/** GET /api/handwrytten/response-summary — overall + per-user mail success rates */
+router.get('/response-summary', (_req, res) => {
+  const overall = db.prepare(`
+    SELECT COUNT(*) AS sent,
+           SUM(CASE WHEN responded_at IS NOT NULL THEN 1 ELSE 0 END) AS responses
+    FROM handwrytten_sends WHERE status = 'sent'
+  `).get()
+  const sent = overall.sent || 0
+  const responses = overall.responses || 0
+  res.json({ sent, responses, rate: sent ? +(responses / sent * 100).toFixed(1) : 0 })
+})
+
 /** GET /api/handwrytten/campaigns — campaign list */
 router.get('/campaigns', (req, res) => {
   const { limit = 50, offset = 0 } = req.query
 
   const rows = db.prepare(`
     SELECT c.*,
-      u.name AS sent_by_name
+      u.name AS sent_by_name,
+      (SELECT COUNT(*) FROM handwrytten_sends s WHERE s.campaign_id = c.id AND s.responded_at IS NOT NULL) AS responded_count
     FROM handwrytten_campaigns c
     LEFT JOIN users u ON u.id = c.sent_by_user_id
     ORDER BY c.sent_at DESC
@@ -334,6 +359,12 @@ router.post('/send-bulk', async (req, res) => {
     }
     if (!person.address) {
       results.push({ contact_id, status: 'failed', error: 'No mailing address' })
+      failedCount++
+      continue
+    }
+    const today = new Date().toISOString().slice(0, 10)
+    if (person.do_not_contact || (person.mail_pause_until && person.mail_pause_until >= today)) {
+      results.push({ contact_id, status: 'failed', error: person.do_not_contact ? 'Do Not Contact' : 'Mailing paused' })
       failedCount++
       continue
     }
@@ -657,8 +688,9 @@ router.post('/drips', (req, res) => {
   for (const r of recipients) {
     const cid = Number(r.contact_id)
     if (!cid || seen.has(cid)) continue
-    const person = db.prepare(`SELECT do_not_contact FROM people WHERE id = ?`).get(cid)
-    if (!person || person.do_not_contact) continue
+    const person = db.prepare(`SELECT do_not_contact, mail_pause_until FROM people WHERE id = ?`).get(cid)
+    const today = new Date().toISOString().slice(0, 10)
+    if (!person || person.do_not_contact || (person.mail_pause_until && person.mail_pause_until >= today)) continue
     seen.add(cid)
     clean.push({ contact_id: cid, property_id: r.property_id || null })
   }

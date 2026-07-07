@@ -243,6 +243,24 @@ router.put('/:id', (req, res) => {
   res.json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id))
 })
 
+// Timed mailing suppression: pause a contact from mail campaigns for a period.
+// duration: '6m' | '1y' | '2y' | '3y' | 'forever' | 'resume'
+router.patch('/:id/mail-pause', (req, res) => {
+  const { duration, reason = null } = req.body || {}
+  const MODS = { '6m': '+6 months', '1y': '+1 year', '2y': '+2 years', '3y': '+3 years' }
+  let until = null
+  if (duration === 'forever') until = '2999-12-31'
+  else if (MODS[duration]) until = db.prepare(`SELECT date('now', ?) AS d`).get(MODS[duration]).d
+  else if (duration && duration !== 'resume' && duration !== 'none') {
+    return res.status(400).json({ error: 'Invalid duration' })
+  }
+  db.prepare('UPDATE people SET mail_pause_until = ?, mail_pause_reason = ? WHERE id = ?')
+    .run(until, until ? reason : null, req.params.id)
+  const row = db.prepare('SELECT id, name, mail_pause_until, mail_pause_reason FROM people WHERE id = ?').get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'Not found' })
+  res.json(row)
+})
+
 // Lightweight do-not-contact toggle (avoids sending the whole record)
 router.patch('/:id/dnc', (req, res) => {
   const val = req.body?.do_not_contact ? 1 : 0

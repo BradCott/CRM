@@ -58,10 +58,13 @@ function nextRunIso(intervalDays) {
 async function sendQueued(drip, qrow) {
   const person = db.prepare(`SELECT * FROM people WHERE id = ?`).get(qrow.contact_id)
 
-  // Safety net: never mail a DNC contact, even if one slipped into the queue.
-  if (!person || person.do_not_contact) {
+  // Safety net: never mail a DNC or currently-paused contact, even if one slipped
+  // into the queue.
+  const today = new Date().toISOString().slice(0, 10)
+  const paused = person && person.mail_pause_until && person.mail_pause_until >= today
+  if (!person || person.do_not_contact || paused) {
     db.prepare(`UPDATE handwrytten_drip_queue SET status='skipped', error_message=?, processed_at=datetime('now') WHERE id=?`)
-      .run(person ? 'On do-not-contact list' : 'Contact deleted', qrow.id)
+      .run(!person ? 'Contact deleted' : person.do_not_contact ? 'On do-not-contact list' : 'Mailing paused', qrow.id)
     return 'skipped'
   }
   if (!person.address) {

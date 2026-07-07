@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { X, Pencil, Phone, Mail, MapPin, FileText, Building2, AlertCircle, User, TrendingUp, Send, ChevronDown, ChevronUp, Trash2, PenLine, CheckCircle } from 'lucide-react'
-import { getPerson, getEmails, createEmail, deleteEmail, getHandwryttenContactSends } from '../../api/client'
+import { X, Pencil, Phone, Mail, MapPin, FileText, Building2, AlertCircle, User, TrendingUp, Send, ChevronDown, ChevronUp, Trash2, PenLine, CheckCircle, Reply, CalendarOff } from 'lucide-react'
+import { getPerson, getEmails, createEmail, deleteEmail, getHandwryttenContactSends, markSendResponded } from '../../api/client'
+import MailPauseControl, { isPaused, pauseLabel } from '../handwrytten/MailPauseControl'
 import Button from '../ui/Button'
 import Avatar from '../ui/Avatar'
 import SendLetterModal from '../handwrytten/SendLetterModal'
@@ -67,6 +68,13 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
     setSaving(false)
   }
 
+  async function toggleResponded(letterId, responded) {
+    try {
+      await markSendResponded(letterId, responded)
+      setLetters(prev => prev.map(l => l.id === letterId ? { ...l, responded_at: responded ? new Date().toISOString() : null } : l))
+    } catch (e) { alert(e.message) }
+  }
+
   async function handleDeleteEmail(id) {
     if (!confirm('Delete this email log?')) return
     try {
@@ -116,6 +124,11 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
                   {data.do_not_contact ? (
                     <span className="flex items-center gap-1 text-xs font-semibold text-red-700 bg-red-50 px-2 py-0.5 rounded-full">
                       <AlertCircle className="w-3 h-3" /> Do Not Contact
+                    </span>
+                  ) : null}
+                  {!data.do_not_contact && isPaused(data.mail_pause_until) ? (
+                    <span className="flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-full">
+                      <CalendarOff className="w-3 h-3" /> {pauseLabel(data.mail_pause_until)}
                     </span>
                   ) : null}
                 </div>
@@ -296,6 +309,14 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
         {/* Letters Sent */}
         <Section icon={PenLine} title={`Letters Sent${letters.length > 0 ? ` (${letters.length})` : ''}`}>
           <div className="space-y-2">
+            {/* Mailing pause control */}
+            <div className="flex justify-end">
+              <MailPauseControl
+                personId={personId}
+                pausedUntil={data.mail_pause_until}
+                onChange={until => setData(d => ({ ...d, mail_pause_until: until }))}
+              />
+            </div>
             {letters.length === 0 ? (
               <p className="text-sm text-slate-400 italic">No letters sent yet</p>
             ) : (
@@ -303,15 +324,29 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
                 <div key={l.id} className="rounded-xl border border-slate-100 bg-slate-50 p-3">
                   <div className="flex items-center justify-between gap-2 mb-1">
                     <span className="text-xs text-slate-400">{fmtEmailDate(l.sent_at)}</span>
-                    <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${
-                      l.status === 'sent'    ? 'bg-green-50 text-green-700' :
-                      l.status === 'failed'  ? 'bg-red-50 text-red-600' :
-                      'bg-slate-100 text-slate-500'
-                    }`}>
-                      {l.status === 'sent' ? (
-                        <span className="flex items-center gap-0.5"><CheckCircle className="w-3 h-3" /> Sent</span>
-                      ) : l.status}
-                    </span>
+                    <div className="flex items-center gap-1.5">
+                      {l.status === 'sent' && (
+                        <button
+                          onClick={() => toggleResponded(l.id, !l.responded_at)}
+                          className={`inline-flex items-center gap-1 text-xs font-medium px-1.5 py-0.5 rounded-full border transition-colors ${
+                            l.responded_at ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
+                                           : 'text-slate-400 border-slate-200 hover:bg-slate-100'
+                          }`}
+                          title={l.responded_at ? `Responded${l.response_channel === 'email' ? ' (email reply)' : ''} — click to clear` : 'Mark as responded'}
+                        >
+                          <Reply className="w-3 h-3" /> {l.responded_at ? 'Responded' : 'Mark'}
+                        </button>
+                      )}
+                      <span className={`text-xs font-semibold px-1.5 py-0.5 rounded-full ${
+                        l.status === 'sent'    ? 'bg-green-50 text-green-700' :
+                        l.status === 'failed'  ? 'bg-red-50 text-red-600' :
+                        'bg-slate-100 text-slate-500'
+                      }`}>
+                        {l.status === 'sent' ? (
+                          <span className="flex items-center gap-0.5"><CheckCircle className="w-3 h-3" /> Sent</span>
+                        ) : l.status}
+                      </span>
+                    </div>
                   </div>
                   <p className="text-sm text-slate-700 line-clamp-2 leading-relaxed">{l.message}</p>
                   {l.tenant_brand_name && (

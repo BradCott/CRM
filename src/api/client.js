@@ -388,6 +388,9 @@ export const getHandwryttenCampaigns  = (params={}) => {
   const qs = new URLSearchParams(params).toString()
   return req('GET', `/handwrytten/campaigns${qs ? '?' + qs : ''}`)
 }
+export const getMailResponseSummary  = ()                  => req('GET',   '/handwrytten/response-summary')
+export const markSendResponded       = (id, responded, channel='manual') => req('PATCH', `/handwrytten/sends/${id}/responded`, { responded, channel })
+export const setMailPause            = (personId, duration, reason=null)  => req('PATCH', `/people/${personId}/mail-pause`, { duration, reason })
 
 // Drip campaigns (throttled "X letters every N days")
 export const createHandwryttenDrip = (data)        => req('POST',  '/handwrytten/drips', data)

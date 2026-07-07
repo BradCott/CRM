@@ -483,6 +483,13 @@ const migrations = [
   // Manual link from a property cap-table row to a global investor profile
   // (overrides the automatic name match).
   `ALTER TABLE property_investors ADD COLUMN investor_id INTEGER REFERENCES investors(id) ON DELETE SET NULL`,
+
+  // Mail campaign response tracking + timed mailing suppression
+  `ALTER TABLE handwrytten_sends ADD COLUMN responded_at     TEXT`,
+  `ALTER TABLE handwrytten_sends ADD COLUMN response_channel TEXT`,   // 'email' | 'manual'
+  `ALTER TABLE people ADD COLUMN mail_pause_until  TEXT`,             // YYYY-MM-DD; '2999-12-31' = forever
+  `ALTER TABLE people ADD COLUMN mail_pause_reason TEXT`,
+  `CREATE INDEX IF NOT EXISTS idx_hw_sends_responded ON handwrytten_sends(responded_at)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────
