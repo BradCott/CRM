@@ -155,7 +155,10 @@ export function guessCategory(description, amount = -1) {
  * transactions for drilldown), totals, and NOI.
  */
 export function computePL(transactions) {
-  const base = transactions.filter(t => PL_CATS.has(t.category))
+  // Exclude settlement-statement items — closing prorations/credits (e.g. a
+  // property-tax proration credited to the buyer) are acquisition adjustments,
+  // not operating income/expense. (Schedule E + the Balance Sheet already do this.)
+  const base = transactions.filter(t => PL_CATS.has(t.category) && t.source !== 'Settlement Statement')
 
   const rentTxs     = base.filter(t => t.category === 'Rent' && Number(t.amount) > 0)
   const otherRevTxs = base.filter(t => t.category === 'Other' && Number(t.amount) > 0)
