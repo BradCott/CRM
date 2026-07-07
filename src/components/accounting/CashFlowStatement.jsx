@@ -2,6 +2,8 @@
 import { useState } from 'react'
 import DrilldownModal from './DrilldownModal'
 import { computeCashFlow, filterByPeriod } from '../../utils/accounting'
+import { cashFlowRows } from '../../utils/accountingExport'
+import ReportExportButton from './ReportExportButton'
 
 function fmt$(n) {
   if (n === null || n === undefined) return '—'
@@ -39,7 +41,7 @@ function Section({ title, amount, txs, onChanged, note }) {
   )
 }
 
-export default function CashFlowStatement({ transactions, onChanged }) {
+export default function CashFlowStatement({ property, transactions, onChanged }) {
   const [period,   setPeriod]   = useState('all')
   const [fromDate, setFromDate] = useState('')
   const [toDate,   setToDate]   = useState('')
@@ -61,16 +63,19 @@ export default function CashFlowStatement({ transactions, onChanged }) {
           <h2 className="text-base font-bold text-slate-900">Cash Flow Statement</h2>
           <p className="text-xs text-slate-400">{periodLabel}</p>
         </div>
-        <select
-          value={period}
-          onChange={e => setPeriod(e.target.value)}
-          className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
-        >
-          <option value="all">All Time</option>
-          <option value="ytd">Year to Date</option>
-          <option value="ly">Last 12 Months</option>
-          <option value="custom">Custom Range</option>
-        </select>
+        <div className="flex items-center gap-2">
+          <select
+            value={period}
+            onChange={e => setPeriod(e.target.value)}
+            className="text-sm border border-slate-200 rounded-lg px-3 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+          >
+            <option value="all">All Time</option>
+            <option value="ytd">Year to Date</option>
+            <option value="ly">Last 12 Months</option>
+            <option value="custom">Custom Range</option>
+          </select>
+          <ReportExportButton property={property} title="Cash Flow Statement" subtitle={periodLabel} buildRows={() => cashFlowRows(base)} />
+        </div>
       </div>
 
       {period === 'custom' && (

@@ -1,5 +1,7 @@
 // Balance Sheet — computed from the ledger transactions + investors table
 import { PL_CATS } from '../../utils/accounting'
+import { balanceSheetRows } from '../../utils/accountingExport'
+import ReportExportButton from './ReportExportButton'
 
 function fmt$(n) {
   if (n === null || n === undefined) return '—'
@@ -30,7 +32,7 @@ function SectionLabel({ children }) {
   return <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mt-4 mb-1">{children}</p>
 }
 
-export default function BalanceSheet({ transactions, investors, opening = null }) {
+export default function BalanceSheet({ property, transactions, investors, opening = null }) {
   const sum = txs => txs.reduce((s, t) => s + Number(t.amount), 0)
   // Opening balances (advanced mode) are additive to transaction-derived figures.
   const ob = opening || {}
@@ -122,7 +124,11 @@ export default function BalanceSheet({ transactions, investors, opening = null }
 
   return (
     <div className="max-w-lg mx-auto px-6 py-6">
-      <h2 className="text-base font-bold text-slate-900 mb-1">Balance Sheet</h2>
+      <div className="flex items-start justify-between mb-1">
+        <h2 className="text-base font-bold text-slate-900">Balance Sheet</h2>
+        <ReportExportButton property={property} title="Balance Sheet" subtitle="Snapshot"
+          buildRows={() => balanceSheetRows(transactions, investors)} />
+      </div>
       <p className="text-xs text-slate-400 mb-5">Snapshot based on recorded transactions</p>
 
       {/* ASSETS */}

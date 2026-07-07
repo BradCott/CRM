@@ -11,7 +11,7 @@ function propTitle(property) {
 }
 
 // ── Each report as an array-of-arrays (rows) ──────────────────────────────────
-function ledgerRows(transactions) {
+export function ledgerRows(transactions) {
   const head = ['Date', 'Description', 'Category', 'Amount', 'Source', 'Status', 'Reconciled', 'Vendor', 'Investor']
   const body = transactions.map(t => [
     String(t.date).slice(0, 10), t.description || '', t.category || '', money(t.amount),
@@ -20,7 +20,7 @@ function ledgerRows(transactions) {
   return [head, ...body]
 }
 
-function balanceSheetRows(recorded, investors) {
+export function balanceSheetRows(recorded, investors) {
   const b = computeBalanceSheet(recorded, investors)
   return [
     ['ASSETS', ''],
@@ -42,7 +42,7 @@ function balanceSheetRows(recorded, investors) {
   ]
 }
 
-function plRows(recorded) {
+export function plRows(recorded) {
   const p = computePL(recorded)
   return [
     ['REVENUE', ''],
@@ -58,7 +58,7 @@ function plRows(recorded) {
   ]
 }
 
-function cashFlowRows(recorded) {
+export function cashFlowRows(recorded) {
   const c = computeCashFlow(recorded)
   return [
     ['Operating Activities', money(c.operating)],
@@ -68,7 +68,7 @@ function cashFlowRows(recorded) {
   ]
 }
 
-function scheduleERows(recorded, year) {
+export function scheduleERows(recorded, year) {
   const s = computeScheduleE(recorded, year)
   return [
     ['Rents received (line 3)', money(s.rentsReceived)],
@@ -94,6 +94,50 @@ function buildReports(property, transactions, investors) {
 }
 
 const fileBase = (property) => `${(property?.address || 'property').replace(/[^\w-]+/g, '_')}_accounting`
+
+// ── Single report (current tab, respecting its period filter) ─────────────────
+// rows = array-of-arrays. isGrid = true for the ledger (header row + many cols).
+export function exportReport(format, { property, title, subtitle = '', rows, isGrid = false }) {
+  const safe = title.replace(/[^\w]+/g, '_')
+  if (format === 'excel') {
+    const sheet = [[title], subtitle ? [subtitle] : [], [], ...rows]
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sheet), title.slice(0, 28))
+    XLSX.writeFile(wb, `${fileBase(property)}_${safe}.xlsx`)
+    return
+  }
+  const esc = s => String(s == null ? '' : s).replace(/[&<>]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c]))
+  const fmt = v => (typeof v === 'number' ? (v < 0 ? `($${Math.abs(Math.round(v)).toLocaleString()})` : `$${Math.round(v).toLocaleString()}`) : esc(v))
+  let table
+  if (isGrid) {
+    const [head, ...body] = rows
+    table = `<table class="grid"><thead><tr>${head.map(h => `<th>${esc(h)}</th>`).join('')}</tr></thead>
+      <tbody>${body.map(r => `<tr>${r.map((c, i) => `<td class="${i === 3 ? 'num' : ''}">${i === 3 ? fmt(c) : esc(c)}</td>`).join('')}</tr>`).join('')}</tbody></table>`
+  } else {
+    table = `<table>${rows.map(([a, b]) => {
+      const strong = typeof a === 'string' && (a === a.toUpperCase() || /^(Total|Net|Income)/.test(a.trim()))
+      return `<tr class="${strong ? 'strong' : ''}"><td>${esc(a)}</td><td class="num">${b === '' ? '' : fmt(b)}</td></tr>`
+    }).join('')}</table>`
+  }
+  const html = `<!doctype html><html><head><meta charset="utf-8"><title>${esc(propTitle(property))} — ${esc(title)}</title>
+    <style>
+      body{font:12px -apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#1e293b;padding:24px;}
+      h1{font-size:16px;margin:0 0 2px;} .sub{color:#64748b;margin:0 0 16px;font-size:12px;}
+      table{width:100%;border-collapse:collapse;} td,th{padding:3px 6px;}
+      td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap;}
+      tr.strong td{font-weight:700;border-top:1px solid #cbd5e1;}
+      table.grid th{background:#f1f5f9;text-align:left;font-size:10px;text-transform:uppercase;color:#64748b;border-bottom:1px solid #cbd5e1;}
+      table.grid td{border-bottom:1px solid #f1f5f9;font-size:11px;}
+    </style></head><body>
+      <h1>${esc(propTitle(property))} — ${esc(title)}</h1>
+      <p class="sub">${subtitle ? esc(subtitle) + ' · ' : ''}generated ${new Date().toLocaleDateString()}</p>
+      ${table}
+      <script>window.onload=function(){setTimeout(function(){window.print()},250)}</script>
+    </body></html>`
+  const w = window.open('', '_blank')
+  if (!w) { alert('Please allow pop-ups to export the PDF.'); return }
+  w.document.write(html); w.document.close()
+}
 
 // ── Excel ─────────────────────────────────────────────────────────────────────
 export function exportAccountingExcel(property, transactions, investors) {

@@ -3,6 +3,8 @@ import { useState } from 'react'
 import { ChevronDown, ChevronRight, Printer } from 'lucide-react'
 import DrilldownModal from './DrilldownModal'
 import { computeScheduleE, DEPRECIATION_YEARS } from '../../utils/accounting'
+import { scheduleERows } from '../../utils/accountingExport'
+import ReportExportButton from './ReportExportButton'
 
 function fmt$(n) {
   if (n === null || n === undefined) return '—'
@@ -93,6 +95,7 @@ export default function ScheduleE({ property, transactions, onChanged }) {
           >
             {years.map(y => <option key={y} value={y}>{y}</option>)}
           </select>
+          <ReportExportButton property={property} title="Schedule E" subtitle={`Tax year ${year}`} buildRows={() => scheduleERows(transactions, year)} />
           <button
             onClick={() => exportPrint(property, se)}
             className="flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 px-3 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors"

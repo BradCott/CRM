@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import DrilldownModal from './DrilldownModal'
 import { computePL, filterByPeriod, PL_CATS, EXPENSE_CATEGORIES, expenseLabel } from '../../utils/accounting'
+import { plRows } from '../../utils/accountingExport'
+import ReportExportButton from './ReportExportButton'
 
 function fmt$(n) {
   if (n === null || n === undefined) return '—'
@@ -153,7 +155,7 @@ function MonthlyView({ transactions, onChanged }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function ProfitLoss({ transactions, onChanged }) {
+export default function ProfitLoss({ property, transactions, onChanged }) {
   const [period,   setPeriod]   = useState('ytd')
   const [fromDate, setFromDate] = useState('')
   const [toDate,   setToDate]   = useState('')
@@ -202,6 +204,7 @@ export default function ProfitLoss({ transactions, onChanged }) {
             <option value="all">All Time</option>
             <option value="custom">Custom Range</option>
           </select>
+          <ReportExportButton property={property} title="Profit & Loss" subtitle={periodLabel} buildRows={() => plRows(base)} />
         </div>
       </div>
 

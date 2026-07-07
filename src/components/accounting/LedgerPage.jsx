@@ -591,17 +591,17 @@ export default function LedgerPage() {
               </button>
             </div>
           )}
-          <BalanceSheet transactions={recordedTx} investors={investors} opening={advanced ? openingBalances : null} />
+          <BalanceSheet property={property} transactions={recordedTx} investors={investors} opening={advanced ? openingBalances : null} />
         </div>
       )}
       {activeView === 'pl' && (
         <div className="flex-1 overflow-y-auto">
-          <ProfitLoss transactions={recordedTx} onChanged={reload} />
+          <ProfitLoss property={property} transactions={recordedTx} onChanged={reload} />
         </div>
       )}
       {activeView === 'cashflow' && (
         <div className="flex-1 overflow-y-auto">
-          <CashFlowStatement transactions={recordedTx} onChanged={reload} />
+          <CashFlowStatement property={property} transactions={recordedTx} onChanged={reload} />
         </div>
       )}
       {activeView === 'schedulee' && (
