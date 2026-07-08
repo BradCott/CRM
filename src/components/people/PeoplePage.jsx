@@ -558,7 +558,7 @@ export default function PeoplePage() {
         <>
           <div className="fixed inset-0 z-30" onClick={() => setDetailId(null)} />
           <PersonDetail personId={detailId} onClose={() => setDetailId(null)}
-            onEdit={() => { const p=rows.find(r=>r.id===detailId); if(p){setEditTarget(p);setShowForm(true)} setDetailId(null) }} />
+            onEdit={(full) => { const p = full || rows.find(r=>r.id===detailId); if(p){setEditTarget(p);setShowForm(true)} setDetailId(null) }} />
         </>
       )}
       {openMenu && <div className="fixed inset-0 z-0" onClick={() => setOpenMenu(null)} />}

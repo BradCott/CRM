@@ -172,7 +172,7 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
             >
               <TrendingUp className="w-3.5 h-3.5" /> Add to Pipeline
             </button>
-            <Button variant="ghost" size="sm" onClick={onEdit}>
+            <Button variant="ghost" size="sm" onClick={() => onEdit(data)}>
               <Pencil className="w-3.5 h-3.5 mr-1" /> Edit
             </Button>
             <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100">
