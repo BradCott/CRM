@@ -1211,6 +1211,7 @@ router.post('/:propertyId/settlement/rebalance', upload.single('file'), async (r
     const raw = await callClaudeWithPrompt(
       apiKey, req.file.buffer,
       buildRebalancePrompt(currentLines, payload.cash_to_close, payload.expected, payload.gap),
+      SETTLEMENT_MODEL,
     )
     const line_items = (Array.isArray(raw.line_items) ? raw.line_items : [])
       .filter(it => it && typeof it.description === 'string' && it.description.trim())
@@ -1314,12 +1315,20 @@ LINE ITEMS — this is the most important part. "line_items" must contain EVERY 
 
 BUYER SIDE ONLY — READ THE COLUMNS, this is critical. Our user is the BUYER, and this is the buyer's purchase. Only the buyer/borrower side belongs on our books. Extract ONLY buyer-relevant lines and SKIP the seller's own charges entirely:
 - HUD-1 / ALTA: the LEFT money column is the Borrower/Buyer ("Paid From Borrower's Funds", "Borrower" column); the RIGHT column is the Seller ("Paid From Seller's Funds", "Seller" column). Extract from the Borrower column only.
-- First American Title and similar: use the "Buyer Charge" and "Buyer Credit" columns only. Ignore the "Seller Charge" / "Seller Credit" columns.
-- INCLUDE every line in the buyer/borrower CHARGE column (title, escrow, recording, survey, appraisal, environmental, origination, consulting/acquisition fee, any transfer tax the buyer pays, etc. → "Buyer Closing Cost" or the specific treatment) AND every line in the buyer/borrower CREDIT column (the new loan → "Loan", earnest money → "Earnest Money", 1031 proceeds → "1031 Exchange", cash due → "Cash to Close", and any proration or concession credited TO the buyer).
-- A concession or credit the SELLER gives the BUYER (seller credit, seller-paid closing-cost credit, and tax/rent/insurance/CAM prorations credited to the buyer) DOES belong to us — it appears in the buyer's CREDIT column. KEEP these (tag "Seller Credit" or the matching "... Credit"). This is the only "seller"-labeled money that is ours.
-- DO NOT extract the seller's OWN charges — the seller's commission and payoff, the seller's side of title/escrow/transfer tax, and the seller's debit side of prorations. These never touch our books. OMIT them entirely; do NOT emit "Seller Closing Cost" lines.
-- When a fee appears on BOTH sides (buyer and seller each pay their own title/escrow/recording), include ONLY the buyer's instance.
-- The buyer column is self-contained: the buyer's charges minus the buyer's credits must reconcile to the buyer's cash to close, with NO reference to the seller side. Never invent lines.
+- First American Title / four-column layout: the columns left to right are "Buyer Charge", "Buyer Credit", Description, "Seller Charge", "Seller Credit". Amounts to the LEFT of the description belong to the buyer; amounts to the RIGHT of the description belong to the seller. Use ONLY the Buyer Charge and Buyer Credit amounts. Completely ignore any figure printed in the Seller Charge or Seller Credit columns.
+- SKIP ANY ROW whose amount(s) sit ONLY in a seller column (Seller Charge or Seller Credit) with nothing in the buyer columns — do not output it at all. Typical seller-only rows to drop entirely: real estate / broker commission, the seller's attorney fee, deed preparation fee, documentary/transfer/conveyance tax, recordation tax, the seller's loan payoff, any "… to <a third party>" disbursement shown in the Seller Charge column (e.g. a lease "Termination to <tenant>"), and the seller's net cash line ("Cash (To)(From) Seller").
+- For a row that has amounts in BOTH a buyer column AND a seller column (e.g. "Total Consideration", a tax/CAM proration, an environmental-remediation or lease-termination credit), take ONLY the buyer-column figure as a single line item. NEVER add the seller-column figure and NEVER output the same row twice.
+- INCLUDE every BUYER-CHARGE line: purchase price / total consideration → "Purchase Price"; title, escrow, recording, survey, appraisal, environmental, loan/origination fee, flood fee, tax-monitoring fee, review fee, consulting/acquisition fee, any funds-held-back / holdback the buyer funds, and any lease-termination or tenant buyout the BUYER pays for → "Buyer Closing Cost" (or the specific treatment). Also any back/current property taxes the buyer pays → "Buyer Taxes Paid".
+- INCLUDE every BUYER-CREDIT line: the new loan → "Loan"; earnest money / "Deposits in Escrow" → "Earnest Money"; 1031/QI proceeds → "1031 Exchange"; tax/rent/insurance/CAM prorations credited to the buyer → the matching "… Credit"; a seller concession or seller-paid credit to the buyer (e.g. an environmental-remediation credit shown in the Buyer Credit column) → "Seller Credit"; the buyer's cash brought to closing ("Cash (X From) Buyer", "Cash From Borrower", "Net cash from borrower") → "Cash to Close".
+- The buyer columns are self-contained and always foot to the same total. Do not reference, sum, or reconstruct the seller side at all. Never invent lines.
+
+CLASSIFY BY COLUMN, NOT BY THE WORDS in the label — this is the #1 source of errors. The description may contain "Credit", "Termination", "Adjustment", or "Tax"; IGNORE the wording and decide the treatment purely from WHICH buyer column the dollar amount is printed in:
+- Amount in the Buyer CHARGE column = a cost the buyer pays → "Buyer Closing Cost" (or "Purchase Price" / "Buyer Taxes Paid" where it clearly applies). This holds EVEN IF the label contains the word "Credit". Example: a lease termination or tenant buyout the buyer funds, shown in the Buyer Charge column and labeled e.g. "AAMCO Termination Credit", is a BUYER COST → "Buyer Closing Cost" (never "Seller Credit").
+- Amount in the Buyer CREDIT column = something that REDUCES the buyer's cash (loan, earnest money, or a credit TO the buyer). Sub-rules:
+  • A property-tax / rent / CAM / insurance PRORATION in the Buyer Credit column → the matching "Tax Proration Credit" / "Rent Proration Credit" / "CAM Credit" / "Insurance Credit". NEVER tag a proration in the credit column as "Buyer Taxes Paid". IMPORTANT: a real-estate-tax proration line — typically labeled "County Taxes", "Real Estate Taxes", "Property Tax", or "Taxes" and covering a date RANGE that ends on/near the closing date (e.g. "County Taxes 01/01/25 through 12/18/25 @ $17,815.86/yr") — is the seller's accrued unpaid taxes for the time they owned the property, credited to the buyer. In a purchase this is ALMOST ALWAYS a "Tax Proration Credit" (buyer credit), NOT "Buyer Taxes Paid". Only use "Buyer Taxes Paid" when the tax amount is unmistakably in the Buyer CHARGE column.
+  • An adjustment or concession in the Buyer Credit column (e.g. "Environmental Remediation", a repair credit, a seller concession) is money the seller gives the buyer → "Seller Credit".
+- "Buyer Taxes Paid" is ONLY for property taxes printed in the Buyer CHARGE column that the buyer actually pays as a cost — never for a tax amount in the credit column.
+- SELF-CHECK before you answer: compute (Purchase Price − Seller Credit + all Buyer Closing Costs + Buyer Taxes Paid) − (Loan + 1031 Exchange + Earnest Money + every proration/… Credit). This MUST equal the buyer's Cash to Close figure. If it does not, you mis-read a column, an amount, or included a seller row — re-examine the buyer columns and correct it before returning.
 
 Treatment guidance (within the correct side): purchase price → "Purchase Price"; the new mortgage → "Loan"; 1031/QI deposit → "1031 Exchange"; earnest money already paid → "Earnest Money"; cash due at closing → "Cash to Close"; buyer-side fees (title, escrow, recording, survey, appraisal, environmental/Phase I/II, flood, origination, consulting/acquisition fee, inspection, etc.) → "Buyer Closing Cost"; rent/tax/insurance/CAM prorations credited to the buyer → the matching "... Credit"; back/current property taxes the buyer pays → "Buyer Taxes Paid"; a seller credit/concession given to the buyer → "Seller Credit". When a BUYER-column item is unclear, prefer "Buyer Closing Cost". Ignore seller-column items entirely (do not emit them). Do not invent amounts; only include buyer-side lines that actually appear.
 
@@ -1423,7 +1432,7 @@ async function callClaude(apiKey, pdfBuffer) {
   return response
 }
 
-async function callClaudeWithPrompt(apiKey, buffer, prompt) {
+async function callClaudeWithPrompt(apiKey, buffer, prompt, model = 'claude-haiku-4-5-20251001') {
   const b64 = buffer.toString('base64')
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
@@ -1433,8 +1442,12 @@ async function callClaudeWithPrompt(apiKey, buffer, prompt) {
       'anthropic-version': '2023-06-01',
     },
     body: JSON.stringify({
-      model: 'claude-haiku-4-5-20251001',
+      model,
       max_tokens: 8192,
+      // Sonnet-class models default extended thinking ON, which would burn the
+      // whole token budget on thinking and return no JSON. Force it off — the
+      // prompts already carry the reasoning we need.
+      thinking: { type: 'disabled' },
       messages: [{
         role: 'user',
         content: [
@@ -1451,7 +1464,7 @@ async function callClaudeWithPrompt(apiKey, buffer, prompt) {
   }
 
   const data = await response.json()
-  const text = data.content?.[0]?.text || ''
+  const text = (data.content || []).filter(c => c.type === 'text').map(c => c.text).join('') || ''
   console.log('[accounting] Claude raw response (first 500):', text.slice(0, 500))
 
   const clean = text.replace(/```(?:json)?/g, '').trim()
@@ -1477,8 +1490,12 @@ function cleanDate(v) {
   return d.toISOString().slice(0, 10)
 }
 
+// Settlement statements are dense multi-column tables with cross-column
+// reconciling rows — use a stronger model than the default for column fidelity.
+const SETTLEMENT_MODEL = 'claude-sonnet-5'
+
 async function parseSettlementStatement(buffer, apiKey) {
-  const raw = await callClaudeWithPrompt(apiKey, buffer, SETTLEMENT_PROMPT)
+  const raw = await callClaudeWithPrompt(apiKey, buffer, SETTLEMENT_PROMPT, SETTLEMENT_MODEL)
 
   const cn = v => {
     const n = cleanNum(v)
