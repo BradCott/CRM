@@ -480,14 +480,19 @@ router.post('/:propertyId/amortization', upload.single('file'), async (req, res)
       })
     }
 
-    // Replace any existing schedule for this property (one loan per property for now)
-    const existing = db.prepare('SELECT id FROM loan_schedules WHERE property_id = ?').all(propertyId)
-    for (const e of existing) db.prepare('DELETE FROM loan_schedules WHERE id = ?').run(e.id)
+    // A property can carry more than one loan. Add this as a new schedule, but if
+    // one with the same name already exists (e.g. re-uploading a corrected file for
+    // the same lender), replace just that one so corrections don't pile up as dupes.
+    const loanName = terms.lender || originalname.replace(/\.[^.]+$/, '')
+    const dupe = db.prepare(
+      'SELECT id FROM loan_schedules WHERE property_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?))'
+    ).all(propertyId, loanName)
+    for (const e of dupe) db.prepare('DELETE FROM loan_schedules WHERE id = ?').run(e.id)
 
     const r = db.prepare(`
       INSERT INTO loan_schedules (property_id, name, original_principal, annual_rate, payment_amount, first_payment, term_months)
       VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(propertyId, terms.lender || originalname.replace(/\.[^.]+$/, ''),
+    `).run(propertyId, loanName,
            terms.original_principal || null, terms.annual_interest_rate || null,
            schedule.payment_amount, terms.first_payment_date || null, terms.term_months || schedule.rows.length)
 
@@ -518,11 +523,13 @@ router.post('/:propertyId/amortization', upload.single('file'), async (req, res)
 })
 
 router.get('/:propertyId/amortization', (req, res) => {
-  const schedule = db.prepare('SELECT * FROM loan_schedules WHERE property_id = ? ORDER BY id DESC LIMIT 1').get(req.params.propertyId)
-  if (!schedule) return res.json({ schedule: null })
-  const next = db.prepare(`SELECT * FROM loan_schedule_rows WHERE schedule_id = ? AND consumed = 0 ORDER BY due_date ASC LIMIT 1`).get(schedule.id)
-  const { used } = db.prepare(`SELECT COUNT(*) AS used FROM loan_schedule_rows WHERE schedule_id = ? AND consumed = 1`).get(schedule.id)
-  res.json({ schedule, next, used })
+  const schedules = db.prepare('SELECT * FROM loan_schedules WHERE property_id = ? ORDER BY id ASC').all(req.params.propertyId)
+  const nextRow = db.prepare(`SELECT * FROM loan_schedule_rows WHERE schedule_id = ? AND consumed = 0 ORDER BY due_date ASC LIMIT 1`)
+  const usedRow = db.prepare(`SELECT COUNT(*) AS used FROM loan_schedule_rows WHERE schedule_id = ? AND consumed = 1`)
+  const loans = schedules.map(s => ({ ...s, next: nextRow.get(s.id) || null, used: usedRow.get(s.id).used }))
+  // Back-compat: keep the single-schedule shape too, so older clients don't break.
+  const first = loans[0] || null
+  res.json({ loans, schedule: first, next: first?.next || null, used: first?.used || 0 })
 })
 
 router.delete('/amortization/:id', (req, res) => {

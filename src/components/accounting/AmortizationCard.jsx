@@ -13,7 +13,7 @@ function fmtDate(iso) {
 }
 
 export default function AmortizationCard({ propertyId, hideUploader = false }) {
-  const [data, setData]       = useState(null)   // { schedule, next, used }
+  const [data, setData]       = useState(null)   // { loans: [{...schedule, next, used}] }
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [error, setError]     = useState(null)
@@ -40,29 +40,26 @@ export default function AmortizationCard({ propertyId, hideUploader = false }) {
     }
   }
 
-  async function handleDelete() {
-    if (!data?.schedule || !window.confirm('Remove this amortization schedule? Mortgage payments will stop auto-splitting.')) return
-    await deleteAmortization(data.schedule.id)
-    setData({ schedule: null })
+  async function handleDelete(loan) {
+    if (!loan || !window.confirm(`Remove the "${loan.name || 'Loan'}" amortization schedule? Its mortgage payments will stop auto-splitting.`)) return
+    await deleteAmortization(loan.id)
+    load()
   }
 
   if (loading) return null
 
-  const s = data?.schedule
+  // Support both the new { loans: [...] } shape and the legacy single { schedule }.
+  const loans = data?.loans || (data?.schedule ? [{ ...data.schedule, next: data.next, used: data.used }] : [])
   // Upload now lives in the top toolbar; with no schedule there's nothing to show.
-  if (!s && hideUploader) return null
+  if (loans.length === 0 && hideUploader) return null
 
   return (
     <div className="shrink-0 bg-white border-b border-slate-200">
       <div className="px-6 pt-3 pb-2 flex items-center justify-between">
         <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
           <Landmark className="w-3.5 h-3.5" /> Loan Amortization
+          {loans.length > 1 && <span className="text-slate-300 normal-case font-normal">· {loans.length} loans</span>}
         </h3>
-        {s && (
-          <button onClick={handleDelete} className="text-xs text-slate-300 hover:text-red-500 transition-colors flex items-center gap-1">
-            <Trash2 className="w-3 h-3" /> Remove
-          </button>
-        )}
       </div>
 
       {error && (
@@ -71,26 +68,35 @@ export default function AmortizationCard({ propertyId, hideUploader = false }) {
         </div>
       )}
 
-      {s ? (
-        <div className="px-6 pb-4">
-          <div className="flex items-center gap-2 mb-3">
-            <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
-            <p className="text-sm text-slate-700">
-              <span className="font-medium">{s.name || 'Loan'}</span> — payments auto-split into principal &amp; interest on sync
-            </p>
-          </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Stat label="Monthly Payment" value={fmt$(s.payment_amount)} />
-            <Stat label="Original Balance" value={fmt$(s.original_principal)} />
-            <Stat label="Rate" value={s.annual_rate != null ? `${s.annual_rate}%` : '—'} />
-            <Stat label="Term" value={s.term_months ? `${s.term_months} mo` : '—'} />
-          </div>
-          {data.next && (
-            <p className="text-xs text-slate-400 mt-3">
-              Next scheduled payment {fmtDate(data.next.due_date)}: {fmt$(data.next.principal)} principal · {fmt$(data.next.interest)} interest
-              {data.used > 0 && <> · {data.used} payment{data.used !== 1 ? 's' : ''} matched so far</>}
-            </p>
-          )}
+      {loans.length > 0 ? (
+        <div className="px-6 pb-4 space-y-4">
+          {loans.map(loan => (
+            <div key={loan.id} className={loans.length > 1 ? 'pb-3 border-b border-slate-100 last:border-0 last:pb-0' : ''}>
+              <div className="flex items-center justify-between gap-2 mb-3">
+                <div className="flex items-center gap-2 min-w-0">
+                  <CheckCircle className="w-4 h-4 text-emerald-500 shrink-0" />
+                  <p className="text-sm text-slate-700 truncate">
+                    <span className="font-medium">{loan.name || 'Loan'}</span> — payments auto-split into principal &amp; interest on sync
+                  </p>
+                </div>
+                <button onClick={() => handleDelete(loan)} className="shrink-0 text-xs text-slate-300 hover:text-red-500 transition-colors flex items-center gap-1">
+                  <Trash2 className="w-3 h-3" /> Remove
+                </button>
+              </div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Stat label="Monthly Payment" value={fmt$(loan.payment_amount)} />
+                <Stat label="Original Balance" value={fmt$(loan.original_principal)} />
+                <Stat label="Rate" value={loan.annual_rate != null ? `${loan.annual_rate}%` : '—'} />
+                <Stat label="Term" value={loan.term_months ? `${loan.term_months} mo` : '—'} />
+              </div>
+              {loan.next && (
+                <p className="text-xs text-slate-400 mt-3">
+                  Next scheduled payment {fmtDate(loan.next.due_date)}: {fmt$(loan.next.principal)} principal · {fmt$(loan.next.interest)} interest
+                  {loan.used > 0 && <> · {loan.used} payment{loan.used !== 1 ? 's' : ''} matched so far</>}
+                </p>
+              )}
+            </div>
+          ))}
         </div>
       ) : (
         <div className="px-6 pb-4">
