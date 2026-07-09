@@ -3,6 +3,7 @@ import db from '../db.js'
 import { requireRole } from '../middleware/auth.js'
 import { seedDefaultTasks } from './management.js'
 import { normalizeAddr, tokenSearch } from '../utils/normalize.js'
+import { searchDriveForProperty } from '../services/driveSearch.js'
 
 const router = Router()
 
@@ -462,6 +463,19 @@ router.post('/:id/lease-data', requireRole('admin'), (req, res) => {
     res.json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(propId))
   } catch (err) {
     console.error('[POST /api/properties/:id/lease-data] error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Search Google Drive for documents relevant to this property (address, tenant
+// brand, store number). Used by the Find Docs button on the accounting +
+// management pages.
+router.get('/:id/drive-docs', async (req, res) => {
+  try {
+    const out = await searchDriveForProperty(req.params.id)
+    res.json(out)
+  } catch (err) {
+    console.error('[GET /api/properties/:id/drive-docs] error:', err.message)
     res.status(500).json({ error: err.message })
   }
 })

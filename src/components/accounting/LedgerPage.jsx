@@ -23,6 +23,7 @@ import CapitalAccounts from './CapitalAccounts'
 import PlaidConnect from './PlaidConnect'
 import SplitTransactionModal from './SplitTransactionModal'
 import AmortizationCard from './AmortizationCard'
+import DriveDocsButton from '../properties/DriveDocsButton'
 import CategorySelect from './CategorySelect'
 import { CATEGORY_COLORS, computeBalanceSheet } from '../../utils/accounting'
 
@@ -509,6 +510,7 @@ export default function LedgerPage() {
             <Button variant="secondary" onClick={() => setShowInvestors(true)}>
               <Users className="w-4 h-4" /> Investor Contributions
             </Button>
+            <DriveDocsButton propertyId={propertyId} />
             <div className="relative">
               <Button variant="secondary" onClick={() => setExportOpen(o => !o)} title="Export the ledger + reports">
                 <Download className="w-4 h-4" /> Export <ChevronDown className="w-3.5 h-3.5" />

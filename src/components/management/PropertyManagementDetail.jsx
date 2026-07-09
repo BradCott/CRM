@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import DriveDocsButton from '../properties/DriveDocsButton'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft, ClipboardList, Shield, Receipt, Wrench, Users,
@@ -1177,11 +1178,16 @@ export default function PropertyManagementDetail() {
         >
           <ArrowLeft className="w-3 h-3" /> Back to dashboard
         </Link>
-        <h1 className="text-lg font-bold text-slate-900">{property.address}</h1>
-        <p className="text-sm text-slate-500">
-          {[property.city, property.state, property.zip].filter(Boolean).join(', ')}
-          {property.tenant_brand_name ? ` · ${property.tenant_brand_name}` : ''}
-        </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h1 className="text-lg font-bold text-slate-900">{property.address}</h1>
+            <p className="text-sm text-slate-500">
+              {[property.city, property.state, property.zip].filter(Boolean).join(', ')}
+              {property.tenant_brand_name ? ` · ${property.tenant_brand_name}` : ''}
+            </p>
+          </div>
+          <DriveDocsButton propertyId={propertyId} className="shrink-0" />
+        </div>
       </div>
 
       {/* Tabs */}
