@@ -238,6 +238,12 @@ export async function uploadSettlement(propertyId, file) {
   fd.append('file', file)
   return req('POST', `/accounting/${propertyId}/settlement`, fd)
 }
+export async function rebalanceSettlement(propertyId, file, payload) {
+  const fd = new FormData()
+  fd.append('file', file)
+  fd.append('payload', JSON.stringify(payload))
+  return req('POST', `/accounting/${propertyId}/settlement/rebalance`, fd)
+}
 export async function uploadBankStatement(propertyId, file) {
   const fd = new FormData()
   fd.append('file', file)

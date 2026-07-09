@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useAssistant } from '../../context/AssistantContext'
 import { X, Upload, Loader2, CheckCircle, AlertCircle, AlertTriangle, Copy, Check, Users } from 'lucide-react'
 import Button from '../ui/Button'
-import { uploadSettlement, createTransactions, saveJournalEntry, getInvestors } from '../../api/client'
+import { uploadSettlement, rebalanceSettlement, createTransactions, saveJournalEntry, getInvestors } from '../../api/client'
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
@@ -53,6 +53,19 @@ function deriveFields(baseFields, lineItems) {
     if (f) money[f] += Number(li.amount) || 0
   }
   return { ...baseFields, ...money }
+}
+
+/** Buyer-side reconciliation: does the cash-to-close implied by the lines match the statement's? */
+function reconcile(fields) {
+  const n = k => Number(fields?.[k]) || 0
+  const netPP   = n('purchase_price') - n('seller_closing_credit')
+  const credits = n('loan_amount') + n('exchange_proceeds') + n('earnest_money')
+    + n('tax_credits') + n('prorated_rent') + n('insurance_credit') + n('cam_credit')
+  const expectedCTC = netPP + n('total_closing_costs') + n('buyer_taxes_paid') - credits
+  const statedCTC   = n('cash_to_close')
+  const gap         = statedCTC - expectedCTC
+  const match       = Math.abs(gap) < 2 || statedCTC === 0
+  return { netPP, credits, expectedCTC, statedCTC, gap, match }
 }
 
 /** Build editable line items from the AI's rigid fields (fallback when the AI returns no line_items). */
@@ -279,13 +292,7 @@ function ReconstructedStatement({ lineItems, fields }) {
     .filter(g => g.lines.length)
   const subtotal = lines => lines.reduce((s, l) => s + (Number(l.amount) || 0), 0)
 
-  const netPP = n('purchase_price') - n('seller_closing_credit')
-  const credits = n('loan_amount') + n('exchange_proceeds') + n('earnest_money')
-    + n('tax_credits') + n('prorated_rent') + n('insurance_credit') + n('cam_credit')
-  const expectedCTC = netPP + n('total_closing_costs') + n('buyer_taxes_paid') - credits
-  const statedCTC   = n('cash_to_close')
-  const ctcGap      = statedCTC - expectedCTC
-  const ctcMatch    = Math.abs(ctcGap) < 2 || statedCTC === 0
+  const { netPP, credits, expectedCTC, statedCTC, gap: ctcGap, match: ctcMatch } = reconcile(fields)
 
   return (
     <div className="border border-slate-200 rounded-xl overflow-hidden">
@@ -578,6 +585,9 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
   const [lineItems, setLineItems]     = useState([])
   const [emdOutsideLLC, setEmdOutsideLLC]   = useState(false)
   const [emdEquityAccount, setEmdEquityAccount] = useState('')
+  const [file, setFile]               = useState(null)      // kept so we can re-send for AI rebalance
+  const [rebalancing, setRebalancing] = useState(false)
+  const [suggestion, setSuggestion]   = useState(null)      // { reconciles, explanation, changes, line_items }
 
   // CRM property name used as QuickBooks account name
   const propertyName = property?.address || ''
@@ -609,6 +619,8 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
 
   async function handleFile(file) {
     if (!file) return
+    setFile(file)
+    setSuggestion(null)
     setStep('parsing')
     setError(null)
     try {
@@ -622,6 +634,35 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
       setError(err.message)
       setStep('upload')
     }
+  }
+
+  // Buyer-side reconciliation on the current (edited) line items
+  const rec       = derived ? reconcile(derived) : null
+  const balanced  = rec ? rec.match : true
+
+  async function handleRebalance() {
+    if (!file || !rec) return
+    setRebalancing(true)
+    setError(null)
+    setSuggestion(null)
+    try {
+      const r = await rebalanceSettlement(propertyId, file, {
+        line_items:    lineItems,
+        cash_to_close: rec.statedCTC,
+        expected:      rec.expectedCTC,
+        gap:           rec.gap,
+      })
+      setSuggestion(r)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setRebalancing(false)
+    }
+  }
+
+  function applySuggestion() {
+    if (suggestion?.line_items?.length) setLineItems(suggestion.line_items)
+    setSuggestion(null)
   }
 
   const sellerCr       = derived ? (Number(derived.seller_closing_credit) || 0) : 0
@@ -967,6 +1008,64 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
                   )}
                 </div>
               </div>
+              {/* AI rebalance — offered whenever the buyer side doesn't reconcile */}
+              {step === 'review' && !balanced && (
+                <div className="border border-amber-200 bg-amber-50/60 rounded-xl px-4 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-2 text-xs text-amber-800">
+                      <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                      <span>
+                        The buyer side is off by <span className="font-semibold">{money(Math.abs(rec.gap))}</span>. Let the AI re-read the
+                        statement and suggest fixes to make it balance.
+                      </span>
+                    </div>
+                    <Button variant="secondary" onClick={handleRebalance} disabled={rebalancing || !file}>
+                      {rebalancing
+                        ? <><Loader2 className="w-4 h-4 animate-spin" /> Reviewing…</>
+                        : <>Review &amp; rebalance with AI</>}
+                    </Button>
+                  </div>
+
+                  {suggestion && (
+                    <div className="mt-3 border-t border-amber-200 pt-3">
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        {suggestion.reconciles
+                          ? <CheckCircle className="w-4 h-4 text-emerald-600" />
+                          : <AlertCircle className="w-4 h-4 text-amber-600" />}
+                        <p className="text-xs font-semibold text-slate-700">
+                          {suggestion.reconciles ? 'Suggested changes to balance' : 'Best effort — may still not balance'}
+                        </p>
+                      </div>
+                      {suggestion.explanation && (
+                        <p className="text-xs text-slate-600 mb-2">{suggestion.explanation}</p>
+                      )}
+                      {suggestion.changes?.length > 0 && (
+                        <ul className="space-y-1 mb-3">
+                          {suggestion.changes.map((c, i) => (
+                            <li key={i} className="text-[11px] text-slate-600 flex gap-1.5">
+                              <span className="text-amber-500 shrink-0">•</span>
+                              <span>
+                                <span className="font-medium text-slate-700">{c.description || c.action}</span>
+                                {c.from && c.to && <span className="text-slate-400"> — {c.from} → <span className="text-slate-700">{c.to}</span></span>}
+                                {c.reason && <span className="text-slate-400"> ({c.reason})</span>}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <Button variant="primary" onClick={applySuggestion} disabled={!suggestion.line_items?.length}>
+                          <Check className="w-4 h-4" /> Apply changes
+                        </Button>
+                        <button onClick={() => setSuggestion(null)} className="text-xs text-slate-500 hover:text-slate-700 px-2 py-1">
+                          Dismiss
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Reconstructed settlement statement — full width, review only */}
               <ReconstructedStatement lineItems={lineItems} fields={derived} />
             </div>

@@ -1174,6 +1174,74 @@ router.post('/:propertyId/settlement', upload.single('file'), async (req, res) =
   }
 })
 
+// ── Settlement re-balance — AI re-reads the PDF and corrects the buyer-side
+// line items so they reconcile to the stated cash to close. ────────────────────
+function buildRebalancePrompt(currentLines, statedCTC, expected, gap) {
+  return `${SETTLEMENT_PROMPT}
+
+RE-BALANCE MODE — this settlement statement was already extracted once, but the buyer side does not reconcile. Here is the CURRENT buyer-side extraction:
+${JSON.stringify(currentLines, null, 2)}
+
+From these lines the expected cash to close computes to $${Number(expected).toFixed(2)}, but the statement's stated cash to close is $${Number(statedCTC).toFixed(2)} — off by $${Math.abs(Number(gap)).toFixed(2)}.
+
+Re-read the attached PDF as the source of truth and correct the buyer-side line items so they reconcile: buyer charges (Purchase Price net of Seller Credit + Buyer Closing Cost + Buyer Taxes Paid) minus buyer credits (Loan + 1031 Exchange + Earnest Money + all proration/Credit lines) must equal the stated Cash to Close.
+
+Check the PDF for the most likely causes: a misread amount, a line assigned to the wrong treatment, a buyer-column line that was missed, a seller-column line that was wrongly included (omit it), or a missing "Cash to Close" line. Make the SMALLEST set of changes that reconciles, and only change what the PDF actually supports — NEVER invent an amount just to force a balance.
+
+Return ONLY a JSON object in this exact shape:
+{
+  "reconciles": true or false,
+  "explanation": "one or two plain-English sentences: what was wrong and how you fixed it",
+  "changes": [ { "description": "line label", "action": "changed amount" | "reclassified" | "added" | "removed", "from": "prior value or null", "to": "new value", "reason": "short reason" } ],
+  "line_items": [ { "description": "exact label", "amount": positive number, "treatment": "one of the allowed treatments" } ]
+}
+"line_items" must be the FULL corrected buyer-side list (not just the changed lines), following the same buyer-side-only rules and treatments described above. If you cannot make it reconcile from the PDF, set "reconciles": false, still return your best line_items, and use "explanation" to say what appears to be missing. Return ONLY the JSON, no markdown.`
+}
+
+router.post('/:propertyId/settlement/rebalance', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set' })
+
+  let payload = {}
+  try { payload = JSON.parse(req.body.payload || '{}') } catch { /* ignore */ }
+  const currentLines = Array.isArray(payload.line_items) ? payload.line_items : []
+
+  try {
+    const raw = await callClaudeWithPrompt(
+      apiKey, req.file.buffer,
+      buildRebalancePrompt(currentLines, payload.cash_to_close, payload.expected, payload.gap),
+    )
+    const line_items = (Array.isArray(raw.line_items) ? raw.line_items : [])
+      .filter(it => it && typeof it.description === 'string' && it.description.trim())
+      .map(it => ({
+        description: String(it.description).trim(),
+        amount:      cleanNum(it.amount),
+        treatment:   SETTLEMENT_TREATMENTS.has(it.treatment) ? it.treatment : 'Buyer Closing Cost',
+      }))
+      .filter(it => it.amount !== null && it.amount > 0)
+    const changes = (Array.isArray(raw.changes) ? raw.changes : [])
+      .filter(c => c && (c.description || c.reason))
+      .map(c => ({
+        description: c.description ? String(c.description).trim() : '',
+        action:      c.action ? String(c.action).trim() : '',
+        from:        c.from != null ? String(c.from).trim() : null,
+        to:          c.to   != null ? String(c.to).trim()   : null,
+        reason:      c.reason ? String(c.reason).trim() : '',
+      }))
+    res.json({
+      ok: true,
+      reconciles:  !!raw.reconciles,
+      explanation: typeof raw.explanation === 'string' ? raw.explanation.trim() : '',
+      changes,
+      line_items,
+    })
+  } catch (err) {
+    console.error('[accounting] Settlement rebalance error:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ── Bank Statement AI parse ───────────────────────────────────────────────────
 
 router.post('/:propertyId/bank-statement', upload.single('file'), async (req, res) => {
@@ -1196,6 +1264,8 @@ router.post('/:propertyId/bank-statement', upload.single('file'), async (req, re
 })
 
 // ── AI helpers ────────────────────────────────────────────────────────────────
+
+const SETTLEMENT_TREATMENTS = new Set(['Purchase Price','Seller Credit','Buyer Closing Cost','Seller Closing Cost','Loan','1031 Exchange','Earnest Money','Cash to Close','Tax Proration Credit','Rent Proration Credit','Insurance Credit','CAM Credit','Buyer Taxes Paid','Ignore'])
 
 const SETTLEMENT_PROMPT = `You are extracting financial data from a real estate settlement statement. This may be a First American Title format (with Buyer Charge / Buyer Credit columns) or a HUD-1 format (with numbered sections 100-1400 and Borrower/Seller columns).
 
@@ -1460,7 +1530,7 @@ async function parseSettlementStatement(buffer, apiKey) {
         .filter(item => item.amount !== null && item.amount > 0)
     })(),
     line_items: (() => {
-      const VALID = new Set(['Purchase Price','Seller Credit','Buyer Closing Cost','Seller Closing Cost','Loan','1031 Exchange','Earnest Money','Cash to Close','Tax Proration Credit','Rent Proration Credit','Insurance Credit','CAM Credit','Buyer Taxes Paid','Ignore'])
+      const VALID = SETTLEMENT_TREATMENTS
       if (!Array.isArray(raw.line_items)) return []
       return raw.line_items
         .filter(it => it && typeof it.description === 'string' && it.description.trim())
