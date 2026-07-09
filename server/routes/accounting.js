@@ -1174,28 +1174,35 @@ router.post('/:propertyId/settlement', upload.single('file'), async (req, res) =
   }
 })
 
-// ── Settlement re-balance — AI re-reads the PDF and corrects the buyer-side
-// line items so they reconcile to the stated cash to close. ────────────────────
-function buildRebalancePrompt(currentLines, statedCTC, expected, gap) {
-  return `${SETTLEMENT_PROMPT}
+// ── Settlement re-balance ─────────────────────────────────────────────────────
+// Re-reads the whole PDF from scratch (a fresh parse is far more reliable than
+// asking the model to minimally edit an already-wrong extraction), then the
+// SERVER decides whether it actually reconciles — the model's own claim is never
+// trusted. A deterministic per-category diff shows the user what changed.
+const $money = n => (n < 0 ? `-$${Math.abs(Math.round(n)).toLocaleString()}` : `$${Math.round(n).toLocaleString()}`)
 
-RE-BALANCE MODE — this settlement statement was already extracted once, but the buyer side does not reconcile. Here is the CURRENT buyer-side extraction:
-${JSON.stringify(currentLines, null, 2)}
-
-From these lines the expected cash to close computes to $${Number(expected).toFixed(2)}, but the statement's stated cash to close is $${Number(statedCTC).toFixed(2)} — off by $${Math.abs(Number(gap)).toFixed(2)}.
-
-Re-read the attached PDF as the source of truth and correct the buyer-side line items so they reconcile: buyer charges (Purchase Price net of Seller Credit + Buyer Closing Cost + Buyer Taxes Paid) minus buyer credits (Loan + 1031 Exchange + Earnest Money + all proration/Credit lines) must equal the stated Cash to Close.
-
-Check the PDF for the most likely causes: a misread amount, a line assigned to the wrong treatment, a buyer-column line that was missed, a seller-column line that was wrongly included (omit it), or a missing "Cash to Close" line. Make the SMALLEST set of changes that reconciles, and only change what the PDF actually supports — NEVER invent an amount just to force a balance.
-
-Return ONLY a JSON object in this exact shape:
-{
-  "reconciles": true or false,
-  "explanation": "one or two plain-English sentences: what was wrong and how you fixed it",
-  "changes": [ { "description": "line label", "action": "changed amount" | "reclassified" | "added" | "removed", "from": "prior value or null", "to": "new value", "reason": "short reason" } ],
-  "line_items": [ { "description": "exact label", "amount": positive number, "treatment": "one of the allowed treatments" } ]
+function reconcileLines(lineItems) {
+  const sum = t => lineItems.filter(x => x.treatment === t).reduce((s, x) => s + (Number(x.amount) || 0), 0)
+  const expected = (sum('Purchase Price') - sum('Seller Credit') + sum('Buyer Closing Cost') + sum('Buyer Taxes Paid'))
+    - (sum('Loan') + sum('1031 Exchange') + sum('Earnest Money') + sum('Tax Proration Credit')
+       + sum('Rent Proration Credit') + sum('Insurance Credit') + sum('CAM Credit'))
+  const stated = sum('Cash to Close')
+  const gap = stated - expected
+  return { expected, stated, gap, balanced: Math.abs(gap) < 2 || stated === 0 }
 }
-"line_items" must be the FULL corrected buyer-side list (not just the changed lines), following the same buyer-side-only rules and treatments described above. If you cannot make it reconcile from the PDF, set "reconciles": false, still return your best line_items, and use "explanation" to say what appears to be missing. Return ONLY the JSON, no markdown.`
+
+// Category-level diff between the old and re-parsed line items (deterministic).
+function bucketDiff(oldLines, newLines) {
+  const sumBy = (lines, t) => lines.filter(x => x.treatment === t).reduce((s, x) => s + (Number(x.amount) || 0), 0)
+  const buckets = [...SETTLEMENT_TREATMENTS].filter(t => t !== 'Seller Closing Cost' && t !== 'Ignore')
+  const out = []
+  for (const t of buckets) {
+    const o = sumBy(oldLines, t), n = sumBy(newLines, t)
+    if (Math.abs(o - n) > 0.5) {
+      out.push({ description: t, action: 'reclassified', from: $money(o), to: $money(n), reason: '' })
+    }
+  }
+  return out
 }
 
 router.post('/:propertyId/settlement/rebalance', upload.single('file'), async (req, res) => {
@@ -1208,35 +1215,17 @@ router.post('/:propertyId/settlement/rebalance', upload.single('file'), async (r
   const currentLines = Array.isArray(payload.line_items) ? payload.line_items : []
 
   try {
-    const raw = await callClaudeWithPrompt(
-      apiKey, req.file.buffer,
-      buildRebalancePrompt(currentLines, payload.cash_to_close, payload.expected, payload.gap),
-      SETTLEMENT_MODEL,
-    )
-    const line_items = (Array.isArray(raw.line_items) ? raw.line_items : [])
-      .filter(it => it && typeof it.description === 'string' && it.description.trim())
-      .map(it => ({
-        description: String(it.description).trim(),
-        amount:      cleanNum(it.amount),
-        treatment:   SETTLEMENT_TREATMENTS.has(it.treatment) ? it.treatment : 'Buyer Closing Cost',
-      }))
-      .filter(it => it.amount !== null && it.amount > 0)
-    const changes = (Array.isArray(raw.changes) ? raw.changes : [])
-      .filter(c => c && (c.description || c.reason))
-      .map(c => ({
-        description: c.description ? String(c.description).trim() : '',
-        action:      c.action ? String(c.action).trim() : '',
-        from:        c.from != null ? String(c.from).trim() : null,
-        to:          c.to   != null ? String(c.to).trim()   : null,
-        reason:      c.reason ? String(c.reason).trim() : '',
-      }))
-    res.json({
-      ok: true,
-      reconciles:  !!raw.reconciles,
-      explanation: typeof raw.explanation === 'string' ? raw.explanation.trim() : '',
-      changes,
-      line_items,
-    })
+    // Fresh, from-scratch parse (Sonnet + column-based rules) — the reliable path.
+    const fresh = await parseSettlementStatement(req.file.buffer, apiKey)
+    const line_items = fresh.line_items || []
+    const rec = reconcileLines(line_items)          // server-computed truth
+    const changes = bucketDiff(currentLines, line_items)
+
+    const explanation = rec.balanced
+      ? `Re-read the statement from scratch — the buyer side now reconciles to a cash to close of ${$money(rec.stated)}.`
+      : `Re-read the statement, but the buyer side is still off by ${$money(Math.abs(rec.gap))} (lines imply ${$money(rec.expected)}, statement says ${$money(rec.stated)}). A line is likely on the wrong side or an amount was misread — check the reconstructed statement, or a line may be missing.`
+
+    res.json({ ok: true, reconciles: rec.balanced, gap: rec.gap, explanation, changes, line_items })
   } catch (err) {
     console.error('[accounting] Settlement rebalance error:', err)
     res.status(500).json({ error: err.message })
