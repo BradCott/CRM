@@ -1,7 +1,7 @@
 // Loan amortization — upload a schedule; mortgage payments auto-split on sync
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Landmark, Upload, Loader2, Trash2, FileText, CheckCircle, AlertCircle } from 'lucide-react'
-import { getAmortization, uploadAmortization, deleteAmortization } from '../../api/client'
+import { Landmark, Upload, Loader2, Trash2, FileText, CheckCircle, AlertCircle, Scissors } from 'lucide-react'
+import { getAmortization, uploadAmortization, deleteAmortization, applyAmortization } from '../../api/client'
 
 function fmt$(n) {
   if (n === null || n === undefined) return '—'
@@ -12,13 +12,33 @@ function fmtDate(iso) {
   return new Date(iso.slice(0, 10) + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export default function AmortizationCard({ propertyId, hideUploader = false }) {
+export default function AmortizationCard({ propertyId, hideUploader = false, onChanged }) {
   const [data, setData]       = useState(null)   // { loans: [{...schedule, next, used}] }
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
   const [error, setError]     = useState(null)
   const [dragging, setDrag]   = useState(false)
+  const [applying, setApplying] = useState(false)
+  const [applyMsg, setApplyMsg] = useState(null)
   const inputRef = useRef()
+
+  async function handleApply() {
+    setApplying(true)
+    setError(null)
+    setApplyMsg(null)
+    try {
+      const { split } = await applyAmortization(propertyId)
+      setApplyMsg(split > 0
+        ? `Split ${split} matching payment${split !== 1 ? 's' : ''} into principal & interest.`
+        : 'No un-split payments matched this schedule.')
+      load()
+      if (split > 0) onChanged?.()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setApplying(false)
+    }
+  }
 
   const load = useCallback(() => {
     getAmortization(propertyId).then(setData).catch(() => {}).finally(() => setLoading(false))
@@ -60,7 +80,25 @@ export default function AmortizationCard({ propertyId, hideUploader = false }) {
           <Landmark className="w-3.5 h-3.5" /> Loan Amortization
           {loans.length > 1 && <span className="text-slate-300 normal-case font-normal">· {loans.length} loans</span>}
         </h3>
+        {loans.length > 0 && (
+          <button
+            onClick={handleApply}
+            disabled={applying}
+            title="Split already-imported mortgage payments into principal & interest using this schedule (for payments synced before the schedule was uploaded)"
+            className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors disabled:opacity-50"
+          >
+            {applying ? <Loader2 className="w-3 h-3 animate-spin" /> : <Scissors className="w-3 h-3" />}
+            Split existing payments
+          </button>
+        )}
       </div>
+
+      {applyMsg && (
+        <div className="mx-6 mb-3 flex items-center gap-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-700">
+          <CheckCircle className="w-3.5 h-3.5 shrink-0" />{applyMsg}
+          <button onClick={() => setApplyMsg(null)} className="ml-auto text-emerald-400 hover:text-emerald-600">✕</button>
+        </div>
+      )}
 
       {error && (
         <div className="mx-6 mb-3 flex items-center gap-2 px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">

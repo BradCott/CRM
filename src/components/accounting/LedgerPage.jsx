@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles, Link2, AlertTriangle } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries, matchTransaction, unmatchTransaction, getMatchCandidates, recordEarnestAsEquity } from '../../api/client'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, applyAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries, matchTransaction, unmatchTransaction, getMatchCandidates, recordEarnestAsEquity } from '../../api/client'
 import OpeningBalancesModal from './OpeningBalancesModal'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
@@ -80,6 +80,7 @@ export default function LedgerPage() {
   })
   const [amortRefresh, setAmortRefresh]     = useState(0)
   const [amortUploading, setAmortUploading] = useState(false)
+  const [amortSplitMsg, setAmortSplitMsg]   = useState(null)
   const amortInputRef                       = useRef(null)
   const [crmInvestors, setCrmInvestors]     = useState([])   // global investor profiles for the link picker
   const [linkingId, setLinkingId]           = useState(null) // cap-table row id being linked
@@ -108,8 +109,18 @@ export default function LedgerPage() {
     setError(null)
     try {
       await uploadAmortization(propertyId, file)
+      // Retroactively split any payments that were already synced before this
+      // schedule existed, so uploading the schedule late still splits them.
+      let splitMsg = ''
+      try {
+        const { split } = await applyAmortization(propertyId)
+        if (split > 0) splitMsg = ` ${split} existing payment${split !== 1 ? 's' : ''} split into principal & interest.`
+      } catch { /* non-fatal */ }
       setAmortRefresh(n => n + 1)   // remount the card so it shows the new schedule
       reload()
+      setAmortSplitMsg(splitMsg
+        ? `Schedule uploaded.${splitMsg}`
+        : 'Schedule uploaded. Future mortgage payments will auto-split on sync.')
     } catch (e) {
       setError(e.message)
     } finally {
@@ -855,9 +866,18 @@ export default function LedgerPage() {
         <PlaidConnect propertyId={propertyId} onSaved={reload} />
       )}
 
+      {/* Amortization upload result (incl. retroactive split count) */}
+      {activeView === 'ledger' && amortSplitMsg && (
+        <div className="shrink-0 mx-6 mt-3 flex items-center gap-2 px-3 py-2 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-700">
+          <Check className="w-3.5 h-3.5 shrink-0" />
+          <span>{amortSplitMsg}</span>
+          <button onClick={() => setAmortSplitMsg(null)} className="ml-auto text-emerald-400 hover:text-emerald-600">✕</button>
+        </div>
+      )}
+
       {/* Loan amortization — only in ledger view */}
       {activeView === 'ledger' && (
-        <AmortizationCard key={amortRefresh} propertyId={propertyId} hideUploader />
+        <AmortizationCard key={amortRefresh} propertyId={propertyId} hideUploader onChanged={reload} />
       )}
 
       {/* Transaction Ledger — collapsible, only in ledger view */}

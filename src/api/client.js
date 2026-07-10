@@ -188,6 +188,7 @@ export const splitTransaction         = (id, splits)    => req('POST',   `/accou
 // Loan amortization schedule
 export const getAmortization          = (propertyId)    => req('GET',    `/accounting/${propertyId}/amortization`)
 export const deleteAmortization       = (id)            => req('DELETE', `/accounting/amortization/${id}`)
+export const applyAmortization        = (propertyId)    => req('POST',   `/accounting/${propertyId}/amortization/apply`)
 export async function uploadAmortization(propertyId, file) {
   const fd = new FormData()
   fd.append('file', file)

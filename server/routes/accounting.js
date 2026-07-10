@@ -4,7 +4,7 @@ import * as XLSX from 'xlsx'
 import db from '../db.js'
 import { autoLinkInvestors, investorRosterWithAliases, matchInvestorWire, normalizeName, nameSimilarity } from '../services/investorMatch.js'
 import { categorizeBatch, learnRules, ruleConfidence } from '../utils/categorize.js'
-import { generateSchedule } from '../utils/amortization.js'
+import { generateSchedule, matchMortgageSplit, markRowConsumed } from '../utils/amortization.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
@@ -535,6 +535,56 @@ router.get('/:propertyId/amortization', (req, res) => {
 router.delete('/amortization/:id', (req, res) => {
   db.prepare('DELETE FROM loan_schedules WHERE id = ?').run(req.params.id)
   res.status(204).end()
+})
+
+// Retroactively split already-imported mortgage payments against the schedule(s).
+// For when the amortization schedule was uploaded AFTER the bank was synced, so
+// those payments came in as single lines. Same amount-match logic as live sync.
+router.post('/:propertyId/amortization/apply', (req, res) => {
+  const { propertyId } = req.params
+  const schedules = db.prepare('SELECT id FROM loan_schedules WHERE property_id = ?').all(propertyId)
+  if (!schedules.length) return res.status(400).json({ error: 'No amortization schedule on this property yet' })
+
+  // Candidate payments: outgoing, not already a split line, not already a mortgage
+  // principal/interest line. Oldest first so schedule rows are consumed in order.
+  const candidates = db.prepare(`
+    SELECT * FROM accounting_transactions
+    WHERE property_id = ? AND amount < 0
+      AND (split_group IS NULL OR split_group = '')
+      AND category NOT IN ('Mortgage Interest', 'Mortgage Principal')
+      AND COALESCE(source, '') != 'Settlement Statement'
+    ORDER BY date ASC, id ASC
+  `).all(propertyId)
+
+  const insertSplit = db.prepare(`
+    INSERT INTO accounting_transactions
+      (property_id, date, description, category, amount, source, review_status, external_id, split_group, investor_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const delStmt = db.prepare('DELETE FROM accounting_transactions WHERE id = ?')
+
+  let split = 0
+  const run = db.transaction(() => {
+    for (const tx of candidates) {
+      const m = matchMortgageSplit(propertyId, { amount: tx.amount, date: tx.date })
+      if (!m) continue
+      const group = `amort-${tx.external_id || `tx${tx.id}`}`
+      m.lines.forEach((line, j) => {
+        insertSplit.run(
+          propertyId, tx.date, `${tx.description} — ${line.description}`,
+          line.category, line.amount, tx.source || 'Bank Statement',
+          tx.review_status || 'needs_review',
+          j === 0 ? tx.external_id : null, group, tx.investor_id || null,
+        )
+      })
+      markRowConsumed(m.rowId)
+      delStmt.run(tx.id)
+      split++
+    }
+  })
+  run()
+
+  res.json({ ok: true, split })
 })
 
 // ── Charge-type registry (custom categories) ──────────────────────────────────
