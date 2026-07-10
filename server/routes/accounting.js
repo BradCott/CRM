@@ -429,6 +429,163 @@ async function callClaudeTextJson(apiKey, text, prompt) {
   return JSON.parse(m[0])
 }
 
+// Parse an amortization file (PDF/XLSX/CSV) into { name, terms, schedule } where
+// schedule = { payment_amount, rows:[{period,due_date,payment,principal,interest,balance}] }.
+async function parseAmortFile(buffer, originalname, apiKey) {
+  const ext = (originalname.split('.').pop() || '').toLowerCase()
+  let terms
+  if (ext === 'pdf') {
+    terms = await callClaudeWithPrompt(apiKey, buffer, AMORT_PROMPT)
+  } else if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
+    const wb = XLSX.read(buffer, { type: 'buffer' })
+    const csv = XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]])
+    terms = await callClaudeTextJson(apiKey, csv, AMORT_PROMPT)
+  } else {
+    throw new Error('Upload a PDF, XLSX, or CSV file')
+  }
+
+  // Prefer the file's ACTUAL transcribed rows (matches the lender exactly, incl.
+  // interest-only periods and partial-first-period interest). Only regenerate a
+  // theoretical schedule if rows are unreadable — never as a 0% schedule.
+  let schedule
+  const actualRows = scheduleRowsFromTerms(terms)
+  if (actualRows) {
+    const counts = {}
+    for (const r of actualRows) { const k = Math.round(r.payment); counts[k] = (counts[k] || 0) + 1 }
+    const modalPay = Number(Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0])
+    schedule = {
+      payment_amount: terms.monthly_payment ? Math.round(Number(terms.monthly_payment) * 100) / 100 : modalPay,
+      rows: actualRows,
+    }
+  } else {
+    let rate = terms.annual_interest_rate
+    if (!rate || Number(rate) <= 0) {
+      const mr = deriveMonthlyRate(Number(terms.original_principal), Number(terms.monthly_payment), Number(terms.term_months))
+      rate = mr ? mr * 12 * 100 : null
+    }
+    if (!rate) throw new Error('Could not read the payment rows or the interest rate from that file — please check it or enter the rate.')
+    schedule = generateSchedule({
+      original_principal: terms.original_principal,
+      annual_rate:        rate,
+      monthly_payment:    terms.monthly_payment,
+      first_payment:      terms.first_payment_date,
+      term_months:        terms.term_months,
+    })
+  }
+  const name = terms.lender || originalname.replace(/\.[^.]+$/, '')
+  return { name, terms, schedule }
+}
+
+// Insert a schedule + rows, replacing any existing loan with the same name on the
+// property (so re-uploading a corrected file doesn't pile up duplicates). No own
+// transaction — callers wrap. Returns the new schedule id.
+function storeSchedule(propertyId, name, terms, schedule) {
+  const dupe = db.prepare(
+    'SELECT id FROM loan_schedules WHERE property_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?))'
+  ).all(propertyId, name)
+  for (const e of dupe) db.prepare('DELETE FROM loan_schedules WHERE id = ?').run(e.id)
+
+  const r = db.prepare(`
+    INSERT INTO loan_schedules (property_id, name, original_principal, annual_rate, payment_amount, first_payment, term_months)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).run(propertyId, name,
+         terms.original_principal || null, terms.annual_interest_rate || null,
+         schedule.payment_amount, terms.first_payment_date || null, terms.term_months || schedule.rows.length)
+
+  const insertRow = db.prepare(`
+    INSERT INTO loan_schedule_rows (schedule_id, period, due_date, payment, principal, interest, balance)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `)
+  for (const row of schedule.rows) {
+    insertRow.run(r.lastInsertRowid, row.period, row.due_date, row.payment, row.principal, row.interest, row.balance)
+  }
+  return r.lastInsertRowid
+}
+
+// Split already-imported outgoing payments against the schedule rows. No own
+// transaction — callers wrap. Returns count split.
+function applyScheduleSplits(propertyId) {
+  const candidates = db.prepare(`
+    SELECT * FROM accounting_transactions
+    WHERE property_id = ? AND amount < 0
+      AND (split_group IS NULL OR split_group = '')
+      AND category NOT IN ('Mortgage Interest', 'Mortgage Principal')
+      AND COALESCE(source, '') != 'Settlement Statement'
+    ORDER BY date ASC, id ASC
+  `).all(propertyId)
+
+  const insertSplit = db.prepare(`
+    INSERT INTO accounting_transactions
+      (property_id, date, description, category, amount, source, review_status, external_id, split_group, investor_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `)
+  const delStmt = db.prepare('DELETE FROM accounting_transactions WHERE id = ?')
+
+  let split = 0
+  for (const tx of candidates) {
+    const m = matchMortgageSplit(propertyId, { amount: tx.amount, date: tx.date })
+    if (!m) continue
+    const group = `amort-${tx.external_id || `tx${tx.id}`}`
+    m.lines.forEach((line, j) => {
+      insertSplit.run(
+        propertyId, tx.date, `${tx.description} — ${line.description}`,
+        line.category, line.amount, tx.source || 'Bank Statement',
+        tx.review_status || 'needs_review',
+        j === 0 ? tx.external_id : null, group, tx.investor_id || null,
+      )
+    })
+    markRowConsumed(m.rowId)
+    delStmt.run(tx.id)
+    split++
+  }
+  return split
+}
+
+// Merge auto-split mortgage payments back into single 'Loan Payment' lines so they
+// can be re-split against a corrected schedule. Only merges groups whose lines are
+// ALL mortgage principal/interest. No own transaction — callers wrap. Returns count.
+function unsplitMortgagePayments(propertyId) {
+  const lines = db.prepare(`
+    SELECT * FROM accounting_transactions
+    WHERE property_id = ? AND split_group IS NOT NULL AND split_group != ''
+      AND split_group IN (
+        SELECT DISTINCT split_group FROM accounting_transactions
+        WHERE property_id = ? AND category IN ('Mortgage Interest', 'Mortgage Principal') AND split_group IS NOT NULL
+      )
+    ORDER BY split_group, id
+  `).all(propertyId, propertyId)
+
+  const groups = new Map()
+  for (const l of lines) {
+    if (!groups.has(l.split_group)) groups.set(l.split_group, [])
+    groups.get(l.split_group).push(l)
+  }
+
+  const insertMerged = db.prepare(`
+    INSERT INTO accounting_transactions
+      (property_id, date, description, category, amount, source, review_status, external_id, investor_id)
+    VALUES (?, ?, ?, 'Loan Payment', ?, ?, ?, ?, ?)
+  `)
+  const del = db.prepare('DELETE FROM accounting_transactions WHERE id = ?')
+
+  let merged = 0
+  for (const ls of groups.values()) {
+    if (ls.length < 2) continue
+    if (!ls.every(l => l.category === 'Mortgage Interest' || l.category === 'Mortgage Principal')) continue
+    const amount = ls.reduce((s, l) => s + Number(l.amount), 0)
+    const withExt = ls.find(l => l.external_id) || ls[0]
+    const baseDesc = (ls[0].description || '').replace(/\s+[—-]\s+Mortgage (interest|principal)$/i, '').trim()
+    insertMerged.run(
+      propertyId, ls[0].date, baseDesc || 'Mortgage payment', Math.round(amount * 100) / 100,
+      withExt.source || 'Bank Statement', withExt.review_status || 'needs_review',
+      withExt.external_id || null, withExt.investor_id || null,
+    )
+    for (const l of ls) del.run(l.id)
+    merged++
+  }
+  return merged
+}
+
 // Upload an amortization schedule (PDF, xlsx, or csv) → store generated schedule
 router.post('/:propertyId/amortization', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
@@ -437,80 +594,15 @@ router.post('/:propertyId/amortization', upload.single('file'), async (req, res)
 
   const { propertyId } = req.params
   const { originalname, buffer } = req.file
-  const ext = originalname.split('.').pop().toLowerCase()
 
   try {
-    let terms
-    if (ext === 'pdf') {
-      terms = await callClaudeWithPrompt(apiKey, buffer, AMORT_PROMPT)
-    } else if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
-      const wb = XLSX.read(buffer, { type: 'buffer' })
-      const csv = XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]])
-      terms = await callClaudeTextJson(apiKey, csv, AMORT_PROMPT)
-    } else {
-      return res.status(400).json({ error: 'Upload a PDF, XLSX, or CSV amortization schedule' })
-    }
-
-    // Prefer the schedule's ACTUAL transcribed rows (matches the lender exactly,
-    // incl. interest-only periods and day-count interest). Only regenerate if the
-    // rows are missing/unreadable — and never as a 0% (all-principal) schedule.
-    let schedule
-    const actualRows = scheduleRowsFromTerms(terms)
-    if (actualRows) {
-      const counts = {}
-      for (const r of actualRows) { const k = Math.round(r.payment); counts[k] = (counts[k] || 0) + 1 }
-      const modalPay = Number(Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0])
-      schedule = {
-        payment_amount: terms.monthly_payment ? Math.round(Number(terms.monthly_payment) * 100) / 100 : modalPay,
-        rows: actualRows,
-      }
-    } else {
-      let rate = terms.annual_interest_rate
-      if (!rate || Number(rate) <= 0) {
-        const mr = deriveMonthlyRate(Number(terms.original_principal), Number(terms.monthly_payment), Number(terms.term_months))
-        rate = mr ? mr * 12 * 100 : null
-      }
-      if (!rate) throw new Error('Could not read the payment rows or the interest rate from that schedule — please check the file or enter the rate.')
-      schedule = generateSchedule({
-        original_principal: terms.original_principal,
-        annual_rate:        rate,
-        monthly_payment:    terms.monthly_payment,
-        first_payment:      terms.first_payment_date,
-        term_months:        terms.term_months,
-      })
-    }
-
-    // A property can carry more than one loan. Add this as a new schedule, but if
-    // one with the same name already exists (e.g. re-uploading a corrected file for
-    // the same lender), replace just that one so corrections don't pile up as dupes.
-    const loanName = terms.lender || originalname.replace(/\.[^.]+$/, '')
-    const dupe = db.prepare(
-      'SELECT id FROM loan_schedules WHERE property_id = ? AND LOWER(TRIM(name)) = LOWER(TRIM(?))'
-    ).all(propertyId, loanName)
-    for (const e of dupe) db.prepare('DELETE FROM loan_schedules WHERE id = ?').run(e.id)
-
-    const r = db.prepare(`
-      INSERT INTO loan_schedules (property_id, name, original_principal, annual_rate, payment_amount, first_payment, term_months)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `).run(propertyId, loanName,
-           terms.original_principal || null, terms.annual_interest_rate || null,
-           schedule.payment_amount, terms.first_payment_date || null, terms.term_months || schedule.rows.length)
-
-    const insertRow = db.prepare(`
-      INSERT INTO loan_schedule_rows (schedule_id, period, due_date, payment, principal, interest, balance)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `)
-    const insertAll = db.transaction(() => {
-      for (const row of schedule.rows) {
-        insertRow.run(r.lastInsertRowid, row.period, row.due_date, row.payment, row.principal, row.interest, row.balance)
-      }
-    })
-    insertAll()
-
+    const { name, terms, schedule } = await parseAmortFile(buffer, originalname, apiKey)
+    let id
+    db.transaction(() => { id = storeSchedule(propertyId, name, terms, schedule) })()
     res.status(201).json({
       ok: true,
       schedule: {
-        id: r.lastInsertRowid, name: terms.lender || 'Loan',
+        id, name,
         original_principal: terms.original_principal, annual_rate: terms.annual_interest_rate,
         payment_amount: schedule.payment_amount, first_payment: terms.first_payment_date,
         term_months: terms.term_months || schedule.rows.length, row_count: schedule.rows.length,
@@ -545,46 +637,45 @@ router.post('/:propertyId/amortization/apply', (req, res) => {
   const schedules = db.prepare('SELECT id FROM loan_schedules WHERE property_id = ?').all(propertyId)
   if (!schedules.length) return res.status(400).json({ error: 'No amortization schedule on this property yet' })
 
-  // Candidate payments: outgoing, not already a split line, not already a mortgage
-  // principal/interest line. Oldest first so schedule rows are consumed in order.
-  const candidates = db.prepare(`
-    SELECT * FROM accounting_transactions
-    WHERE property_id = ? AND amount < 0
-      AND (split_group IS NULL OR split_group = '')
-      AND category NOT IN ('Mortgage Interest', 'Mortgage Principal')
-      AND COALESCE(source, '') != 'Settlement Statement'
-    ORDER BY date ASC, id ASC
-  `).all(propertyId)
-
-  const insertSplit = db.prepare(`
-    INSERT INTO accounting_transactions
-      (property_id, date, description, category, amount, source, review_status, external_id, split_group, investor_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `)
-  const delStmt = db.prepare('DELETE FROM accounting_transactions WHERE id = ?')
-
   let split = 0
-  const run = db.transaction(() => {
-    for (const tx of candidates) {
-      const m = matchMortgageSplit(propertyId, { amount: tx.amount, date: tx.date })
-      if (!m) continue
-      const group = `amort-${tx.external_id || `tx${tx.id}`}`
-      m.lines.forEach((line, j) => {
-        insertSplit.run(
-          propertyId, tx.date, `${tx.description} — ${line.description}`,
-          line.category, line.amount, tx.source || 'Bank Statement',
-          tx.review_status || 'needs_review',
-          j === 0 ? tx.external_id : null, group, tx.investor_id || null,
-        )
-      })
-      markRowConsumed(m.rowId)
-      delStmt.run(tx.id)
-      split++
-    }
-  })
-  run()
-
+  db.transaction(() => { split = applyScheduleSplits(propertyId) })()
   res.json({ ok: true, split })
+})
+
+// Year-end reconcile — upload the lender's ACTUAL payment history (real dates +
+// principal/interest per payment) to replace the theoretical schedule, then
+// re-split every mortgage payment against those actuals. Fixes the divergence a
+// theoretical schedule can't capture — interim/partial first-period interest from
+// closing mid-month — and corrects payments that were already split from the
+// theoretical numbers.
+router.post('/:propertyId/amortization/reconcile', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set' })
+
+  const { propertyId } = req.params
+  const { originalname, buffer } = req.file
+
+  try {
+    const { name, terms, schedule } = await parseAmortFile(buffer, originalname, apiKey)
+    let merged = 0, split = 0
+    db.transaction(() => {
+      // Single-loan property: replace whatever schedule is there (the actuals'
+      // parsed lender name may not match the theoretical one). Multi-loan: fall
+      // back to storeSchedule's replace-by-name.
+      const existing = db.prepare('SELECT id FROM loan_schedules WHERE property_id = ?').all(propertyId)
+      if (existing.length === 1) db.prepare('DELETE FROM loan_schedules WHERE id = ?').run(existing[0].id)
+      storeSchedule(propertyId, name, terms, schedule)          // replace theoretical with actuals
+      merged = unsplitMortgagePayments(propertyId)              // un-split old (wrong) splits
+      db.prepare(`UPDATE loan_schedule_rows SET consumed = 0
+                  WHERE schedule_id IN (SELECT id FROM loan_schedules WHERE property_id = ?)`).run(propertyId)
+      split = applyScheduleSplits(propertyId)                   // re-split all against actuals
+    })()
+    res.json({ ok: true, merged, split, rows: schedule.rows.length })
+  } catch (err) {
+    console.error('[amortization reconcile]', err.message)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // ── Charge-type registry (custom categories) ──────────────────────────────────

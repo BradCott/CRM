@@ -1,7 +1,7 @@
 // Loan amortization — upload a schedule; mortgage payments auto-split on sync
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Landmark, Upload, Loader2, Trash2, FileText, CheckCircle, AlertCircle, Scissors } from 'lucide-react'
-import { getAmortization, uploadAmortization, deleteAmortization, applyAmortization } from '../../api/client'
+import { Landmark, Upload, Loader2, Trash2, FileText, CheckCircle, AlertCircle, Scissors, CalendarCheck } from 'lucide-react'
+import { getAmortization, uploadAmortization, deleteAmortization, applyAmortization, reconcileAmortization } from '../../api/client'
 
 function fmt$(n) {
   if (n === null || n === undefined) return '—'
@@ -20,7 +20,9 @@ export default function AmortizationCard({ propertyId, hideUploader = false, onC
   const [dragging, setDrag]   = useState(false)
   const [applying, setApplying] = useState(false)
   const [applyMsg, setApplyMsg] = useState(null)
+  const [reconciling, setReconciling] = useState(false)
   const inputRef = useRef()
+  const reconcileRef = useRef()
 
   async function handleApply() {
     setApplying(true)
@@ -37,6 +39,24 @@ export default function AmortizationCard({ propertyId, hideUploader = false, onC
       setError(e.message)
     } finally {
       setApplying(false)
+    }
+  }
+
+  async function handleReconcile(file) {
+    if (!file) return
+    setReconciling(true)
+    setError(null)
+    setApplyMsg(null)
+    try {
+      const { merged, split, rows } = await reconcileAmortization(propertyId, file)
+      setApplyMsg(`Reconciled to the actual schedule (${rows} payments). Re-split ${split} payment${split !== 1 ? 's' : ''} using the real principal & interest.`)
+      load()
+      onChanged?.()
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setReconciling(false)
+      if (reconcileRef.current) reconcileRef.current.value = ''
     }
   }
 
@@ -81,15 +101,28 @@ export default function AmortizationCard({ propertyId, hideUploader = false, onC
           {loans.length > 1 && <span className="text-slate-300 normal-case font-normal">· {loans.length} loans</span>}
         </h3>
         {loans.length > 0 && (
-          <button
-            onClick={handleApply}
-            disabled={applying}
-            title="Split already-imported mortgage payments into principal & interest using this schedule (for payments synced before the schedule was uploaded)"
-            className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors disabled:opacity-50"
-          >
-            {applying ? <Loader2 className="w-3 h-3 animate-spin" /> : <Scissors className="w-3 h-3" />}
-            Split existing payments
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={handleApply}
+              disabled={applying || reconciling}
+              title="Split already-imported mortgage payments into principal & interest using this schedule (for payments synced before the schedule was uploaded)"
+              className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 transition-colors disabled:opacity-50"
+            >
+              {applying ? <Loader2 className="w-3 h-3 animate-spin" /> : <Scissors className="w-3 h-3" />}
+              Split existing payments
+            </button>
+            <input ref={reconcileRef} type="file" accept=".pdf,.xlsx,.xls,.csv" className="hidden"
+              onChange={e => handleReconcile(e.target.files[0])} />
+            <button
+              onClick={() => reconcileRef.current?.click()}
+              disabled={applying || reconciling}
+              title="Year-end: upload the lender's ACTUAL payment history (real principal & interest per payment). Replaces the theoretical schedule and re-splits every payment with the real numbers — fixes partial-first-month interest from a mid-month closing."
+              className="flex items-center gap-1 text-xs font-medium text-violet-600 hover:text-violet-800 transition-colors disabled:opacity-50"
+            >
+              {reconciling ? <Loader2 className="w-3 h-3 animate-spin" /> : <CalendarCheck className="w-3 h-3" />}
+              Reconcile actual P&amp;I
+            </button>
+          </div>
         )}
       </div>
 
