@@ -68,7 +68,11 @@ export default function BalanceSheet({ property, transactions, investors, openin
   // Principal paydowns reduce both cash and the loan balance (negative = cash out)
   const principalPaid = sum(transactions.filter(t => t.category === 'Mortgage Principal'))
 
-  const totalCash = opCash + otherOp + equityContribCash + principalPaid + obCash
+  // Owner/related-party loan to the entity: a cash injection (in) that draws down
+  // as it's repaid (out). Net is both cash on hand and a liability owed.
+  const memberLoan = sum(transactions.filter(t => t.category === 'Member Loan'))
+
+  const totalCash = opCash + otherOp + equityContribCash + principalPaid + memberLoan + obCash
 
   const totalAssets = totalRealEstate + totalCash
 
@@ -81,7 +85,7 @@ export default function BalanceSheet({ property, transactions, investors, openin
       t.description !== '1031 Exchange Proceeds'
     )
   ) + principalPaid + obLoan
-  const totalLiabilities = loanBalance
+  const totalLiabilities = loanBalance + memberLoan
 
   // ── Equity ────────────────────────────────────────────────────────────────────
   // 1031 exchange proceeds funded the purchase — they're equity, not debt
@@ -163,6 +167,10 @@ export default function BalanceSheet({ property, transactions, investors, openin
       )}
       {loanBalance === 0 && (
         <p className="text-sm text-slate-400 py-1.5">No mortgage recorded</p>
+      )}
+      {memberLoan !== 0 && (
+        <Row label="Member Loan (Due to Owner)" value={memberLoan}
+          note="Owner/related-party loan to the entity — drawn down as it's repaid" />
       )}
 
       <Divider thick />

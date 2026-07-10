@@ -13,7 +13,9 @@ const BUILTIN_EXPENSE = [
 ]
 // Non-P&L categories (balance-sheet movements) — selectable but excluded from P&L.
 // "Loan Payment" = paying down a note (a liability), not a P&L expense.
-const NON_PL = ['Equity Contribution', 'Purchase', 'Loan', 'Loan Payment', 'Sale', 'Mortgage Principal']
+// "Member Loan" = an owner/related-party loan to the entity (a liability the
+// company owes back); a cash injection, never income or expense.
+const NON_PL = ['Equity Contribution', 'Purchase', 'Loan', 'Loan Payment', 'Sale', 'Mortgage Principal', 'Member Loan']
 
 // These are `let` + live ES-module bindings so hydrateCustomCategories() can
 // merge user-defined charge types in at runtime and every importer sees them.
@@ -29,6 +31,7 @@ export const CATEGORY_COLORS = {
   'Purchase':               'bg-red-100 text-red-700',
   'Loan':                   'bg-teal-100 text-teal-700',
   'Loan Payment':           'bg-teal-100 text-teal-700',
+  'Member Loan':            'bg-teal-100 text-teal-700',
   'Rent':                   'bg-emerald-100 text-emerald-700',
   'Mortgage':               'bg-amber-100 text-amber-700',
   'Mortgage Interest':      'bg-amber-100 text-amber-700',
@@ -63,6 +66,7 @@ const BUILTIN_CATEGORY_KIND = {
   'Loan':                'liability',
   'Loan Payment':        'liability',
   'Mortgage Principal':  'liability',
+  'Member Loan':         'liability',
 }
 
 /** Account type for a category: 'income' | 'expense' | 'asset' | 'liability' | 'equity'. */
@@ -200,11 +204,14 @@ export function computeBalanceSheet(transactions, investors = [], opening = null
   const otherOp = sum(transactions.filter(t => t.category === 'Other' && t.source !== 'Settlement Statement'))
   const equityContribCash = sum(transactions.filter(t => t.category === 'Equity Contribution'))
   const principalPaid = sum(transactions.filter(t => t.category === 'Mortgage Principal'))
-  const totalCash = opCash + otherOp + equityContribCash + principalPaid + obCash
+  // Owner/related-party loans: a real cash injection (in) that draws down as it's
+  // repaid (out). The net is both cash on hand and a liability the company owes.
+  const memberLoan = sum(transactions.filter(t => t.category === 'Member Loan'))
+  const totalCash = opCash + otherOp + equityContribCash + principalPaid + memberLoan + obCash
   const totalAssets = totalRealEstate + totalCash
 
   const loanBalance = sum(transactions.filter(t => t.category === 'Loan' && t.description !== '1031 Exchange Proceeds')) + principalPaid + obLoan
-  const totalLiabilities = loanBalance
+  const totalLiabilities = loanBalance + memberLoan
 
   const exchange1031 = sum(transactions.filter(t => t.description === '1031 Exchange Proceeds'))
   const acquisitionCredits = sum(transactions.filter(t => ['Rent', 'Other'].includes(t.category) && t.source === 'Settlement Statement' && Number(t.amount) > 0))
@@ -215,7 +222,7 @@ export function computeBalanceSheet(transactions, investors = [], opening = null
 
   return {
     building, land, totalRealEstate, totalCash, totalAssets,
-    loanBalance, totalLiabilities,
+    loanBalance, memberLoan, totalLiabilities,
     exchange1031, acquisitionCredits, investedCapital, retainedEarnings, totalEquity,
   }
 }
@@ -358,7 +365,7 @@ export function computeCashFlow(transactions) {
     (t.source === 'Settlement Statement' && !['Loan', 'Equity Contribution'].includes(t.category))
   )
   const financingTxs = cash.filter(t =>
-    ['Loan', 'Equity Contribution', 'Mortgage', 'Mortgage Principal'].includes(t.category)
+    ['Loan', 'Equity Contribution', 'Mortgage', 'Mortgage Principal', 'Member Loan'].includes(t.category)
   )
 
   const operating = sum(operatingTxs)

@@ -10,7 +10,7 @@ const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
 
 const BUILTIN_CATEGORIES = [
-  'Equity Contribution', 'Purchase', 'Loan', 'Loan Payment', 'Rent', 'Mortgage', 'Mortgage Interest',
+  'Equity Contribution', 'Purchase', 'Loan', 'Loan Payment', 'Member Loan', 'Rent', 'Mortgage', 'Mortgage Interest',
   'Mortgage Principal', 'Repair', 'Sale',
   // Schedule E-aligned expense categories
   'Insurance', 'Property Tax', 'Utilities', 'Management Fees', 'Legal & Professional',

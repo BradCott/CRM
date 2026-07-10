@@ -31,6 +31,7 @@ export function balanceSheetRows(recorded, investors) {
     ['', ''],
     ['LIABILITIES', ''],
     ['  Loan Balance', money(b.loanBalance)],
+    ...(b.memberLoan ? [['  Member Loan (Due to Owner)', money(b.memberLoan)]] : []),
     ['Total Liabilities', money(b.totalLiabilities)],
     ['', ''],
     ['EQUITY', ''],
