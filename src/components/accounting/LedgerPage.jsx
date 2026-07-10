@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles, Link2, AlertTriangle } from 'lucide-react'
+import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles, Link2, AlertTriangle, Banknote } from 'lucide-react'
 import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, applyAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries, matchTransaction, unmatchTransaction, getMatchCandidates, recordEarnestAsEquity } from '../../api/client'
 import OpeningBalancesModal from './OpeningBalancesModal'
 import { ALL_CATEGORIES } from '../../utils/accounting'
@@ -24,6 +24,7 @@ import PlaidConnect from './PlaidConnect'
 import SplitTransactionModal from './SplitTransactionModal'
 import AmortizationCard from './AmortizationCard'
 import DriveDocsButton from '../properties/DriveDocsButton'
+import SaleCloseoutWizard from './SaleCloseoutWizard'
 import CategorySelect from './CategorySelect'
 import { CATEGORY_COLORS, computeBalanceSheet } from '../../utils/accounting'
 
@@ -59,6 +60,7 @@ export default function LedgerPage() {
   const [showAdd, setShowAdd]               = useState(false)
   const [showSettlement, setShowSettlement] = useState(false)
   const [showBank, setShowBank]             = useState(false)
+  const [showCloseout, setShowCloseout]     = useState(false)
   const [exportOpen, setExportOpen]         = useState(false)
   const [showInvestors, setShowInvestors]   = useState(false)
   const [deleting, setDeleting]             = useState(null)
@@ -506,6 +508,12 @@ export default function LedgerPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() => setShowCloseout(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors"
+              title="Record the sale, pay off loans, distribute funds, and close the property out">
+              <Banknote className="w-4 h-4" /> We Sold It
+            </button>
             <Button variant="secondary" onClick={() => setShowSettlement(true)}>
               <FileText className="w-4 h-4" /> Settlement Statement
             </Button>
@@ -1339,6 +1347,16 @@ export default function LedgerPage() {
           existingTransactions={transactions}
           onSaved={reload}
           onClose={() => setShowBank(false)}
+        />
+      )}
+
+      {showCloseout && (
+        <SaleCloseoutWizard
+          propertyId={propertyId}
+          property={property}
+          transactions={recordedTx}
+          onSaved={reload}
+          onClose={() => setShowCloseout(false)}
         />
       )}
 

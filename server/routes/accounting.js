@@ -383,6 +383,17 @@ router.post('/:propertyId/sale-closeout', (req, res) => {
       if (loanPayoff)   insTx.run(propertyId, date, 'Loan Payoff at Sale', 'Mortgage Principal', -loanPayoff, null)
       if (memberPayoff) insTx.run(propertyId, date, 'Member Loan Repayment at Sale', 'Member Loan', -memberPayoff, null)
 
+      // Remove the real estate from the books — on a sale the asset is gone. The
+      // balance-sheet plug captures the gain/loss automatically. Offset the existing
+      // "Building Value"/"Land Value" lines to zero (same description so the sum nets out).
+      const sumByDesc = (desc) => db.prepare(
+        `SELECT COALESCE(SUM(amount), 0) AS v FROM accounting_transactions WHERE property_id = ? AND description = ? AND review_status = 'recorded'`
+      ).get(propertyId, desc).v
+      const bv = sumByDesc('Building Value')
+      const lv = sumByDesc('Land Value')
+      if (bv) insTx.run(propertyId, date, 'Building Value', 'Purchase', -bv, null)
+      if (lv) insTx.run(propertyId, date, 'Land Value', 'Purchase', -lv, null)
+
       for (const d of dists) {
         const cap = Math.abs(num(d.capital)), pref = Math.abs(num(d.pref)), carry = Math.abs(num(d.carry))
         const total = cap + pref + carry
