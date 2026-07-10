@@ -77,6 +77,30 @@ router.post('/link-token', async (req, res) => {
   }
 })
 
+// ── GET /plaid/status ─────────────────────────────────────────────────────────
+// Reports which environment is active and whether the keys actually work, by
+// doing a live link-token create. Turns Plaid's generic "try again later" into
+// an actionable message (wrong env / mismatched secret / not configured).
+router.get('/status', async (req, res) => {
+  const env = process.env.PLAID_ENV || 'sandbox'
+  const client = getClient()
+  if (!client) {
+    return res.json({ configured: false, env, ok: false, error: 'PLAID_CLIENT_ID / PLAID_SECRET are not set on the server.' })
+  }
+  try {
+    await client.linkTokenCreate({
+      user:          { client_user_id: String(req.user?.id || 'knox-user') },
+      client_name:   'Knox Capital',
+      products:      [Products.Transactions],
+      country_codes: [CountryCode.Us],
+      language:      'en',
+    })
+    res.json({ configured: true, env, ok: true })
+  } catch (err) {
+    res.json({ configured: true, env, ok: false, error: plaidErr(err) })
+  }
+})
+
 // ── POST /plaid/exchange-token ────────────────────────────────────────────────
 
 router.post('/exchange-token', async (req, res) => {

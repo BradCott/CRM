@@ -318,6 +318,7 @@ export const importAllocations = (file, mapping) => {
 export const getInvestor = (id) => req('GET', `/investors/${id}`)
 
 // Plaid bank connections
+export const getPlaidStatus       = ()        => req('GET',    '/plaid/status')
 export const createPlaidLinkToken = ()        => req('POST',   '/plaid/link-token')
 export const exchangePlaidToken   = (data)    => req('POST',   '/plaid/exchange-token', data)
 export const getPlaidConnections  = (propId)  => req('GET',    `/plaid/${propId}/connections`)

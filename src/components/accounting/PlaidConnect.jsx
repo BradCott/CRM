@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { usePlaidLink } from 'react-plaid-link'
 import { Link2, RefreshCw, Trash2, Loader2, Building2, AlertCircle, CheckCircle, WifiOff } from 'lucide-react'
 import {
-  createPlaidLinkToken, exchangePlaidToken, getPlaidConnections,
+  getPlaidStatus, createPlaidLinkToken, exchangePlaidToken, getPlaidConnections,
   syncPlaidConnection, disconnectPlaid, createTransactions,
   categorizeTransactions, learnCategories,
 } from '../../api/client'
@@ -228,6 +228,12 @@ export default function PlaidConnect({ propertyId, onSaved }) {
   const [syncMsg,        setSyncMsg]        = useState(null)   // post-sync status text
   const [notConfigured,  setNotConfigured]  = useState(false)
   const [error,          setError]          = useState(null)
+  const [status,         setStatus]         = useState(null)   // { configured, env, ok, error }
+
+  // Diagnose Plaid config once on mount so the UI can explain "try again later".
+  useEffect(() => {
+    getPlaidStatus().then(setStatus).catch(() => {})
+  }, [])
 
   const loadConnections = useCallback(async () => {
     setLoading(true)
@@ -382,6 +388,36 @@ export default function PlaidConnect({ propertyId, onSaved }) {
             </button>
           )}
         </div>
+
+        {/* Plaid diagnostics — explains "try again later" by surfacing env + key validity */}
+        {status && status.configured && !status.ok && (
+          <div className="mx-6 mb-3 flex items-start gap-2.5 px-4 py-3 bg-red-50 border border-red-200 rounded-lg">
+            <AlertCircle className="w-4 h-4 text-red-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-red-800">Plaid keys aren't working in the "{status.env}" environment</p>
+              <p className="text-xs text-red-700 mt-0.5">
+                Plaid said: <span className="font-mono">{status.error}</span>. Each Plaid environment has its OWN secret —
+                make sure <code className="bg-red-100 px-1 rounded">PLAID_SECRET</code> on Railway is the one for{' '}
+                <code className="bg-red-100 px-1 rounded">{status.env}</code>, then redeploy.
+              </p>
+            </div>
+          </div>
+        )}
+        {status && status.configured && status.ok && status.env === 'sandbox' && (
+          <div className="mx-6 mb-3 flex items-start gap-2.5 px-4 py-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-amber-800">Plaid is in SANDBOX mode — real banks won't connect</p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                In sandbox you can only link Plaid's test bank with login{' '}
+                <code className="bg-amber-100 px-1 rounded">user_good</code> /{' '}
+                <code className="bg-amber-100 px-1 rounded">pass_good</code>. To link real accounts, set{' '}
+                <code className="bg-amber-100 px-1 rounded">PLAID_ENV=production</code> on Railway (with your production{' '}
+                <code className="bg-amber-100 px-1 rounded">PLAID_SECRET</code>) and redeploy.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Plaid not configured notice */}
         {notConfigured && (
