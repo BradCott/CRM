@@ -15,7 +15,9 @@ const BUILTIN_EXPENSE = [
 // "Loan Payment" = paying down a note (a liability), not a P&L expense.
 // "Member Loan" = an owner/related-party loan to the entity (a liability the
 // company owes back); a cash injection, never income or expense.
-const NON_PL = ['Equity Contribution', 'Purchase', 'Loan', 'Loan Payment', 'Sale', 'Mortgage Principal', 'Member Loan']
+// "Distribution" = cash paid out to investors (return of capital / pref / profit);
+// reduces cash and equity, never a P&L expense.
+const NON_PL = ['Equity Contribution', 'Purchase', 'Loan', 'Loan Payment', 'Sale', 'Mortgage Principal', 'Member Loan', 'Distribution']
 
 // These are `let` + live ES-module bindings so hydrateCustomCategories() can
 // merge user-defined charge types in at runtime and every importer sees them.
@@ -32,6 +34,7 @@ export const CATEGORY_COLORS = {
   'Loan':                   'bg-teal-100 text-teal-700',
   'Loan Payment':           'bg-teal-100 text-teal-700',
   'Member Loan':            'bg-teal-100 text-teal-700',
+  'Distribution':           'bg-violet-100 text-violet-700',
   'Rent':                   'bg-emerald-100 text-emerald-700',
   'Mortgage':               'bg-amber-100 text-amber-700',
   'Mortgage Interest':      'bg-amber-100 text-amber-700',
@@ -67,6 +70,7 @@ const BUILTIN_CATEGORY_KIND = {
   'Loan Payment':        'liability',
   'Mortgage Principal':  'liability',
   'Member Loan':         'liability',
+  'Distribution':        'equity',
 }
 
 /** Account type for a category: 'income' | 'expense' | 'asset' | 'liability' | 'equity'. */
@@ -207,7 +211,9 @@ export function computeBalanceSheet(transactions, investors = [], opening = null
   // Owner/related-party loans: a real cash injection (in) that draws down as it's
   // repaid (out). The net is both cash on hand and a liability the company owes.
   const memberLoan = sum(transactions.filter(t => t.category === 'Member Loan'))
-  const totalCash = opCash + otherOp + equityContribCash + principalPaid + memberLoan + obCash
+  // Distributions to investors are cash out (negative), reducing cash and equity.
+  const distributions = sum(transactions.filter(t => t.category === 'Distribution'))
+  const totalCash = opCash + otherOp + equityContribCash + principalPaid + memberLoan + distributions + obCash
   const totalAssets = totalRealEstate + totalCash
 
   const loanBalance = sum(transactions.filter(t => t.category === 'Loan' && t.description !== '1031 Exchange Proceeds')) + principalPaid + obLoan
@@ -224,6 +230,70 @@ export function computeBalanceSheet(transactions, investors = [], opening = null
     building, land, totalRealEstate, totalCash, totalAssets,
     loanBalance, memberLoan, totalLiabilities,
     exchange1031, acquisitionCredits, investedCapital, retainedEarnings, totalEquity,
+  }
+}
+
+// ── Distribution waterfall ────────────────────────────────────────────────────
+// American-style 3-tier waterfall matching Knox's deal calculator:
+//   Tier 1  Return of Capital        — pari passu (pro-rata if cash is short)
+//   Tier 2  Preferred Return         — simple, time-weighted: capital × rate × months/12
+//   Tier 3  Carry (profit above pref) — split lpCarryPct to LPs / gpCarryPct to the GP
+// LPs split their carry pro-rata by contribution; the GP (Sponsor) takes the GP carry
+// even on zero co-invest. Every tier fills only as far as cash allows.
+//
+// investors: [{ id, name, contribution, isSponsor?, prefRate?, holdMonths? }]
+// opts: { distributable, prefRate=0.15, lpCarryPct=0.40, gpCarryPct=1-lp, holdMonths=12 }
+export function computeWaterfall(investors, opts = {}) {
+  const prefRate   = opts.prefRate   ?? 0.15
+  const lpCarryPct = opts.lpCarryPct ?? 0.40
+  const gpCarryPct = opts.gpCarryPct ?? (1 - lpCarryPct)
+  const holdMonths = opts.holdMonths ?? 12
+  const distributable = Math.max(0, Number(opts.distributable) || 0)
+
+  const inv = (investors || []).map(i => ({
+    id: i.id, name: i.name,
+    contribution: Number(i.contribution) || 0,
+    isSponsor: !!i.isSponsor,
+    rate:   i.prefRate   != null ? Number(i.prefRate)   : prefRate,
+    months: i.holdMonths != null ? Number(i.holdMonths) : holdMonths,
+    capital: 0, prefEarned: 0, pref: 0, carry: 0, total: 0,
+  }))
+  const totalCapital = inv.reduce((s, i) => s + i.contribution, 0)
+
+  // Tier 1 — Return of Capital (pari passu; pro-rata if cash short)
+  let cash = distributable
+  const t1Ratio = totalCapital > 0 ? Math.min(1, cash / totalCapital) : 0
+  inv.forEach(i => { i.capital = i.contribution * t1Ratio })
+  const capitalReturned = inv.reduce((s, i) => s + i.capital, 0)
+  cash -= capitalReturned
+
+  // Tier 2 — Preferred Return (simple, time-weighted; pari passu)
+  inv.forEach(i => { i.prefEarned = i.contribution * i.rate * (i.months / 12) })
+  const totalPref = inv.reduce((s, i) => s + i.prefEarned, 0)
+  const t2Ratio = totalPref > 0 ? Math.min(1, cash / totalPref) : 0
+  inv.forEach(i => { i.pref = i.prefEarned * t2Ratio })
+  const prefPaid = inv.reduce((s, i) => s + i.pref, 0)
+  cash -= prefPaid
+
+  // Tier 3 — Carry (profit above pref). No sponsor marked → whole pool to LPs.
+  const carryPool = Math.max(0, cash)
+  const sponsors = inv.filter(i => i.isSponsor)
+  const lps      = inv.filter(i => !i.isSponsor)
+  const lpCarry  = sponsors.length ? carryPool * lpCarryPct : carryPool
+  const gpCarry  = sponsors.length ? carryPool * gpCarryPct : 0
+  const lpBase = lps.reduce((s, i) => s + i.contribution, 0)
+  const gpBase = sponsors.reduce((s, i) => s + i.contribution, 0)
+  lps.forEach(i => { i.carry = lpBase > 0 ? lpCarry * (i.contribution / lpBase) : (lps.length ? lpCarry / lps.length : 0) })
+  sponsors.forEach(i => { i.carry = gpBase > 0 ? gpCarry * (i.contribution / gpBase) : (sponsors.length ? gpCarry / sponsors.length : 0) })
+
+  inv.forEach(i => { i.total = i.capital + i.pref + i.carry })
+
+  return {
+    distributable, prefRate, lpCarryPct, gpCarryPct, holdMonths,
+    totalCapital, capitalReturned, prefEarned: totalPref, prefPaid,
+    carryPool, lpCarry, gpCarry,
+    rows: inv,
+    totalDistributed: inv.reduce((s, i) => s + i.total, 0),
   }
 }
 
@@ -365,7 +435,7 @@ export function computeCashFlow(transactions) {
     (t.source === 'Settlement Statement' && !['Loan', 'Equity Contribution'].includes(t.category))
   )
   const financingTxs = cash.filter(t =>
-    ['Loan', 'Equity Contribution', 'Mortgage', 'Mortgage Principal', 'Member Loan'].includes(t.category)
+    ['Loan', 'Equity Contribution', 'Mortgage', 'Mortgage Principal', 'Member Loan', 'Distribution'].includes(t.category)
   )
 
   const operating = sum(operatingTxs)

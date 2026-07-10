@@ -10,7 +10,7 @@ const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
 
 const BUILTIN_CATEGORIES = [
-  'Equity Contribution', 'Purchase', 'Loan', 'Loan Payment', 'Member Loan', 'Rent', 'Mortgage', 'Mortgage Interest',
+  'Equity Contribution', 'Purchase', 'Loan', 'Loan Payment', 'Member Loan', 'Distribution', 'Rent', 'Mortgage', 'Mortgage Interest',
   'Mortgage Principal', 'Repair', 'Sale',
   // Schedule E-aligned expense categories
   'Insurance', 'Property Tax', 'Utilities', 'Management Fees', 'Legal & Professional',
@@ -344,6 +344,87 @@ router.get('/:propertyId/distributions', (req, res) => {
   `).all(req.params.propertyId)
 
   res.json({ distributions, investors })
+})
+
+// ── Sale close-out ────────────────────────────────────────────────────────────
+// Atomically record a property sale: post the sale proceeds + selling costs,
+// pay off the mortgage and any member loans, distribute net proceeds to investors
+// (ledger cash-out + per-tier investor_distributions), and mark the property sold.
+// The client computes the waterfall (src/utils/accounting.js computeWaterfall) and
+// sends the finalized numbers; this endpoint just records them, all-or-nothing.
+router.post('/:propertyId/sale-closeout', (req, res) => {
+  const { propertyId } = req.params
+  const b = req.body || {}
+  const num = v => { const n = cleanNum(v); return n && isFinite(n) ? n : 0 }
+  const date = cleanDate(b.sale_date) || new Date().toISOString().slice(0, 10)
+
+  const salePrice    = Math.abs(num(b.sale_price))
+  const sellingCosts = Math.abs(num(b.selling_costs))
+  const loanPayoff   = Math.abs(num(b.loan_payoff))
+  const memberPayoff = Math.abs(num(b.member_loan_payoff))
+  const reserves     = Array.isArray(b.reserves) ? b.reserves : []
+  const dists        = Array.isArray(b.distributions) ? b.distributions : []
+
+  const insTx = db.prepare(`
+    INSERT INTO accounting_transactions (property_id, date, description, category, amount, source, review_status, vendor)
+    VALUES (?, ?, ?, ?, ?, 'Sale', 'recorded', ?)
+  `)
+  const insDist = db.prepare(`
+    INSERT INTO investor_distributions (investor_id, property_id, amount, distribution_date, distribution_type, notes)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `)
+  const money = n => (n < 0 ? `-$${Math.abs(Math.round(n)).toLocaleString()}` : `$${Math.round(n).toLocaleString()}`)
+
+  try {
+    let distributed = 0
+    const run = db.transaction(() => {
+      if (salePrice)    insTx.run(propertyId, date, 'Sale Proceeds', 'Sale', salePrice, null)
+      if (sellingCosts) insTx.run(propertyId, date, 'Selling Costs (commission, title, transfer tax)', 'Sale', -sellingCosts, null)
+      if (loanPayoff)   insTx.run(propertyId, date, 'Loan Payoff at Sale', 'Mortgage Principal', -loanPayoff, null)
+      if (memberPayoff) insTx.run(propertyId, date, 'Member Loan Repayment at Sale', 'Member Loan', -memberPayoff, null)
+
+      for (const d of dists) {
+        const cap = Math.abs(num(d.capital)), pref = Math.abs(num(d.pref)), carry = Math.abs(num(d.carry))
+        const total = cap + pref + carry
+        if (total <= 0) continue
+        insTx.run(propertyId, date, `Distribution — ${d.name || 'Investor'}`, 'Distribution', -total, d.name || null)
+        distributed += total
+        if (d.investor_id) {
+          if (cap  > 0) insDist.run(d.investor_id, propertyId, cap,   date, 'Principal',        'Sale close-out — return of capital')
+          if (pref > 0) insDist.run(d.investor_id, propertyId, pref,  date, 'Preferred Return', 'Sale close-out — preferred return')
+          if (carry > 0) insDist.run(d.investor_id, propertyId, carry, date, 'Profit',           'Sale close-out — carry / profit')
+        }
+      }
+
+      if (b.mark_sold) {
+        db.prepare(`UPDATE properties SET listing_status = 'sold', close_date = ? WHERE id = ?`).run(date, propertyId)
+      }
+
+      const reserveLines = reserves.filter(r => num(r.amount) > 0).map(r => `  Reserve — ${r.label || 'Held'}: ${money(num(r.amount))}`)
+      const content = [
+        `SALE CLOSE-OUT — ${date}`,
+        `Sale price: ${money(salePrice)}`,
+        sellingCosts ? `Selling costs: ${money(-sellingCosts)}` : null,
+        loanPayoff   ? `Loan payoff: ${money(-loanPayoff)}` : null,
+        memberPayoff ? `Member loan repayment: ${money(-memberPayoff)}` : null,
+        ...reserveLines,
+        `Distributed to investors: ${money(-distributed)}`,
+        '',
+        ...dists.filter(d => (num(d.capital) + num(d.pref) + num(d.carry)) > 0).map(d =>
+          `  ${d.name || 'Investor'}: ${money(num(d.capital) + num(d.pref) + num(d.carry))}` +
+          ` (capital ${money(num(d.capital))}, pref ${money(num(d.pref))}, carry ${money(num(d.carry))})`),
+      ].filter(l => l !== null).join('\n')
+      db.prepare(`
+        INSERT INTO property_journal_entries (property_id, entry_type, entry_date, label, content)
+        VALUES (?, 'sale_closeout', ?, 'Sale Close-Out', ?)
+      `).run(propertyId, date, content)
+    })
+    run()
+    res.status(201).json({ ok: true, distributed })
+  } catch (err) {
+    console.error('[accounting] sale-closeout:', err.message)
+    res.status(500).json({ error: err.message })
+  }
 })
 
 // ── Delete a transaction ──────────────────────────────────────────────────────

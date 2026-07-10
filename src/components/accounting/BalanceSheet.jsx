@@ -72,7 +72,10 @@ export default function BalanceSheet({ property, transactions, investors, openin
   // as it's repaid (out). Net is both cash on hand and a liability owed.
   const memberLoan = sum(transactions.filter(t => t.category === 'Member Loan'))
 
-  const totalCash = opCash + otherOp + equityContribCash + principalPaid + memberLoan + obCash
+  // Distributions to investors are cash out (reduce cash and equity)
+  const distributions = sum(transactions.filter(t => t.category === 'Distribution'))
+
+  const totalCash = opCash + otherOp + equityContribCash + principalPaid + memberLoan + distributions + obCash
 
   const totalAssets = totalRealEstate + totalCash
 
