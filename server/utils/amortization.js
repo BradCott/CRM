@@ -48,42 +48,45 @@ export function generateSchedule({ original_principal, annual_rate, monthly_paym
 
 /**
  * For a synced bank transaction, find a matching amortization row and return
- * the principal/interest split. Returns null if no schedule matches.
- * Matches when the payment amount is within ~2% of a schedule's payment.
+ * the principal/interest split. Returns null if nothing matches.
+ *
+ * Matches each payment against the ACTUAL unconsumed schedule row whose payment
+ * equals the bank amount (within ~2% or $2), preferring the closest date. This
+ * matters because a schedule's payment can VARY row-to-row — interest-only intro
+ * periods, step-ups, and balloons — so gating on one "typical" payment figure
+ * would skip the legitimately-different payments.
  */
 export function matchMortgageSplit(propertyId, tx) {
   const amt = Math.abs(Number(tx.amount))
   if (!amt || Number(tx.amount) >= 0) return null   // only outgoing payments
 
-  const schedules = db.prepare('SELECT * FROM loan_schedules WHERE property_id = ?').all(propertyId)
-  for (const s of schedules) {
-    const pay = Number(s.payment_amount)
-    if (!pay) continue
-    if (Math.abs(amt - pay) > Math.max(1, pay * 0.02)) continue   // not this loan's payment
+  const schedules = db.prepare('SELECT id FROM loan_schedules WHERE property_id = ?').all(propertyId)
+  if (!schedules.length) return null
+  const ids = schedules.map(s => s.id)
+  const placeholders = ids.map(() => '?').join(',')
+  const tol = Math.max(2, amt * 0.02)
 
-    // Nearest unconsumed row by date
-    const row = db.prepare(`
-      SELECT * FROM loan_schedule_rows
-      WHERE schedule_id = ? AND consumed = 0
-      ORDER BY ABS(julianday(due_date) - julianday(?)) ASC
-      LIMIT 1
-    `).get(s.id, tx.date)
-    if (!row) continue
+  const row = db.prepare(`
+    SELECT * FROM loan_schedule_rows
+    WHERE schedule_id IN (${placeholders}) AND consumed = 0
+      AND ABS(payment - ?) <= ?
+    ORDER BY ABS(payment - ?) ASC, ABS(julianday(due_date) - julianday(?)) ASC
+    LIMIT 1
+  `).get(...ids, amt, tol, amt, tx.date)
+  if (!row) return null
 
-    // Interest is the schedule's exact interest; principal absorbs any rounding
-    // so the two lines always sum to the actual bank amount.
-    const interestAmt  = -Math.abs(row.interest)
-    const principalAmt = Number(tx.amount) - interestAmt
-    return {
-      scheduleId: s.id,
-      rowId: row.id,
-      lines: [
-        { category: 'Mortgage Interest',  amount: Math.round(interestAmt * 100) / 100,  description: 'Mortgage interest' },
-        { category: 'Mortgage Principal', amount: Math.round(principalAmt * 100) / 100, description: 'Mortgage principal' },
-      ],
-    }
+  // Interest is the schedule row's exact interest; principal absorbs any rounding
+  // so the two lines always sum to the actual bank amount.
+  const interestAmt  = -Math.abs(row.interest)
+  const principalAmt = Number(tx.amount) - interestAmt
+  return {
+    scheduleId: row.schedule_id,
+    rowId: row.id,
+    lines: [
+      { category: 'Mortgage Interest',  amount: Math.round(interestAmt * 100) / 100,  description: 'Mortgage interest' },
+      { category: 'Mortgage Principal', amount: Math.round(principalAmt * 100) / 100, description: 'Mortgage principal' },
+    ],
   }
-  return null
 }
 
 export function markRowConsumed(rowId) {
