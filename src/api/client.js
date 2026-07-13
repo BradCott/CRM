@@ -55,6 +55,10 @@ export const getProperties   = (params = {}) => {
   return req('GET', `/properties${qs ? '?' + qs : ''}`)
 }
 export const getAllProperties     = ()       => req('GET',    '/properties/all')
+export const getOperatorBreakdown = (params = {}) => {
+  const qs = new URLSearchParams(params).toString()
+  return req('GET', `/properties/operator-breakdown${qs ? '?' + qs : ''}`)
+}
 export const getPropertyFeeSummary = ()   => req('GET',    '/properties/fee-summary')
 export const getPropertyStates = ()     => req('GET',    '/properties/states')
 export const getProperty     = (id)     => req('GET',    `/properties/${id}`)

@@ -5,7 +5,7 @@ import {
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown,
   AlertCircle, Settings2, Upload, Mail, ShieldAlert, Check, Download,
 } from 'lucide-react'
-import { getProperties, bulkDeleteProperties, exportPropertiesUrl } from '../../api/client'
+import { getProperties, bulkDeleteProperties, exportPropertiesUrl, getOperatorBreakdown } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import TopBar from '../layout/TopBar'
 import Button from '../ui/Button'
@@ -66,6 +66,18 @@ const COLUMN_DEFS = {
         <td key={k} className="px-4 py-3">
           {p.tenant_brand_name
             ? <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2 py-0.5 rounded-full">{p.tenant_brand_name}</span>
+            : <span className="text-slate-300">—</span>}
+        </td>
+      )
+    },
+  },
+  operator: {
+    label: 'Operator',
+    td(p, k) {
+      return (
+        <td key={k} className="px-4 py-3">
+          {p.operator_name
+            ? <span className={`text-xs font-semibold px-2 py-0.5 rounded-full ${p.operator_is_corporate ? 'text-slate-700 bg-slate-100' : 'text-violet-700 bg-violet-50'}`}>{p.operator_name}</span>
             : <span className="text-slate-300">—</span>}
         </td>
       )
@@ -287,7 +299,7 @@ const PRESET_VIEWS = [
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function PropertiesPage() {
-  const { tenantBrands, propertyStates, addProperty, editProperty, removeProperty } = useApp()
+  const { tenantBrands, propertyStates, operators, addProperty, editProperty, removeProperty } = useApp()
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const [showBulkSend, setShowBulkSend] = useState(false)
@@ -298,6 +310,8 @@ export default function PropertiesPage() {
   const [search, setSearch]             = useState('')
   const [tenantFilters, setTenantFilters] = useState([])
   const [stateFilters, setStateFilters]   = useState([])
+  const [operatorFilters, setOperatorFilters] = useState([])
+  const [operatorBreakdown, setOperatorBreakdown] = useState([])
   const [needsReviewFilter, setNeedsReviewFilter] = useState(false)
   const [fetching, setFetching]         = useState(false)
   const [showForm, setShowForm]         = useState(false)
@@ -322,20 +336,31 @@ export default function PropertiesPage() {
 
   const searchTimer = useRef(null)
 
-  const load = useCallback(async (s, tenants, states, needsReview, pg, col = 'address', dir = 'asc') => {
+  const load = useCallback(async (s, tenants, states, ops, needsReview, pg, col = 'address', dir = 'asc') => {
     setFetching(true)
     try {
       const params = { portfolio: '0', limit: PAGE_SIZE, offset: pg * PAGE_SIZE, sortCol: col, sortDir: dir }
       if (s)                    params.search = s
       if (tenants.length)       params.tenants = tenants.join(',')
       if (states.length)        params.states  = states.join(',')
+      if (ops?.length)          params.operators = ops.join(',')
       if (needsReview)          params.needsReview = '1'
       const res = await getProperties(params)
       setRows(res.rows); setTotal(res.total)
     } finally { setFetching(false) }
   }, [])
 
-  useEffect(() => { load(search, tenantFilters, stateFilters, needsReviewFilter, page, sortCol, sortDir) }, [page, tenantFilters, stateFilters, needsReviewFilter]) // eslint-disable-line
+  useEffect(() => { load(search, tenantFilters, stateFilters, operatorFilters, needsReviewFilter, page, sortCol, sortDir) }, [page, tenantFilters, stateFilters, operatorFilters, needsReviewFilter]) // eslint-disable-line
+
+  // Corporate vs franchisee breakdown for the current tenant/state/search selection
+  // (deliberately ignores the operator filter so you always see the full split).
+  useEffect(() => {
+    const params = { portfolio: '0' }
+    if (search) params.search = search
+    if (tenantFilters.length) params.tenants = tenantFilters.join(',')
+    if (stateFilters.length)  params.states  = stateFilters.join(',')
+    getOperatorBreakdown(params).then(setOperatorBreakdown).catch(() => setOperatorBreakdown([]))
+  }, [search, tenantFilters, stateFilters])
 
   // Export the current filtered view to CSV (cookie auth → direct download link)
   const handleExport = () => {
@@ -343,6 +368,7 @@ export default function PropertiesPage() {
     if (search)             params.search = search
     if (tenantFilters.length) params.tenants = tenantFilters.join(',')
     if (stateFilters.length)  params.states  = stateFilters.join(',')
+    if (operatorFilters.length) params.operators = operatorFilters.join(',')
     if (needsReviewFilter)  params.needsReview = '1'
     const a = document.createElement('a')
     a.href = exportPropertiesUrl(params)
@@ -353,20 +379,20 @@ export default function PropertiesPage() {
     const newDir = sortCol === key && sortDir === 'asc' ? 'desc' : 'asc'
     const newCol = key
     setSortCol(newCol); setSortDir(newDir); setPage(0)
-    load(search, tenantFilters, stateFilters, needsReviewFilter, 0, newCol, newDir)
+    load(search, tenantFilters, stateFilters, operatorFilters, needsReviewFilter, 0, newCol, newDir)
   }
 
   const handleSearch = (val) => {
     setSearch(val); clearTimeout(searchTimer.current)
-    searchTimer.current = setTimeout(() => { setPage(0); load(val, tenantFilters, stateFilters, needsReviewFilter, 0, sortCol, sortDir) }, 300)
+    searchTimer.current = setTimeout(() => { setPage(0); load(val, tenantFilters, stateFilters, operatorFilters, needsReviewFilter, 0, sortCol, sortDir) }, 300)
   }
   const handleSave = async (data) => {
     const marketData = { ...data, is_portfolio: 0 }
     if (editTarget) await editProperty(editTarget.id, marketData); else await addProperty(marketData)
-    load(search, tenantFilters, stateFilters, needsReviewFilter, page, sortCol, sortDir)
+    load(search, tenantFilters, stateFilters, operatorFilters, needsReviewFilter, page, sortCol, sortDir)
   }
   const handleDelete = async () => {
-    await removeProperty(deleteTarget.id); load(search, tenantFilters, stateFilters, needsReviewFilter, page, sortCol, sortDir)
+    await removeProperty(deleteTarget.id); load(search, tenantFilters, stateFilters, operatorFilters, needsReviewFilter, page, sortCol, sortDir)
   }
 
   // ── Bulk selection / delete ──────────────────────────────────────────────────
@@ -410,7 +436,7 @@ export default function PropertiesPage() {
       const lastPage = Math.max(0, Math.ceil(newTotal / PAGE_SIZE) - 1)
       const goPage = Math.min(page, lastPage)
       setPage(goPage)
-      await load(search, tenantFilters, stateFilters, needsReviewFilter, goPage, sortCol, sortDir)
+      await load(search, tenantFilters, stateFilters, operatorFilters, needsReviewFilter, goPage, sortCol, sortDir)
     } finally {
       setBulkDeleting(false)
     }
@@ -468,6 +494,15 @@ export default function PropertiesPage() {
               onChange={vals => { setStateFilters(vals); setPage(0) }}
               placeholder="Search states…"
             />
+            {operators?.length > 0 && (
+              <MultiSelectDropdown
+                label="operators"
+                options={[...operators].sort((a,b)=>(b.is_corporate-a.is_corporate)||a.name.localeCompare(b.name)).map(o => o.name)}
+                selected={operatorFilters}
+                onChange={vals => { setOperatorFilters(vals); setPage(0) }}
+                placeholder="Search operators…"
+              />
+            )}
             <button
               onClick={() => { setNeedsReviewFilter(v => !v); setPage(0) }}
               className={`flex items-center gap-1.5 text-sm border rounded-lg px-3 py-2 transition-colors ${
@@ -518,6 +553,17 @@ export default function PropertiesPage() {
       />
 
       <div className="flex-1 overflow-auto p-6 scrollbar-thin">
+        {operatorBreakdown.some(b => b.operator_name) && (
+          <div className="flex items-center gap-1.5 flex-wrap mb-3 text-xs">
+            <span className="text-slate-400 font-semibold uppercase tracking-wide mr-1">By operator</span>
+            {operatorBreakdown.map((b, i) => (
+              <span key={i}
+                className={`px-2 py-0.5 rounded-full font-medium ${b.operator_name ? (b.is_corporate ? 'bg-slate-100 text-slate-700' : 'bg-violet-50 text-violet-700') : 'bg-slate-50 text-slate-400'}`}>
+                {b.operator_name || 'Unspecified'} · {b.count.toLocaleString()}
+              </span>
+            ))}
+          </div>
+        )}
         {fetching && rows.length === 0 ? (
           <div className="flex items-center justify-center h-48"><Loader2 className="w-6 h-6 text-slate-400 animate-spin" /></div>
         ) : rows.length === 0 ? (

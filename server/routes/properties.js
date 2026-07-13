@@ -118,6 +118,15 @@ function buildPropertyWhere(query) {
     }
   }
 
+  // Operator / franchisee filter (comma-separated names). Subquery keeps it join-free.
+  if (query.operators) {
+    const list = query.operators.split(',').map(s => s.trim()).filter(Boolean)
+    if (list.length) {
+      conditions.push(`p.operator_id IN (SELECT id FROM operators WHERE name IN (${list.map(() => '?').join(',')}))`)
+      params.push(...list)
+    }
+  }
+
   if (query.needsReview === '1') conditions.push(`p.needs_ownership_review = 1`)
 
   if (query.portfolio !== undefined) {
@@ -195,6 +204,23 @@ router.get('/export', (req, res) => {
   res.setHeader('Content-Type', 'text/csv')
   res.setHeader('Content-Disposition', `attachment; filename="${scope}-${new Date().toISOString().slice(0,10)}.csv"`)
   res.send(csv)
+})
+
+// Operator / franchisee breakdown for the current filter (tenant, state, search…).
+// Returns per-operator property counts incl. an "Unspecified" bucket.
+router.get('/operator-breakdown', (req, res) => {
+  const { where, params } = buildPropertyWhere(req.query)
+  const rows = db.prepare(`
+    SELECT op.name AS operator_name, op.is_corporate AS is_corporate, COUNT(*) AS count
+    FROM properties p
+    LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    LEFT JOIN operators op ON op.id = p.operator_id
+    LEFT JOIN people o ON o.id = p.owner_id
+    ${where}
+    GROUP BY p.operator_id
+    ORDER BY (op.is_corporate = 1) DESC, count DESC
+  `).all(...params)
+  res.json(rows)
 })
 
 // Fee summary — total fees for listed/under_contract portfolio properties
