@@ -53,7 +53,7 @@ function applyMerge(template, person, property) {
 }
 
 // ── Multi-select state picker ─────────────────────────────────────────────────
-function StateMultiSelect({ allStates, selected, onChange }) {
+function StateMultiSelect({ allStates, selected, onChange, noun = 'states' }) {
   const [query, setQuery] = useState('')
   const visible = allStates.filter(s => !query || s.toLowerCase().includes(query.toLowerCase()))
   const allSelected = selected.length === 0  // empty = "All"
@@ -83,7 +83,7 @@ function StateMultiSelect({ allStates, selected, onChange }) {
           type="text"
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Search states…"
+          placeholder={`Search ${noun}…`}
           className="flex-1 text-sm bg-transparent outline-none placeholder-slate-400"
         />
         {selected.length > 0 && (
@@ -94,7 +94,7 @@ function StateMultiSelect({ allStates, selected, onChange }) {
       </div>
       <div className="max-h-36 overflow-y-auto">
         {visible.length === 0 && (
-          <p className="text-xs text-slate-400 px-3 py-2">No states match</p>
+          <p className="text-xs text-slate-400 px-3 py-2">No {noun} match</p>
         )}
         {visible.map(s => (
           <label key={s} className="flex items-center gap-2 px-3 py-1.5 hover:bg-slate-50 cursor-pointer">
@@ -264,7 +264,7 @@ export default function BulkSendModal({ onClose, onDone }) {
   const [filterStates,     setFilterStates]     = useState([])       // multi-select
   const [filterTenant,     setFilterTenant]     = useState('')       // text search
   const [filterOwnerTypes, setFilterOwnerTypes] = useState([])       // multi-select checkboxes
-  const [filterOperators,  setFilterOperators]  = useState([])       // operator ids — target Corporate vs a franchisee
+  const [filterOperators,  setFilterOperators]  = useState([])       // operator names — target Corporate vs a franchisee
   const [filterLeaseStart, setFilterLeaseStart] = useState('')       // optional
   const [filterLeaseEnd,   setFilterLeaseEnd]   = useState('')       // optional
 
@@ -362,7 +362,7 @@ export default function BulkSendModal({ onClose, onDone }) {
 
       // Operator / franchisee filter — target just Corporate, or specific franchisees
       if (filterOperators.length > 0) {
-        filtered = filtered.filter(p => filterOperators.includes(p.operator_id))
+        filtered = filtered.filter(p => filterOperators.includes(p.operator_name))
       }
 
       // Lease expiration — completely optional; only apply if a date is set
@@ -640,22 +640,12 @@ export default function BulkSendModal({ onClose, onDone }) {
                   <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">
                     Operator / Franchisee {filterOperators.length > 0 && <span className="ml-1 text-blue-600 normal-case font-normal">(filtered)</span>}
                   </label>
-                  <div className="flex flex-wrap gap-2">
-                    {[...operators].sort((a,b)=>(b.is_corporate-a.is_corporate)||a.name.localeCompare(b.name)).map(o => {
-                      const on = filterOperators.includes(o.id)
-                      return (
-                        <label key={o.id}
-                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium cursor-pointer transition-colors ${on ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>
-                          <input type="checkbox" checked={on} className="sr-only"
-                            onChange={() => setFilterOperators(prev => on ? prev.filter(x => x !== o.id) : [...prev, o.id])} />
-                          {o.name}
-                        </label>
-                      )
-                    })}
-                    {filterOperators.length > 0 && (
-                      <button onClick={() => setFilterOperators([])} className="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-400 hover:text-slate-600">Clear</button>
-                    )}
-                  </div>
+                  <StateMultiSelect
+                    noun="operators"
+                    allStates={[...operators].sort((a,b)=>(b.is_corporate-a.is_corporate)||a.name.localeCompare(b.name)).map(o => o.name)}
+                    selected={filterOperators}
+                    onChange={setFilterOperators}
+                  />
                 </div>
               )}
 
