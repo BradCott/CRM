@@ -15,6 +15,7 @@ import EmptyState from '../ui/EmptyState'
 import PropertyForm from './PropertyForm'
 import PropertyDetail from './PropertyDetail'
 import BulkSendModal from '../handwrytten/BulkSendModal'
+import OperatorManager from './OperatorManager'
 import ColumnCustomizer, {
   buildPanelCols, loadSavedCols, detectPreset, saveColsToStorage,
 } from '../ui/ColumnCustomizer'
@@ -311,6 +312,7 @@ export default function PropertiesPage() {
   const [tenantFilters, setTenantFilters] = useState([])
   const [stateFilters, setStateFilters]   = useState([])
   const [operatorFilters, setOperatorFilters] = useState([])
+  const [showOperatorManager, setShowOperatorManager] = useState(false)
   const [needsReviewFilter, setNeedsReviewFilter] = useState(false)
   const [fetching, setFetching]         = useState(false)
   const [showForm, setShowForm]         = useState(false)
@@ -484,13 +486,19 @@ export default function PropertiesPage() {
               placeholder="Search states…"
             />
             {operators?.length > 0 && (
-              <MultiSelectDropdown
-                label="operators"
-                options={[...operators].sort((a,b)=>(b.is_corporate-a.is_corporate)||a.name.localeCompare(b.name)).map(o => o.name)}
-                selected={operatorFilters}
-                onChange={vals => { setOperatorFilters(vals); setPage(0) }}
-                placeholder="Search operators…"
-              />
+              <div className="flex items-center gap-1">
+                <MultiSelectDropdown
+                  label="operators"
+                  options={[...operators].sort((a,b)=>(b.is_corporate-a.is_corporate)||a.name.localeCompare(b.name)).map(o => o.name)}
+                  selected={operatorFilters}
+                  onChange={vals => { setOperatorFilters(vals); setPage(0) }}
+                  placeholder="Search operators…"
+                />
+                <button onClick={() => setShowOperatorManager(true)} title="Clean up / merge operators"
+                  className="p-2 rounded-lg text-slate-400 border border-slate-200 hover:bg-slate-50 hover:text-slate-600 transition-colors">
+                  <Settings2 className="w-4 h-4" />
+                </button>
+              </div>
             )}
             <button
               onClick={() => { setNeedsReviewFilter(v => !v); setPage(0) }}
@@ -671,6 +679,13 @@ export default function PropertiesPage() {
           onClose={() => setShowBulkSend(false)}
           onDone={() => setShowBulkSend(false)}
         />
+      )}
+
+      {showOperatorManager && (
+        <OperatorManager onClose={() => {
+          setShowOperatorManager(false)
+          load(search, tenantFilters, stateFilters, operatorFilters, needsReviewFilter, page, sortCol, sortDir)
+        }} />
       )}
     </div>
   )

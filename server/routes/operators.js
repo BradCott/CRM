@@ -31,6 +31,26 @@ router.put('/:id', (req, res) => {
   res.json(db.prepare('SELECT * FROM operators WHERE id = ?').get(req.params.id))
 })
 
+// Merge one or more operators INTO a target — reassigns their properties to the
+// target, then deletes the merged operators. Used to clean up duplicates.
+router.post('/merge', (req, res) => {
+  const into = Number(req.body?.into)
+  const from = (Array.isArray(req.body?.from) ? req.body.from : [])
+    .map(Number).filter(id => id && id !== into)
+  if (!into || !from.length) return res.status(400).json({ error: 'Pick operators to merge and a different target' })
+  const target = db.prepare('SELECT * FROM operators WHERE id = ?').get(into)
+  if (!target) return res.status(404).json({ error: 'Target operator not found' })
+
+  const ph = from.map(() => '?').join(',')
+  let reassigned = 0
+  db.transaction(() => {
+    const r = db.prepare(`UPDATE properties SET operator_id = ? WHERE operator_id IN (${ph})`).run(into, ...from)
+    reassigned = r.changes
+    db.prepare(`DELETE FROM operators WHERE id IN (${ph})`).run(...from)
+  })()
+  res.json({ ok: true, into: target, merged: from.length, reassigned })
+})
+
 router.delete('/:id', (req, res) => {
   db.prepare('DELETE FROM operators WHERE id = ?').run(req.params.id)   // properties.operator_id → SET NULL
   res.status(204).end()

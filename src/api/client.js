@@ -24,6 +24,7 @@ export const getOperators      = ()       => req('GET',    '/operators')
 export const createOperator    = (data)   => req('POST',   '/operators', data)
 export const updateOperator    = (id, d)  => req('PUT',    `/operators/${id}`, d)
 export const deleteOperator    = (id)     => req('DELETE', `/operators/${id}`)
+export const mergeOperators    = (into, from) => req('POST', '/operators/merge', { into, from })
 
 // Tenant-contact job roles (extensible list)
 export const getTenantRoles   = ()       => req('GET',  '/tenant-roles')

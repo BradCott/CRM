@@ -93,6 +93,12 @@ export function AppProvider({ children }) {
   }, [notify])
 
   // --- Operators / franchisees ---
+  const reloadOperators = useCallback(async () => {
+    const ops = await getOperators()
+    setOperators(ops)
+    return ops
+  }, [])
+
   const addOperator = useCallback(async (data) => {
     const row = await createOperator(data)
     setOperators(prev => (prev.some(x => x.id === row.id) ? prev : [...prev, row])
@@ -231,7 +237,7 @@ export function AppProvider({ children }) {
   return (
     <AppContext.Provider value={{
       tenantBrands, addTenantBrand, editTenantBrand, removeTenantBrand,
-      operators, addOperator,
+      operators, addOperator, reloadOperators,
       allPeople, addPerson, editPerson, removePerson,
       allProperties, addProperty, editProperty, removeProperty,
       propertyStates,
