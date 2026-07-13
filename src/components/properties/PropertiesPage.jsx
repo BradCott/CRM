@@ -312,6 +312,7 @@ export default function PropertiesPage() {
   const [stateFilters, setStateFilters]   = useState([])
   const [operatorFilters, setOperatorFilters] = useState([])
   const [operatorBreakdown, setOperatorBreakdown] = useState([])
+  const [showAllOperators, setShowAllOperators] = useState(false)
   const [needsReviewFilter, setNeedsReviewFilter] = useState(false)
   const [fetching, setFetching]         = useState(false)
   const [showForm, setShowForm]         = useState(false)
@@ -359,6 +360,7 @@ export default function PropertiesPage() {
     if (search) params.search = search
     if (tenantFilters.length) params.tenants = tenantFilters.join(',')
     if (stateFilters.length)  params.states  = stateFilters.join(',')
+    setShowAllOperators(false)
     getOperatorBreakdown(params).then(setOperatorBreakdown).catch(() => setOperatorBreakdown([]))
   }, [search, tenantFilters, stateFilters])
 
@@ -553,17 +555,42 @@ export default function PropertiesPage() {
       />
 
       <div className="flex-1 overflow-auto p-6 scrollbar-thin">
-        {operatorBreakdown.some(b => b.operator_name) && (
-          <div className="flex items-center gap-1.5 flex-wrap mb-3 text-xs">
-            <span className="text-slate-400 font-semibold uppercase tracking-wide mr-1">By operator</span>
-            {operatorBreakdown.map((b, i) => (
-              <span key={i}
-                className={`px-2 py-0.5 rounded-full font-medium ${b.operator_name ? (b.is_corporate ? 'bg-slate-100 text-slate-700' : 'bg-violet-50 text-violet-700') : 'bg-slate-50 text-slate-400'}`}>
-                {b.operator_name || 'Unspecified'} · {b.count.toLocaleString()}
-              </span>
-            ))}
-          </div>
-        )}
+        {(() => {
+          const named = operatorBreakdown.filter(b => b.operator_name)
+          if (!named.length) return null
+          const unspec = operatorBreakdown.find(b => !b.operator_name)
+          const CAP = 10
+          const shown = showAllOperators ? named : named.slice(0, CAP)
+          const hidden = named.length - shown.length
+          return (
+            <div className="flex items-center gap-1.5 flex-wrap mb-3 text-xs">
+              <span className="text-slate-400 font-semibold uppercase tracking-wide mr-1">By operator</span>
+              {shown.map((b, i) => (
+                <span key={i}
+                  className={`px-2 py-0.5 rounded-full font-medium ${b.is_corporate ? 'bg-slate-100 text-slate-700' : 'bg-violet-50 text-violet-700'}`}>
+                  {b.operator_name} · {b.count.toLocaleString()}
+                </span>
+              ))}
+              {hidden > 0 && (
+                <button onClick={() => setShowAllOperators(true)}
+                  className="px-2 py-0.5 rounded-full font-medium bg-slate-50 text-slate-500 hover:bg-slate-100">
+                  +{hidden.toLocaleString()} more
+                </button>
+              )}
+              {showAllOperators && named.length > CAP && (
+                <button onClick={() => setShowAllOperators(false)}
+                  className="px-2 py-0.5 rounded-full font-medium bg-slate-50 text-slate-500 hover:bg-slate-100">
+                  show less
+                </button>
+              )}
+              {unspec && (
+                <span className="px-2 py-0.5 rounded-full font-medium bg-slate-50 text-slate-400">
+                  Unspecified · {unspec.count.toLocaleString()}
+                </span>
+              )}
+            </div>
+          )
+        })()}
         {fetching && rows.length === 0 ? (
           <div className="flex items-center justify-center h-48"><Loader2 className="w-6 h-6 text-slate-400 animate-spin" /></div>
         ) : rows.length === 0 ? (
