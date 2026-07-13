@@ -5,7 +5,7 @@ import {
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown,
   AlertCircle, Settings2, Upload, Mail, ShieldAlert, Check, Download,
 } from 'lucide-react'
-import { getProperties, bulkDeleteProperties, exportPropertiesUrl, getOperatorBreakdown } from '../../api/client'
+import { getProperties, bulkDeleteProperties, exportPropertiesUrl } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import TopBar from '../layout/TopBar'
 import Button from '../ui/Button'
@@ -20,7 +20,7 @@ import ColumnCustomizer, {
 } from '../ui/ColumnCustomizer'
 
 const PAGE_SIZE   = 75
-const STORAGE_KEY = 'properties_columns_v2'
+const STORAGE_KEY = 'properties_columns_v3'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function fmt$(v) {
@@ -287,7 +287,7 @@ function MultiSelectDropdown({ label, options, selected, onChange, placeholder =
 }
 
 const ALL_COLUMN_KEYS = Object.keys(COLUMN_DEFS)
-const DEFAULT_COLS    = ['address','tenant','owner','owner_address','lease_type','cap_rate','list_price','lease_end']
+const DEFAULT_COLS    = ['address','tenant','operator','owner','owner_address','lease_type','cap_rate','list_price','lease_end']
 
 const PRESET_VIEWS = [
   { id: 'default',     label: 'Default',     cols: DEFAULT_COLS },
@@ -311,8 +311,6 @@ export default function PropertiesPage() {
   const [tenantFilters, setTenantFilters] = useState([])
   const [stateFilters, setStateFilters]   = useState([])
   const [operatorFilters, setOperatorFilters] = useState([])
-  const [operatorBreakdown, setOperatorBreakdown] = useState([])
-  const [showAllOperators, setShowAllOperators] = useState(false)
   const [needsReviewFilter, setNeedsReviewFilter] = useState(false)
   const [fetching, setFetching]         = useState(false)
   const [showForm, setShowForm]         = useState(false)
@@ -352,17 +350,6 @@ export default function PropertiesPage() {
   }, [])
 
   useEffect(() => { load(search, tenantFilters, stateFilters, operatorFilters, needsReviewFilter, page, sortCol, sortDir) }, [page, tenantFilters, stateFilters, operatorFilters, needsReviewFilter]) // eslint-disable-line
-
-  // Corporate vs franchisee breakdown for the current tenant/state/search selection
-  // (deliberately ignores the operator filter so you always see the full split).
-  useEffect(() => {
-    const params = { portfolio: '0' }
-    if (search) params.search = search
-    if (tenantFilters.length) params.tenants = tenantFilters.join(',')
-    if (stateFilters.length)  params.states  = stateFilters.join(',')
-    setShowAllOperators(false)
-    getOperatorBreakdown(params).then(setOperatorBreakdown).catch(() => setOperatorBreakdown([]))
-  }, [search, tenantFilters, stateFilters])
 
   // Export the current filtered view to CSV (cookie auth → direct download link)
   const handleExport = () => {
@@ -555,42 +542,6 @@ export default function PropertiesPage() {
       />
 
       <div className="flex-1 overflow-auto p-6 scrollbar-thin">
-        {(() => {
-          const named = operatorBreakdown.filter(b => b.operator_name)
-          if (!named.length) return null
-          const unspec = operatorBreakdown.find(b => !b.operator_name)
-          const CAP = 10
-          const shown = showAllOperators ? named : named.slice(0, CAP)
-          const hidden = named.length - shown.length
-          return (
-            <div className="flex items-center gap-1.5 flex-wrap mb-3 text-xs">
-              <span className="text-slate-400 font-semibold uppercase tracking-wide mr-1">By operator</span>
-              {shown.map((b, i) => (
-                <span key={i}
-                  className={`px-2 py-0.5 rounded-full font-medium ${b.is_corporate ? 'bg-slate-100 text-slate-700' : 'bg-violet-50 text-violet-700'}`}>
-                  {b.operator_name} · {b.count.toLocaleString()}
-                </span>
-              ))}
-              {hidden > 0 && (
-                <button onClick={() => setShowAllOperators(true)}
-                  className="px-2 py-0.5 rounded-full font-medium bg-slate-50 text-slate-500 hover:bg-slate-100">
-                  +{hidden.toLocaleString()} more
-                </button>
-              )}
-              {showAllOperators && named.length > CAP && (
-                <button onClick={() => setShowAllOperators(false)}
-                  className="px-2 py-0.5 rounded-full font-medium bg-slate-50 text-slate-500 hover:bg-slate-100">
-                  show less
-                </button>
-              )}
-              {unspec && (
-                <span className="px-2 py-0.5 rounded-full font-medium bg-slate-50 text-slate-400">
-                  Unspecified · {unspec.count.toLocaleString()}
-                </span>
-              )}
-            </div>
-          )
-        })()}
         {fetching && rows.length === 0 ? (
           <div className="flex items-center justify-center h-48"><Loader2 className="w-6 h-6 text-slate-400 animate-spin" /></div>
         ) : rows.length === 0 ? (
