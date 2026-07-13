@@ -269,6 +269,18 @@ const migrations = [
   `ALTER TABLE properties ADD COLUMN lng REAL`,
   // Ownership review flag — set by recent-sales upload
   `ALTER TABLE properties ADD COLUMN needs_ownership_review INTEGER DEFAULT 0`,
+  // Operators / franchisees — brand-agnostic (Flynn, Sun Holdings, etc. span many
+  // brands). "Corporate" is an explicit operator meaning the brand's own corporate
+  // entity, interpreted per-property alongside the tenant brand.
+  `CREATE TABLE IF NOT EXISTS operators (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    name         TEXT NOT NULL UNIQUE,
+    is_corporate INTEGER DEFAULT 0,
+    created_at   TEXT DEFAULT (datetime('now'))
+  )`,
+  `ALTER TABLE properties ADD COLUMN operator_id INTEGER REFERENCES operators(id) ON DELETE SET NULL`,
+  `INSERT OR IGNORE INTO operators (name, is_corporate) VALUES ('Corporate', 1), ('Flynn', 0), ('Sun Holdings', 0)`,
+  `CREATE INDEX IF NOT EXISTS idx_prop_operator ON properties(operator_id)`,
   // Name/address match keys for duplicate detection
   `ALTER TABLE people     ADD COLUMN name_key TEXT`,
   `ALTER TABLE properties ADD COLUMN addr_key TEXT`,

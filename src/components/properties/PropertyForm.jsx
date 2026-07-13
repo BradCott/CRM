@@ -6,7 +6,7 @@ import { Plus } from 'lucide-react'
 
 const EMPTY = {
   address: '', city: '', state: '', zip: '',
-  tenant_brand_id: '', owner_name: '',
+  tenant_brand_id: '', operator_id: '', owner_name: '',
   building_size: '', land_area: '', year_built: '',
   property_type: '', construction_type: '',
   lease_type: '', lease_start: '', lease_end: '',
@@ -42,7 +42,7 @@ function validate(data) {
 }
 
 export default function PropertyForm({ property, onSave, onClose }) {
-  const { tenantBrands, addTenantBrand, allPeople: owners } = useApp()
+  const { tenantBrands, addTenantBrand, operators, addOperator, allPeople: owners } = useApp()
   const [form, setForm]   = useState(property ? sanitize({ ...EMPTY, ...property }) : { ...EMPTY })
   const [errors, setErrors] = useState({})
   const [saving, setSaving] = useState(false)
@@ -50,6 +50,9 @@ export default function PropertyForm({ property, onSave, onClose }) {
   const [newTenant, setNewTenant]   = useState('')
   const [addingTenant, setAddingTenant] = useState(false)
   const [showTenantInput, setShowTenantInput] = useState(false)
+  const [newOperator, setNewOperator]   = useState('')
+  const [addingOperator, setAddingOperator] = useState(false)
+  const [showOperatorInput, setShowOperatorInput] = useState(false)
 
   // fee_amount = null → auto mode; string value → manual override
   const [feeOverride, setFeeOverride] = useState(property?.fee_amount != null)
@@ -92,7 +95,7 @@ export default function PropertyForm({ property, onSave, onClose }) {
       for (const f of ['building_size','land_area','year_built','annual_rent','noi','cap_rate','list_price','purchase_price','taxes','insurance','roof_year','hvac_year']) {
         payload[f] = payload[f] !== '' ? parseFloat(payload[f]) : null
       }
-      for (const f of ['tenant_brand_id']) {
+      for (const f of ['tenant_brand_id', 'operator_id']) {
         payload[f] = payload[f] !== '' ? parseInt(payload[f], 10) : null
       }
       // fee_amount: null if auto, parsed float if override
@@ -120,6 +123,20 @@ export default function PropertyForm({ property, onSave, onClose }) {
       setShowTenantInput(false)
     } finally {
       setAddingTenant(false)
+    }
+  }
+
+  const handleAddOperator = async () => {
+    const name = newOperator.trim()
+    if (!name) return
+    setAddingOperator(true)
+    try {
+      const op = await addOperator({ name })
+      setForm(f => ({ ...f, operator_id: String(op.id) }))
+      setNewOperator('')
+      setShowOperatorInput(false)
+    } finally {
+      setAddingOperator(false)
     }
   }
 
@@ -196,6 +213,39 @@ export default function PropertyForm({ property, onSave, onClose }) {
             </select>
           )}
         </div>
+
+        {/* Operator / franchisee — who actually holds the location (Corporate, Flynn, …) */}
+        <div>
+          <div className="flex items-center justify-between mb-1">
+            <label className="text-sm font-medium text-slate-700">Operator / franchisee</label>
+            <button type="button" onClick={() => setShowOperatorInput(t => !t)}
+              className="flex items-center gap-0.5 text-xs text-blue-600 hover:text-blue-700">
+              <Plus className="w-3 h-3" /> New
+            </button>
+          </div>
+          {showOperatorInput ? (
+            <div className="flex gap-1.5">
+              <input autoFocus type="text" value={newOperator}
+                onChange={e => setNewOperator(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddOperator() } if (e.key === 'Escape') setShowOperatorInput(false) }}
+                placeholder="e.g. Flynn, Sun Holdings"
+                className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              <Button type="button" onClick={handleAddOperator} disabled={addingOperator || !newOperator.trim()}>
+                {addingOperator ? '…' : 'Add'}
+              </Button>
+            </div>
+          ) : (
+            <select value={form.operator_id} onChange={set('operator_id')}
+              className="block w-full rounded-lg border border-slate-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white">
+              <option value="">— Unspecified —</option>
+              {[...operators].sort((a,b)=>(b.is_corporate-a.is_corporate)||a.name.localeCompare(b.name)).map(o => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </select>
+          )}
+          <p className="text-xs text-slate-400 mt-1">Corporate = the brand's own corporate entity; otherwise the franchisee (e.g. Flynn).</p>
+        </div>
+
         <div className="flex flex-col gap-1">
           <label className="text-sm font-medium text-slate-700">Owner</label>
           <input

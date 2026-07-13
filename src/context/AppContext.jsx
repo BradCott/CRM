@@ -1,6 +1,7 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
 import {
   getTenantBrands, createTenantBrand, updateTenantBrand, deleteTenantBrand,
+  getOperators, createOperator,
   getAllPeople, createPerson, updatePerson, deletePerson,
   getAllProperties, getPropertyStates,
   createProperty, updateProperty, deleteProperty,
@@ -15,6 +16,7 @@ const AppContext = createContext(null)
 
 export function AppProvider({ children }) {
   const [tenantBrands, setTenantBrands] = useState([])
+  const [operators, setOperators]       = useState([])
   // People and properties use server-side pagination in their pages,
   // but we keep a lightweight "all" list for dropdowns
   const [allPeople, setAllPeople]         = useState([])
@@ -41,14 +43,16 @@ export function AppProvider({ children }) {
   }, [])
 
   const loadDropdowns = useCallback(async () => {
-    const [tb, ppl, props, states, de] = await Promise.all([
+    const [tb, ppl, props, states, de, ops] = await Promise.all([
       getTenantBrands(),
       getAllPeople(),
       getAllProperties(),
       getPropertyStates(),
       getDeals(),
+      getOperators(),
     ])
     setTenantBrands(tb)
+    setOperators(ops)
     setAllPeople(ppl)
     setAllProperties(props)
     setPropertyStates(states)
@@ -86,6 +90,15 @@ export function AppProvider({ children }) {
     await deleteTenantBrand(id)
     setTenantBrands(prev => prev.filter(x => x.id !== id))
     notify('Tenant brand deleted')
+  }, [notify])
+
+  // --- Operators / franchisees ---
+  const addOperator = useCallback(async (data) => {
+    const row = await createOperator(data)
+    setOperators(prev => (prev.some(x => x.id === row.id) ? prev : [...prev, row])
+      .sort((a, b) => (b.is_corporate - a.is_corporate) || a.name.localeCompare(b.name)))
+    notify('Operator created')
+    return row
   }, [notify])
 
   // --- People (dropdown list + CRUD) ---
@@ -218,6 +231,7 @@ export function AppProvider({ children }) {
   return (
     <AppContext.Provider value={{
       tenantBrands, addTenantBrand, editTenantBrand, removeTenantBrand,
+      operators, addOperator,
       allPeople, addPerson, editPerson, removePerson,
       allProperties, addProperty, editProperty, removeProperty,
       propertyStates,

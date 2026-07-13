@@ -133,6 +133,11 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
                   {data.tenant_brand_name}
                 </span>
               )}
+              {data.operator_name && (
+                <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${data.operator_is_corporate ? 'text-slate-700 bg-slate-100' : 'text-violet-700 bg-violet-50'}`}>
+                  {data.operator_name}
+                </span>
+              )}
               {data.needs_ownership_review ? (
                 <span className="flex items-center gap-1 text-xs font-semibold text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full">
                   <AlertCircle className="w-3 h-3" /> Ownership needs review

@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { existsSync }    from 'node:fs'
 
 import tenantBrandsRouter   from './routes/tenantBrands.js'
+import operatorsRouter      from './routes/operators.js'
 import peopleRouter         from './routes/people.js'
 import propertiesRouter     from './routes/properties.js'
 import dealsRouter          from './routes/deals.js'
@@ -74,6 +75,7 @@ app.use('/api/investors',        requireAuth, requireRole('admin', 'full_agent')
 
 // All authenticated users can read; only admin can write
 app.use('/api/tenant-brands',    requireAuth, requireWrite, tenantBrandsRouter)
+app.use('/api/operators',        requireAuth, requireWrite, operatorsRouter)
 app.use('/api/tenant-roles',     requireAuth, requireWrite, tenantRolesRouter)
 app.use('/api/people',           requireAuth, requireWrite, peopleRouter)
 app.use('/api/properties',       requireAuth, requireWrite, propertiesRouter)

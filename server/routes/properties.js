@@ -23,6 +23,8 @@ function resolveOwner(f) {
 const BASE_SELECT = `
   SELECT p.*,
     t.name AS tenant_brand_name,
+    op.name         AS operator_name,
+    op.is_corporate AS operator_is_corporate,
     o.name       AS owner_name,
     o.first_name AS owner_first_name,
     o.phone      AS owner_phone,
@@ -36,6 +38,7 @@ const BASE_SELECT = `
     o.zip        AS owner_zip
   FROM properties p
   LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+  LEFT JOIN operators op ON op.id = p.operator_id
   LEFT JOIN people o ON o.id = p.owner_id
 `
 
@@ -287,15 +290,15 @@ router.post('/', (req, res) => {
   try {
     const r = db.prepare(`
       INSERT INTO properties
-        (address,city,state,zip,tenant_brand_id,owner_id,building_size,land_area,
+        (address,city,state,zip,tenant_brand_id,operator_id,owner_id,building_size,land_area,
          year_built,property_type,construction_type,lease_type,lease_start,lease_end,
          annual_rent,rent_bumps,renewal_options,noi,cap_rate,list_price,taxes,insurance,
          roof_year,hvac_year,parking_lot,notes,sf_id,fee_pct,listing_status,fee_amount,
          purchase_price,dd_end_date,close_date,is_portfolio,addr_key)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       f.address, f.city||null, f.state||null, f.zip||null,
-      f.tenant_brand_id||null, resolveOwner(f),
+      f.tenant_brand_id||null, f.operator_id||null, resolveOwner(f),
       f.building_size||null, f.land_area||null, f.year_built||null,
       f.property_type||null, f.construction_type||null,
       f.lease_type||null, f.lease_start||null, f.lease_end||null,
@@ -338,7 +341,7 @@ router.put('/:id', (req, res) => {
     console.log('[PUT /api/properties/:id] resolvedOwnerId:', ownerId)
     const result = db.prepare(`
       UPDATE properties SET
-        address=?,city=?,state=?,zip=?,tenant_brand_id=?,owner_id=?,
+        address=?,city=?,state=?,zip=?,tenant_brand_id=?,operator_id=?,owner_id=?,
         building_size=?,land_area=?,year_built=?,property_type=?,construction_type=?,
         lease_type=?,lease_start=?,lease_end=?,annual_rent=?,rent_bumps=?,renewal_options=?,
         noi=?,cap_rate=?,list_price=?,taxes=?,insurance=?,
@@ -347,7 +350,7 @@ router.put('/:id', (req, res) => {
       WHERE id=?
     `).run(
       f.address, f.city||null, f.state||null, f.zip||null,
-      f.tenant_brand_id||null, ownerId,
+      f.tenant_brand_id||null, f.operator_id||null, ownerId,
       f.building_size||null, f.land_area||null, f.year_built||null,
       f.property_type||null, f.construction_type||null,
       f.lease_type||null, f.lease_start||null, f.lease_end||null,

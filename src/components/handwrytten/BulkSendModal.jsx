@@ -245,7 +245,7 @@ function OwnerTypeCheckboxes({ selected, onChange }) {
 const STEPS = ['filters', 'preview', 'sending', 'done']
 
 export default function BulkSendModal({ onClose, onDone }) {
-  const { tenantBrands, propertyStates } = useApp()
+  const { tenantBrands, propertyStates, operators } = useApp()
   const { askAssistant } = useAssistant()
 
   // Open the Copilot pre-loaded to help draft/improve the campaign message
@@ -264,6 +264,7 @@ export default function BulkSendModal({ onClose, onDone }) {
   const [filterStates,     setFilterStates]     = useState([])       // multi-select
   const [filterTenant,     setFilterTenant]     = useState('')       // text search
   const [filterOwnerTypes, setFilterOwnerTypes] = useState([])       // multi-select checkboxes
+  const [filterOperators,  setFilterOperators]  = useState([])       // operator ids — target Corporate vs a franchisee
   const [filterLeaseStart, setFilterLeaseStart] = useState('')       // optional
   const [filterLeaseEnd,   setFilterLeaseEnd]   = useState('')       // optional
 
@@ -359,6 +360,11 @@ export default function BulkSendModal({ onClose, onDone }) {
         )
       }
 
+      // Operator / franchisee filter — target just Corporate, or specific franchisees
+      if (filterOperators.length > 0) {
+        filtered = filtered.filter(p => filterOperators.includes(p.operator_id))
+      }
+
       // Lease expiration — completely optional; only apply if a date is set
       if (filterLeaseStart) {
         filtered = filtered.filter(p => p.lease_end && p.lease_end >= filterLeaseStart)
@@ -423,7 +429,7 @@ export default function BulkSendModal({ onClose, onDone }) {
     } finally {
       setLoadingRec(false)
     }
-  }, [filterStates, filterTenant, filterOwnerTypes, filterLeaseStart, filterLeaseEnd])
+  }, [filterStates, filterTenant, filterOwnerTypes, filterOperators, filterLeaseStart, filterLeaseEnd])
 
   // Recipients actually getting mailed this round (excluded ones removed)
   const includedRecipients = useMemo(
@@ -627,6 +633,31 @@ export default function BulkSendModal({ onClose, onDone }) {
                 </label>
                 <OwnerTypeCheckboxes selected={filterOwnerTypes} onChange={setFilterOwnerTypes} />
               </div>
+
+              {/* Operator / franchisee — e.g. target only Corporate, or only Flynn */}
+              {operators?.length > 0 && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">
+                    Operator / Franchisee {filterOperators.length > 0 && <span className="ml-1 text-blue-600 normal-case font-normal">(filtered)</span>}
+                  </label>
+                  <div className="flex flex-wrap gap-2">
+                    {[...operators].sort((a,b)=>(b.is_corporate-a.is_corporate)||a.name.localeCompare(b.name)).map(o => {
+                      const on = filterOperators.includes(o.id)
+                      return (
+                        <label key={o.id}
+                          className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium cursor-pointer transition-colors ${on ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-slate-600 border-slate-200 hover:border-slate-300'}`}>
+                          <input type="checkbox" checked={on} className="sr-only"
+                            onChange={() => setFilterOperators(prev => on ? prev.filter(x => x !== o.id) : [...prev, o.id])} />
+                          {o.name}
+                        </label>
+                      )
+                    })}
+                    {filterOperators.length > 0 && (
+                      <button onClick={() => setFilterOperators([])} className="px-2.5 py-1 rounded-lg border border-slate-200 text-xs text-slate-400 hover:text-slate-600">Clear</button>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Lease expiration — optional */}
               <div>
