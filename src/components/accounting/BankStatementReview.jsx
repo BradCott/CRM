@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { X, Upload, Loader2, CheckCircle, AlertCircle, Link2 } from 'lucide-react'
 import Button from '../ui/Button'
 import { uploadBankStatement, createTransactions, categorizeTransactions, learnCategories, reconcileBatch } from '../../api/client'
@@ -29,12 +29,15 @@ function fmtDate(iso) {
   return new Date(iso + 'T00:00:00').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export default function BankStatementReview({ propertyId, existingTransactions = [], onSaved, onClose }) {
+export default function BankStatementReview({ propertyId, existingTransactions = [], initialFile, onSaved, onClose }) {
   const inputRef = useRef()
   const [step, setStep]     = useState('upload') // 'upload' | 'parsing' | 'review' | 'saving'
   const [error, setError]   = useState(null)
   const [meta, setMeta]     = useState(null)   // { account_info, statement_period }
   const [rows, setRows]     = useState([])
+
+  // Auto-parse a file dropped onto the toolbar button
+  useEffect(() => { if (initialFile) handleFile(initialFile) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleFile(file) {
     if (!file) return

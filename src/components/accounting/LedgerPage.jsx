@@ -531,27 +531,37 @@ export default function LedgerPage() {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
-            <button
-              onClick={() => setShowCloseout(true)}
-              className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors"
-              title="Record the sale, pay off loans, distribute funds, and close the property out">
-              <Banknote className="w-4 h-4" /> We Sold It
-            </button>
-            <Button variant="secondary" onClick={() => setShowSettlement(true)}>
-              <FileText className="w-4 h-4" /> Settlement Statement
-            </Button>
-            <Button variant="secondary" onClick={() => setShowBank(true)}>
-              <Landmark className="w-4 h-4" /> Bank Statement
-            </Button>
+            <DropTarget onFile={f => { setDriveInitialFile(f); setShowCloseout(true) }}>
+              <button
+                onClick={() => setShowCloseout(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-600 px-3 py-2 text-sm font-semibold text-white hover:bg-emerald-700 transition-colors"
+                title="Record the sale, pay off loans, distribute funds, and close the property out (or drop the seller's settlement here)">
+                <Banknote className="w-4 h-4" /> We Sold It
+              </button>
+            </DropTarget>
+            <DropTarget onFile={f => { setDriveInitialFile(f); setShowSettlement(true) }}>
+              <Button variant="secondary" onClick={() => setShowSettlement(true)}>
+                <FileText className="w-4 h-4" /> Settlement Statement
+              </Button>
+            </DropTarget>
+            <DropTarget onFile={f => { setDriveInitialFile(f); setShowBank(true) }}>
+              <Button variant="secondary" onClick={() => setShowBank(true)}>
+                <Landmark className="w-4 h-4" /> Bank Statement
+              </Button>
+            </DropTarget>
             <input ref={amortInputRef} type="file" accept=".pdf,.xlsx,.xls,.csv" className="hidden"
               onChange={e => handleAmortUpload(e.target.files[0])} />
-            <Button variant="secondary" onClick={() => amortInputRef.current?.click()} disabled={amortUploading}
-              title="Upload a loan amortization schedule — mortgage payments auto-split on sync">
-              {amortUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />} Amortization
-            </Button>
-            <Button variant="secondary" onClick={() => setShowInvestors(true)}>
-              <Users className="w-4 h-4" /> Investor Contributions
-            </Button>
+            <DropTarget onFile={handleAmortUpload}>
+              <Button variant="secondary" onClick={() => amortInputRef.current?.click()} disabled={amortUploading}
+                title="Upload a loan amortization schedule — mortgage payments auto-split on sync">
+                {amortUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileSpreadsheet className="w-4 h-4" />} Amortization
+              </Button>
+            </DropTarget>
+            <DropTarget onFile={f => { setDriveInitialFile(f); setShowInvestors(true) }}>
+              <Button variant="secondary" onClick={() => setShowInvestors(true)}>
+                <Users className="w-4 h-4" /> Investor Contributions
+              </Button>
+            </DropTarget>
             <DriveDocsButton propertyId={propertyId} onImport={handleDriveImport} />
             {driveImporting && <span className="inline-flex items-center gap-1 text-xs text-slate-500"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Pulling from Drive…</span>}
             <div className="relative">
@@ -1377,8 +1387,9 @@ export default function LedgerPage() {
         <BankStatementReview
           propertyId={propertyId}
           existingTransactions={transactions}
+          initialFile={driveInitialFile}
           onSaved={reload}
-          onClose={() => setShowBank(false)}
+          onClose={() => { setShowBank(false); setDriveInitialFile(null) }}
         />
       )}
 
@@ -1387,8 +1398,9 @@ export default function LedgerPage() {
           propertyId={propertyId}
           property={property}
           transactions={recordedTx}
+          initialFile={driveInitialFile}
           onSaved={reload}
-          onClose={() => setShowCloseout(false)}
+          onClose={() => { setShowCloseout(false); setDriveInitialFile(null) }}
         />
       )}
 
@@ -1400,6 +1412,22 @@ export default function LedgerPage() {
           onClose={() => { setShowInvestors(false); setDriveInitialFile(null) }}
         />
       )}
+    </div>
+  )
+}
+
+// Wraps a toolbar button so you can drop a file straight onto it (no click first).
+function DropTarget({ onFile, children }) {
+  const [over, setOver] = useState(false)
+  return (
+    <div
+      onDragOver={e => { e.preventDefault(); setOver(true) }}
+      onDragLeave={() => setOver(false)}
+      onDrop={e => { e.preventDefault(); setOver(false); const f = e.dataTransfer.files?.[0]; if (f) onFile(f) }}
+      className={`rounded-lg transition-shadow ${over ? 'ring-2 ring-blue-400 ring-offset-1' : ''}`}
+      title="Drop a file here to upload"
+    >
+      {children}
     </div>
   )
 }

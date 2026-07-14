@@ -14,7 +14,7 @@ const STEPS = ['Sale', 'Safety Check', 'Reserves', 'Distribute', 'Review']
 const money = n => (n == null || isNaN(n) ? '—' : (n < 0 ? `-$${Math.abs(Math.round(n)).toLocaleString()}` : `$${Math.round(n).toLocaleString()}`))
 const num = v => { const n = parseFloat(String(v).replace(/[$,\s]/g, '')); return isFinite(n) ? n : 0 }
 
-export default function SaleCloseoutWizard({ propertyId, property, transactions = [], onClose, onSaved }) {
+export default function SaleCloseoutWizard({ propertyId, property, transactions = [], initialFile, onClose, onSaved }) {
   const [step, setStep]       = useState(0)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving]   = useState(false)
@@ -99,6 +99,9 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
     next.has(id) ? next.delete(id) : next.add(id)
     return next
   })
+
+  // Auto-parse a settlement dropped onto the "We Sold It" button
+  useEffect(() => { if (initialFile) handleSettlementFile(initialFile) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleSettlementFile(file) {
     if (!file) return
