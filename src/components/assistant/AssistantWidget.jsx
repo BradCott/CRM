@@ -1,15 +1,25 @@
 // Floating AI copilot — available app-wide, context-aware
 import { useState, useRef, useEffect } from 'react'
-import { Sparkles, X, Send, Loader2, Check, Trash2, AlertTriangle } from 'lucide-react'
+import { Sparkles, X, Send, Loader2, Check, Trash2, AlertTriangle, Paperclip, FileText } from 'lucide-react'
 import { askAssistant, executeAssistantAction } from '../../api/client'
 import { useAssistant } from '../../context/AssistantContext'
 
-const DESTRUCTIVE = new Set(['delete_properties', 'delete_people'])
+const DESTRUCTIVE = new Set(['delete_properties', 'delete_people', 'delete_transactions', 'delete_investor'])
+
+// Read a File → { name, mime, data(base64) } for sending to the copilot
+function fileToAttachment(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve({ name: file.name, mime: file.type, data: String(reader.result).split(',')[1] })
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
 
 const SUGGESTIONS = [
-  'Help me handle this settlement statement',
+  '📎 Upload a rent roll or statement and I\'ll propose the updates',
   'Recategorize all Home Depot transactions on this property to Repair',
-  'Delete every Joe Hudson Collision property',
+  'Remove the duplicate Sponsor row from this cap table',
   "Summarize this property's finances",
 ]
 
@@ -52,7 +62,15 @@ export default function AssistantWidget() {
   const [messages, setMessages] = useState([])
   const [input, setInput]     = useState('')
   const [loading, setLoading] = useState(false)
+  const [attachments, setAttachments] = useState([])   // { name, mime, data }
   const scrollRef = useRef(null)
+  const fileRef   = useRef(null)
+
+  async function addFiles(fileList) {
+    const files = [...(fileList || [])].slice(0, 5)
+    const atts = await Promise.all(files.map(fileToAttachment))
+    setAttachments(prev => [...prev, ...atts].slice(0, 5))
+  }
 
   useEffect(() => {
     if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight
@@ -69,24 +87,28 @@ export default function AssistantWidget() {
 
   async function send(text) {
     const content = (text ?? input).trim()
-    if (!content || loading) return
-    const next = [...messages, { role: 'user', content }]
-    setMessages(next)
+    const atts = attachments
+    if ((!content && !atts.length) || loading) return
+    const apiText = content || 'Please review the attached document(s) and propose the changes that make sense.'
+    // Display message (shows the file chips); API sends the real text + attachments
+    const shown = [...messages, { role: 'user', content, attachmentNames: atts.map(a => a.name) }]
+    const apiMsgs = [...messages.map(({ role, content }) => ({ role, content })), { role: 'user', content: apiText }]
+    setMessages(shown)
     setInput('')
+    setAttachments([])
     setLoading(true)
     try {
-      // Combine page-registered structured context with a live screen snapshot
       const registered = getAssistantContext()
       const screen = captureScreen()
       const context = [
         registered,
         screen && `=== Text currently visible on the user's screen ===\n${screen}`,
       ].filter(Boolean).join('\n\n')
-      const { reply, actions } = await askAssistant(next, context)
+      const { reply, actions } = await askAssistant(apiMsgs, context, atts)
       const withStatus = (actions || []).map(a => ({ ...a, status: 'pending' }))
-      setMessages([...next, { role: 'assistant', content: reply, actions: withStatus }])
+      setMessages([...shown, { role: 'assistant', content: reply, actions: withStatus }])
     } catch (e) {
-      setMessages([...next, { role: 'assistant', content: `Sorry — I hit an error: ${e.message}` }])
+      setMessages([...shown, { role: 'assistant', content: `Sorry — I hit an error: ${e.message}` }])
     } finally {
       setLoading(false)
     }
@@ -151,7 +173,7 @@ export default function AssistantWidget() {
             {messages.length === 0 && (
               <div className="space-y-3">
                 <p className="text-sm text-slate-500">
-                  Ask me anything about handling transactions, settlement statements, categories, or how to use the CRM. I can see what you're working on.
+                  Ask me anything, or <span className="font-medium text-slate-700">attach a document</span> (📎) — a statement, rent roll, lease, spreadsheet — and I'll read it and propose the exact changes to make. I can see what you're working on, and every change is yours to confirm.
                 </p>
                 <div className="space-y-1.5">
                   {SUGGESTIONS.map(s => (
@@ -172,7 +194,16 @@ export default function AssistantWidget() {
                       ? 'bg-blue-600 text-white rounded-br-sm'
                       : 'bg-slate-100 text-slate-800 rounded-bl-sm'
                   }`}>
-                    <div className="space-y-1 leading-relaxed">{renderText(m.content)}</div>
+                    {m.attachmentNames?.length > 0 && (
+                      <div className="flex flex-wrap gap-1 mb-1.5">
+                        {m.attachmentNames.map((n, k) => (
+                          <span key={k} className={`inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-md ${m.role === 'user' ? 'bg-blue-500/60' : 'bg-slate-200'}`}>
+                            <FileText className="w-3 h-3" /> {n}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    {m.content && <div className="space-y-1 leading-relaxed">{renderText(m.content)}</div>}
                   </div>
                 </div>
 
@@ -224,18 +255,35 @@ export default function AssistantWidget() {
           </div>
 
           <div className="px-3 py-3 border-t border-slate-100 shrink-0">
+            {attachments.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 mb-2">
+                {attachments.map((a, k) => (
+                  <span key={k} className="inline-flex items-center gap-1 text-[11px] bg-slate-100 text-slate-600 px-2 py-1 rounded-md">
+                    <FileText className="w-3 h-3" /> <span className="max-w-[140px] truncate">{a.name}</span>
+                    <button onClick={() => setAttachments(prev => prev.filter((_, j) => j !== k))} className="text-slate-400 hover:text-red-500"><X className="w-3 h-3" /></button>
+                  </span>
+                ))}
+              </div>
+            )}
             <div className="flex items-end gap-2">
+              <input ref={fileRef} type="file" multiple accept=".pdf,.xlsx,.xls,.csv,.png,.jpg,.jpeg,.txt" className="hidden"
+                onChange={e => { addFiles(e.target.files); e.target.value = '' }} />
+              <button onClick={() => fileRef.current?.click()} disabled={loading}
+                className="p-2 rounded-xl text-slate-400 hover:text-blue-600 hover:bg-slate-100 transition-colors shrink-0 disabled:opacity-40"
+                title="Attach a document (PDF, Excel, CSV, image)">
+                <Paperclip className="w-4 h-4" />
+              </button>
               <textarea
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-                placeholder="Ask a question…"
+                placeholder={attachments.length ? 'Add a note, or just send…' : 'Ask, or attach a document…'}
                 rows={1}
                 className="flex-1 resize-none text-sm border border-slate-200 rounded-xl px-3 py-2 max-h-24 focus:outline-none focus:ring-2 focus:ring-blue-400"
               />
               <button
                 onClick={() => send()}
-                disabled={loading || !input.trim()}
+                disabled={loading || (!input.trim() && !attachments.length)}
                 className="p-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors disabled:opacity-40 shrink-0"
               >
                 <Send className="w-4 h-4" />

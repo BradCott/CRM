@@ -2,11 +2,41 @@
 // Read tools run automatically server-side; write tools are proposed to the
 // user as actions they must confirm before anything is changed.
 import { Router } from 'express'
+import * as XLSX from 'xlsx'
 import db from '../db.js'
 
 const router = Router()
 
-const MODEL = process.env.ASSISTANT_MODEL || 'claude-haiku-4-5-20251001'
+// Sonnet for real reasoning over documents + the books. Thinking is disabled in
+// the request (Sonnet defaults it on, which would blow the token budget).
+const MODEL = process.env.ASSISTANT_MODEL || 'claude-sonnet-5'
+
+// Turn an uploaded attachment { name, mime, data(base64) } into an Anthropic
+// content block. PDFs/images go in natively; spreadsheets/CSV/text are extracted.
+function attachmentToBlock(att) {
+  const name = att?.name || 'file'
+  const mime = (att?.mime || '').toLowerCase()
+  const data = att?.data || ''
+  if (!data) return null
+  try {
+    if (mime === 'application/pdf' || name.toLowerCase().endsWith('.pdf')) {
+      return { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data } }
+    }
+    if (/^image\/(png|jpe?g|gif|webp)$/.test(mime)) {
+      return { type: 'image', source: { type: 'base64', media_type: mime, data } }
+    }
+    const buf = Buffer.from(data, 'base64')
+    if (/\.(xlsx|xls|csv)$/i.test(name) || mime.includes('spreadsheet') || mime.includes('excel') || mime === 'text/csv') {
+      const wb = XLSX.read(buf, { type: 'buffer' })
+      const csv = wb.SheetNames.map(n => `# Sheet: ${n}\n${XLSX.utils.sheet_to_csv(wb.Sheets[n])}`).join('\n\n')
+      return { type: 'text', text: `Attached spreadsheet "${name}":\n${csv.slice(0, 20000)}` }
+    }
+    // Plain text / anything decodable
+    return { type: 'text', text: `Attached file "${name}":\n${buf.toString('utf8').slice(0, 20000)}` }
+  } catch {
+    return { type: 'text', text: `(Could not read attachment "${name}".)` }
+  }
+}
 
 const BUILTIN_CATEGORIES = [
   'Equity Contribution', 'Purchase', 'Loan', 'Rent', 'Mortgage', 'Mortgage Interest',
@@ -23,12 +53,15 @@ const SYSTEM_PROMPT = `You are the Knox Capital CRM copilot — an embedded assi
 
 You CAN see the user's screen: each message includes the visible page text (and any open dialog) as context. Use it directly; never ask the user to paste what they're looking at.
 
+The user can ATTACH DOCUMENTS (PDFs, spreadsheets, images, closing statements, leases, rent rolls). When they do, read the document carefully and use it: extract the relevant figures, compare them to what's in the CRM, and PROPOSE the concrete changes that make sense (create/edit transactions, fix categories, update property or cap-table fields). Don't just describe the document — turn it into proposed actions.
+
 You have TOOLS:
-- Read tools (find_properties, find_people, get_property_summary, find_transactions) run immediately and return data — use them to look things up before answering or acting.
-- Action tools (recategorize_transactions, split_transaction, record_transactions, create_bill, create_transaction, delete_properties, delete_people) DO NOT run immediately. When you call one, it is shown to the user as a proposed action with a Confirm button — they must approve it. So: look up the exact records first (get their ids), then call the action tool with those ids. Briefly tell the user what you're proposing and that they need to confirm.
+- Read tools (find_properties, find_people, get_property_summary, find_transactions, get_cap_table, list_bills) run immediately and return data — use them to look things up before answering or acting.
+- Action tools (recategorize_transactions, update_transaction, split_transaction, record_transactions, delete_transactions, create_transaction, create_bill, pay_bill, update_investor_contribution, delete_investor, update_property_fields, delete_properties, delete_people) DO NOT run immediately. When you call one it is shown to the user as a proposed action with a Confirm button — they approve it. Look up exact record ids first, then propose the action(s). You can propose several at once. Briefly tell the user what you're proposing.
 
 Rules:
 - Always resolve real record ids with read tools before proposing an action. Never guess ids.
+- Be proactive and specific: when the user's intent is clear, propose the exact edits rather than asking a series of questions. Ask only when genuinely ambiguous.
 - For destructive actions (delete), be explicit about how many records and which ones.
 - Amounts: POSITIVE = money in, NEGATIVE = money out. Mortgage Interest is a P&L expense; Mortgage Principal is a loan paydown (not P&L).
 - Be concise and practical. You are not a substitute for a CPA on filing decisions, but give your best practical recommendation.`
@@ -55,6 +88,16 @@ const READ_TOOLS = [
     name: 'find_transactions',
     description: 'List transactions for a property, optionally filtered by category, description text, or review status (recorded / needs_review).',
     input_schema: { type: 'object', properties: { property_id: { type: 'number' }, category: { type: 'string' }, description: { type: 'string' }, status: { type: 'string' } }, required: ['property_id'] },
+  },
+  {
+    name: 'get_cap_table',
+    description: "A property's investors / cap table — each row's id, name, class (Investor/Sponsor), committed contribution, and recorded equity. Use the row id for update_investor_contribution / delete_investor.",
+    input_schema: { type: 'object', properties: { property_id: { type: 'number' } }, required: ['property_id'] },
+  },
+  {
+    name: 'list_bills',
+    description: 'Bills (accounts payable) for a property — id, payee, amount, category, due date, paid status. Use the id for pay_bill.',
+    input_schema: { type: 'object', properties: { property_id: { type: 'number' }, unpaid_only: { type: 'boolean' } }, required: ['property_id'] },
   },
 ]
 
@@ -83,6 +126,36 @@ const WRITE_TOOLS = [
     name: 'create_transaction',
     description: 'Add a transaction to a property ledger. amount POSITIVE = money in, NEGATIVE = money out.',
     input_schema: { type: 'object', properties: { property_id: { type: 'number' }, date: { type: 'string' }, description: { type: 'string' }, category: { type: 'string' }, amount: { type: 'number' } }, required: ['property_id', 'date', 'description', 'category', 'amount'] },
+  },
+  {
+    name: 'update_transaction',
+    description: 'Edit fields of an existing transaction. Only include the fields you want to change.',
+    input_schema: { type: 'object', properties: { transaction_id: { type: 'number' }, date: { type: 'string' }, description: { type: 'string' }, category: { type: 'string' }, amount: { type: 'number' }, vendor: { type: 'string' } }, required: ['transaction_id'] },
+  },
+  {
+    name: 'delete_transactions',
+    description: 'Delete one or more transactions by id.',
+    input_schema: { type: 'object', properties: { transaction_ids: { type: 'array', items: { type: 'number' } } }, required: ['transaction_ids'] },
+  },
+  {
+    name: 'pay_bill',
+    description: 'Mark a bill paid — posts the payment to the ledger.',
+    input_schema: { type: 'object', properties: { bill_id: { type: 'number' }, paid_date: { type: 'string', description: 'YYYY-MM-DD, defaults to today' } }, required: ['bill_id'] },
+  },
+  {
+    name: 'update_investor_contribution',
+    description: "Change an investor row's committed contribution amount. Use the cap-table row id from get_cap_table.",
+    input_schema: { type: 'object', properties: { investor_row_id: { type: 'number' }, amount: { type: 'number' } }, required: ['investor_row_id', 'amount'] },
+  },
+  {
+    name: 'delete_investor',
+    description: "Remove an investor row from a property's cap table (e.g. a duplicate Sponsor entry). Use the cap-table row id from get_cap_table.",
+    input_schema: { type: 'object', properties: { investor_row_id: { type: 'number' } }, required: ['investor_row_id'] },
+  },
+  {
+    name: 'update_property_fields',
+    description: 'Update fields on a property. Allowed: address, city, state, zip, notes, listing_status, annual_rent, cap_rate, list_price, purchase_price, lease_start, lease_end. Only include fields to change.',
+    input_schema: { type: 'object', properties: { property_id: { type: 'number' }, fields: { type: 'object' } }, required: ['property_id', 'fields'] },
   },
   {
     name: 'delete_properties',
@@ -137,8 +210,26 @@ function execReadTool(name, input) {
     sql += ' ORDER BY date DESC LIMIT 60'
     return db.prepare(sql).all(...args)
   }
+  if (name === 'get_cap_table') {
+    return db.prepare(`
+      SELECT id, name, class, contribution AS committed, percentage, preferred_return, investor_id
+      FROM property_investors WHERE property_id = ? ORDER BY contribution DESC
+    `).all(input.property_id)
+  }
+  if (name === 'list_bills') {
+    let sql = `SELECT id, payee, description, category, amount, due_date, paid_at FROM property_bills WHERE property_id = ?`
+    if (input.unpaid_only) sql += ' AND paid_at IS NULL'
+    sql += ' ORDER BY (paid_at IS NOT NULL) ASC, due_date ASC'
+    return db.prepare(sql).all(input.property_id)
+  }
   return { error: 'Unknown tool' }
 }
+
+// Property fields the copilot is allowed to edit
+const EDITABLE_PROPERTY_FIELDS = new Set([
+  'address', 'city', 'state', 'zip', 'notes', 'listing_status',
+  'annual_rent', 'cap_rate', 'list_price', 'purchase_price', 'lease_start', 'lease_end',
+])
 
 // ── Build a human-readable summary for a proposed action ──────────────────────
 
@@ -154,6 +245,23 @@ function summarizeAction(name, input) {
     return `Create bill: ${money(input.amount)} to ${input.payee} (${input.category || 'Other'}) due ${input.due_date}`
   if (name === 'create_transaction')
     return `Add transaction: ${input.description} — ${money(input.amount)} (${input.category}) on ${input.date}`
+  if (name === 'update_transaction') {
+    const changes = ['date', 'description', 'category', 'amount', 'vendor'].filter(k => input[k] != null)
+      .map(k => k === 'amount' ? `amount → ${money(input.amount)}` : `${k} → "${input[k]}"`).join(', ')
+    return `Edit transaction #${input.transaction_id}: ${changes || '(no changes)'}`
+  }
+  if (name === 'delete_transactions')
+    return `Delete ${input.transaction_ids?.length || 0} transaction(s)`
+  if (name === 'pay_bill')
+    return `Mark bill #${input.bill_id} paid${input.paid_date ? ` on ${input.paid_date}` : ''}`
+  if (name === 'update_investor_contribution')
+    return `Change investor row #${input.investor_row_id} committed amount to ${money(input.amount)}`
+  if (name === 'delete_investor')
+    return `Remove investor row #${input.investor_row_id} from the cap table`
+  if (name === 'update_property_fields') {
+    const fields = Object.entries(input.fields || {}).map(([k, v]) => `${k} → "${v}"`).join(', ')
+    return `Update property #${input.property_id}: ${fields || '(no fields)'}`
+  }
   if (name === 'delete_properties') {
     const rows = db.prepare(`SELECT address FROM properties WHERE id IN (${(input.property_ids || []).map(() => '?').join(',') || 'NULL'})`).all(...(input.property_ids || []))
     return `Delete ${input.property_ids?.length || 0} propert${input.property_ids?.length === 1 ? 'y' : 'ies'}: ${rows.map(r => r.address).slice(0, 8).join('; ')}${rows.length > 8 ? '…' : ''}`
@@ -171,7 +279,7 @@ async function callClaude(apiKey, system, messages) {
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: MODEL, max_tokens: 1800, system, tools: [...READ_TOOLS, ...WRITE_TOOLS], messages }),
+    body: JSON.stringify({ model: MODEL, max_tokens: 4000, thinking: { type: 'disabled' }, system, tools: [...READ_TOOLS, ...WRITE_TOOLS], messages }),
   })
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
@@ -197,6 +305,17 @@ router.post('/chat', async (req, res) => {
   const messages = incoming
     .filter(m => m.role === 'user' || m.role === 'assistant')
     .map(m => ({ role: m.role, content: String(m.content || '') }))
+
+  // Attach uploaded documents to the final user turn as native content blocks
+  const attachments = Array.isArray(req.body?.attachments) ? req.body.attachments : []
+  if (attachments.length) {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role !== 'user') continue
+      const blocks = attachments.map(attachmentToBlock).filter(Boolean)
+      messages[i] = { role: 'user', content: [...blocks, { type: 'text', text: messages[i].content || 'Please review the attached document(s) and propose the changes that make sense.' }] }
+      break
+    }
+  }
 
   const actions = []
   try {
@@ -273,6 +392,40 @@ router.post('/execute', (req, res) => {
       db.prepare(`INSERT INTO accounting_transactions (property_id, date, description, category, amount, source) VALUES (?,?,?,?,?,'Manual')`)
         .run(params.property_id, params.date, params.description, params.category, Number(params.amount))
       result = `Transaction added`
+    } else if (type === 'update_transaction') {
+      const tx = db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(params.transaction_id)
+      if (!tx) throw new Error('Transaction not found')
+      if (params.category && !isValidCategory(params.category)) throw new Error(`Invalid category: ${params.category}`)
+      db.prepare(`UPDATE accounting_transactions SET date=?, description=?, category=?, amount=?, vendor=? WHERE id=?`).run(
+        params.date ?? tx.date, params.description ?? tx.description, params.category ?? tx.category,
+        params.amount != null ? Number(params.amount) : tx.amount, params.vendor ?? tx.vendor, tx.id,
+      )
+      result = `Transaction #${tx.id} updated`
+    } else if (type === 'delete_transactions') {
+      const del = db.prepare('DELETE FROM accounting_transactions WHERE id = ?')
+      db.transaction(ids => ids.forEach(id => del.run(id)))(params.transaction_ids || [])
+      result = `Deleted ${params.transaction_ids.length} transaction(s)`
+    } else if (type === 'pay_bill') {
+      const bill = db.prepare('SELECT * FROM property_bills WHERE id = ?').get(params.bill_id)
+      if (!bill) throw new Error('Bill not found')
+      if (bill.paid_at) throw new Error('Bill is already paid')
+      const paidDate = params.paid_date || new Date().toISOString().slice(0, 10)
+      const r = db.prepare(`INSERT INTO accounting_transactions (property_id, date, description, category, amount, source, vendor) VALUES (?,?,?,?,?, 'Manual', ?)`)
+        .run(bill.property_id, paidDate, bill.description || `Bill — ${bill.payee}`, bill.category, -Math.abs(bill.amount), bill.payee)
+      db.prepare(`UPDATE property_bills SET paid_at = ?, paid_tx_id = ? WHERE id = ?`).run(paidDate, r.lastInsertRowid, bill.id)
+      result = `Bill to ${bill.payee} marked paid`
+    } else if (type === 'update_investor_contribution') {
+      db.prepare('UPDATE property_investors SET contribution = ? WHERE id = ?').run(Math.abs(Number(params.amount)), params.investor_row_id)
+      result = `Committed amount updated`
+    } else if (type === 'delete_investor') {
+      db.prepare('DELETE FROM property_investors WHERE id = ?').run(params.investor_row_id)
+      result = `Investor row removed from cap table`
+    } else if (type === 'update_property_fields') {
+      const entries = Object.entries(params.fields || {}).filter(([k]) => EDITABLE_PROPERTY_FIELDS.has(k))
+      if (!entries.length) throw new Error('No editable fields provided')
+      const sets = entries.map(([k]) => `${k} = ?`).join(', ')
+      db.prepare(`UPDATE properties SET ${sets} WHERE id = ?`).run(...entries.map(([, v]) => v), params.property_id)
+      result = `Updated ${entries.map(([k]) => k).join(', ')}`
     } else if (type === 'delete_properties') {
       const del = db.prepare('DELETE FROM properties WHERE id = ?')
       const run = db.transaction(ids => ids.forEach(id => del.run(id)))
