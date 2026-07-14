@@ -274,6 +274,10 @@ export async function uploadBankStatement(propertyId, file) {
   return req('POST', `/accounting/${propertyId}/bank-statement`, fd)
 }
 
+// Settlement record (persisted snapshot for the Settlement tab)
+export const getSettlementRecord  = (propertyId)    => req('GET',  `/accounting/${propertyId}/settlement-record`)
+export const saveSettlementRecord = (propertyId, d) => req('POST', `/accounting/${propertyId}/settlement-record`, d)
+
 // Journal entries
 export const getJournalEntries  = (propertyId)    => req('GET',  `/accounting/${propertyId}/journal-entries`)
 export const saveJournalEntry   = (propertyId, d) => req('POST', `/accounting/${propertyId}/journal-entries`, d)

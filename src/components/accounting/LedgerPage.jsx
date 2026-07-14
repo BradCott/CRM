@@ -25,6 +25,7 @@ import SplitTransactionModal from './SplitTransactionModal'
 import AmortizationCard from './AmortizationCard'
 import DriveDocsButton from '../properties/DriveDocsButton'
 import SaleCloseoutWizard from './SaleCloseoutWizard'
+import SettlementTab from './SettlementTab'
 import CategorySelect from './CategorySelect'
 import { CATEGORY_COLORS, computeBalanceSheet } from '../../utils/accounting'
 
@@ -603,6 +604,7 @@ export default function LedgerPage() {
         <div className="flex items-center gap-0 -mx-6 px-6 border-t border-slate-100 overflow-x-auto scrollbar-thin">
           {[
             { key: 'ledger',    label: 'Ledger',        Icon: null },
+            { key: 'settlement', label: 'Settlement',   Icon: FileText },
             { key: 'balance',   label: 'Balance Sheet', Icon: Scale },
             { key: 'pl',        label: 'P&L',           Icon: BarChart2 },
             { key: 'cashflow',  label: 'Cash Flow',     Icon: ArrowLeftRight },
@@ -629,6 +631,12 @@ export default function LedgerPage() {
           ))}
         </div>
       </header>
+
+      {activeView === 'settlement' && (
+        <div className="flex-1 overflow-y-auto">
+          <SettlementTab propertyId={propertyId} property={property} onChanged={reload} />
+        </div>
+      )}
 
       {/* Balance Sheet / P&L views — recorded transactions only */}
       {activeView === 'balance' && (

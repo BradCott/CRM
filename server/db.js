@@ -285,6 +285,13 @@ const migrations = [
   // under Knox CRE) so "Find Drive Docs" lists the right folder, not a global search.
   `ALTER TABLE properties ADD COLUMN drive_folder_id   TEXT`,
   `ALTER TABLE properties ADD COLUMN drive_folder_name TEXT`,
+  // Persisted settlement-statement snapshot (parsed fields + line items + splits)
+  // so the accounting page can show how the acquisition was recorded and re-edit it.
+  `CREATE TABLE IF NOT EXISTS property_settlements (
+    property_id INTEGER PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
+    data        TEXT NOT NULL,
+    updated_at  TEXT DEFAULT (datetime('now'))
+  )`,
   // Name/address match keys for duplicate detection
   `ALTER TABLE people     ADD COLUMN name_key TEXT`,
   `ALTER TABLE properties ADD COLUMN addr_key TEXT`,

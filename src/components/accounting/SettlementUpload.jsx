@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { useAssistant } from '../../context/AssistantContext'
 import { X, Upload, Loader2, CheckCircle, AlertCircle, AlertTriangle, Copy, Check, Users } from 'lucide-react'
 import Button from '../ui/Button'
-import { uploadSettlement, rebalanceSettlement, createTransactions, saveJournalEntry, getInvestors } from '../../api/client'
+import { uploadSettlement, rebalanceSettlement, saveSettlementRecord, getInvestors } from '../../api/client'
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ const MONEY_FIELD_KEYS = [
 ]
 
 /** Recompute the roll-up money fields by summing line items per treatment. */
-function deriveFields(baseFields, lineItems) {
+export function deriveFields(baseFields, lineItems) {
   const money = Object.fromEntries(MONEY_FIELD_KEYS.map(k => [k, 0]))
   for (const li of lineItems) {
     const f = TREATMENT_FIELD[li.treatment]
@@ -56,7 +56,7 @@ function deriveFields(baseFields, lineItems) {
 }
 
 /** Buyer-side reconciliation: does the cash-to-close implied by the lines match the statement's? */
-function reconcile(fields) {
+export function reconcile(fields) {
   const n = k => Number(fields?.[k]) || 0
   const netPP   = n('purchase_price') - n('seller_closing_credit')
   const credits = n('loan_amount') + n('exchange_proceeds') + n('earnest_money')
@@ -284,7 +284,7 @@ const TREATMENT_ORDER = [
   'Seller Closing Cost', 'Ignore',
 ]
 
-function ReconstructedStatement({ lineItems, fields }) {
+export function ReconstructedStatement({ lineItems, fields }) {
   const n = k => Number(fields[k]) || 0
 
   const groups = TREATMENT_ORDER
@@ -572,7 +572,7 @@ function TextField({ label, value, onChange, hint }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function SettlementUpload({ propertyId, property, initialFile, onSaved, onClose }) {
+export default function SettlementUpload({ propertyId, property, initialFile, initialData, onSaved, onClose }) {
   const inputRef = useRef()
   const [step, setStep]               = useState('upload')
   const [error, setError]             = useState(null)
@@ -638,6 +638,18 @@ export default function SettlementUpload({ propertyId, property, initialFile, on
 
   // Auto-parse a file handed in from Drive
   useEffect(() => { if (initialFile) handleFile(initialFile) }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-open a previously-saved settlement for editing (from the Settlement tab)
+  useEffect(() => {
+    if (!initialData) return
+    if (initialData.fields) setFields({ depreciation_expense: 0, ...initialData.fields })
+    if (Array.isArray(initialData.lineItems)) setLineItems(initialData.lineItems)
+    if (initialData.buildingPct != null) setBuildingPct(initialData.buildingPct)
+    if (initialData.landPct != null) setLandPct(initialData.landPct)
+    if (initialData.emdOutsideLLC != null) setEmdOutsideLLC(initialData.emdOutsideLLC)
+    if (initialData.emdEquityAccount != null) setEmdEquityAccount(initialData.emdEquityAccount)
+    setStep('review')
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Buyer-side reconciliation on the current (edited) line items
   const rec       = derived ? reconcile(derived) : null
@@ -705,13 +717,14 @@ export default function SettlementUpload({ propertyId, property, initialFile, on
         derived.cam_credit                && { description: 'CAM / Maintenance Credit', category: 'Other',   amount:  Number(derived.cam_credit) },
       ].filter(Boolean).map(t => ({ ...t, date, source: 'Settlement Statement' }))
 
-      if (txs.length > 0) await createTransactions(propertyId, txs)
-
-      await saveJournalEntry(propertyId, {
-        entry_type: 'acquisition',
-        entry_date: date,
-        label:      propertyName || fields.property_address || 'Acquisition',
-        content:    buildClipboardText(journal, derived, date, propertyName),
+      // Persist the full snapshot + post entries in one atomic replace, so this
+      // can be viewed and edited later from the Settlement tab without double-posting.
+      await saveSettlementRecord(propertyId, {
+        transactions:    txs,
+        journal_content: buildClipboardText(journal, derived, date, propertyName),
+        label:           propertyName || fields.property_address || 'Acquisition',
+        date,
+        snapshot:        { fields, lineItems, buildingPct, landPct, emdOutsideLLC, emdEquityAccount },
       })
 
       onSaved()

@@ -1346,6 +1346,55 @@ router.post('/:propertyId/investors/upload', upload.single('file'), async (req, 
   }
 })
 
+// ── Settlement record (persisted snapshot for the Settlement tab) ─────────────
+
+router.get('/:propertyId/settlement-record', (req, res) => {
+  const row = db.prepare('SELECT data, updated_at FROM property_settlements WHERE property_id = ?').get(req.params.propertyId)
+  if (!row) return res.json({ record: null })
+  let record = null
+  try { record = JSON.parse(row.data) } catch { /* corrupt — treat as none */ }
+  res.json({ record, updated_at: row.updated_at })
+})
+
+// Save/replace the settlement: atomically clears the prior settlement-sourced
+// ledger entries + acquisition journal + snapshot, then re-posts everything.
+// Makes editing a settlement idempotent (no double-posting).
+router.post('/:propertyId/settlement-record', (req, res) => {
+  const { propertyId } = req.params
+  const b = req.body || {}
+  const txs = Array.isArray(b.transactions) ? b.transactions : []
+  const date = cleanDate(b.date) || new Date().toISOString().slice(0, 10)
+
+  const insTx = db.prepare(`
+    INSERT INTO accounting_transactions (property_id, date, description, category, amount, source, review_status)
+    VALUES (?, ?, ?, ?, ?, 'Settlement Statement', 'recorded')
+  `)
+  try {
+    db.transaction(() => {
+      db.prepare(`DELETE FROM accounting_transactions WHERE property_id = ? AND source = 'Settlement Statement'`).run(propertyId)
+      db.prepare(`DELETE FROM property_journal_entries WHERE property_id = ? AND entry_type = 'acquisition'`).run(propertyId)
+      db.prepare(`DELETE FROM property_settlements WHERE property_id = ?`).run(propertyId)
+
+      for (const t of txs) {
+        if (!t || !t.category || !isValidCategory(t.category)) continue
+        insTx.run(propertyId, cleanDate(t.date) || date, t.description || '', t.category, Number(t.amount) || 0)
+      }
+      if (b.journal_content) {
+        db.prepare(`INSERT INTO property_journal_entries (property_id, entry_type, entry_date, label, content) VALUES (?, 'acquisition', ?, ?, ?)`)
+          .run(propertyId, date, b.label || 'Acquisition', String(b.journal_content))
+      }
+      if (b.snapshot) {
+        db.prepare(`INSERT INTO property_settlements (property_id, data, updated_at) VALUES (?, ?, datetime('now'))`)
+          .run(propertyId, JSON.stringify(b.snapshot))
+      }
+    })()
+    res.status(201).json({ ok: true })
+  } catch (err) {
+    console.error('[accounting] settlement-record:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ── Journal entries ───────────────────────────────────────────────────────────
 
 router.get('/:propertyId/journal-entries', (req, res) => {
