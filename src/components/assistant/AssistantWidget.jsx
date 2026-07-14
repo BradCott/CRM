@@ -1,6 +1,6 @@
 // Floating AI copilot — available app-wide, context-aware
 import { useState, useRef, useEffect } from 'react'
-import { Sparkles, X, Send, Loader2, Check, Trash2, AlertTriangle, Paperclip, FileText } from 'lucide-react'
+import { Sparkles, X, Send, Loader2, Check, Trash2, AlertTriangle, Paperclip, FileText, Maximize2, Minimize2 } from 'lucide-react'
 import { askAssistant, executeAssistantAction } from '../../api/client'
 import { useAssistant } from '../../context/AssistantContext'
 
@@ -59,6 +59,7 @@ function captureScreen() {
 export default function AssistantWidget() {
   const { getAssistantContext, registerOpener } = useAssistant()
   const [open, setOpen]       = useState(false)
+  const [wide, setWide]       = useState(false)
   const [messages, setMessages] = useState([])
   const [input, setInput]     = useState('')
   const [loading, setLoading] = useState(false)
@@ -153,7 +154,7 @@ export default function AssistantWidget() {
 
       {/* Panel */}
       {open && (
-        <div className="fixed bottom-5 right-5 z-[60] w-[400px] max-w-[calc(100vw-2rem)] h-[560px] max-h-[calc(100vh-2.5rem)] bg-white rounded-2xl shadow-2xl border border-slate-200 flex flex-col">
+        <div className={`fixed top-0 right-0 z-[60] h-screen ${wide ? 'w-[760px]' : 'w-[460px]'} max-w-[calc(100vw-1rem)] bg-white shadow-2xl border-l border-slate-200 flex flex-col transition-[width] duration-200`}>
           <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 shrink-0">
             <div className="flex items-center gap-2">
               <div className="w-7 h-7 rounded-lg bg-blue-50 flex items-center justify-center">
@@ -164,9 +165,15 @@ export default function AssistantWidget() {
                 <p className="text-[11px] text-slate-400 leading-tight">Accounting & app help</p>
               </div>
             </div>
-            <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1">
+              <button onClick={() => setWide(w => !w)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100"
+                title={wide ? 'Narrow panel' : 'Widen panel'}>
+                {wide ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+              </button>
+              <button onClick={() => setOpen(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
 
           <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-3 space-y-3 scrollbar-thin">
