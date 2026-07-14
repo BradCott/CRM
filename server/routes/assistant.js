@@ -4,8 +4,30 @@
 import { Router } from 'express'
 import * as XLSX from 'xlsx'
 import db from '../db.js'
+import { searchDriveForProperty } from '../services/driveSearch.js'
 
 const router = Router()
+
+// Full schema (tables + columns) so the copilot can query anything via run_sql.
+const DB_SCHEMA = (() => {
+  try {
+    const tables = db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name`).all()
+    return tables.map(t => {
+      const cols = db.prepare(`PRAGMA table_info("${t.name}")`).all().map(c => c.name).join(', ')
+      return `${t.name}(${cols})`
+    }).join('\n')
+  } catch { return '' }
+})()
+
+// Run a strictly read-only SELECT. Everything the user has recorded is queryable.
+function runReadOnlySql(sql) {
+  let q = String(sql || '').trim().replace(/;+\s*$/, '')
+  if (!/^\s*(select|with)\b/i.test(q)) throw new Error('Only SELECT / WITH queries are allowed')
+  if (/;/.test(q)) throw new Error('Only a single statement is allowed')
+  if (/\b(insert|update|delete|drop|alter|create|replace|attach|detach|pragma|vacuum|reindex)\b/i.test(q)) throw new Error('Read-only queries only')
+  if (!/\blimit\b/i.test(q)) q += ' LIMIT 200'
+  return db.prepare(q).all()
+}
 
 // Sonnet for real reasoning over documents + the books. Thinking is disabled in
 // the request (Sonnet defaults it on, which would blow the token budget).
@@ -55,8 +77,10 @@ You CAN see the user's screen: each message includes the visible page text (and 
 
 The user can ATTACH DOCUMENTS (PDFs, spreadsheets, images, closing statements, leases, rent rolls). When they do, read the document carefully and use it: extract the relevant figures, compare them to what's in the CRM, and PROPOSE the concrete changes that make sense (create/edit transactions, fix categories, update property or cap-table fields). Don't just describe the document — turn it into proposed actions.
 
-You have TOOLS — you are NOT limited to what's on screen; query the data directly:
-- Read tools (find_properties, find_people, get_property_summary, find_transactions, get_cap_table, list_bills, get_settlement) run immediately and return data — use them to look things up and VERIFY before answering or acting. get_settlement returns the recorded settlement line items + totals + whether it balances; get_cap_table returns the investors (with their master investor_id).
+You have TOOLS — you are NOT limited to what's on screen. You can read EVERYTHING the user has recorded:
+- run_sql is your most powerful tool: a read-only SELECT against the whole database (all tables — see the DATABASE SCHEMA below). Use it to answer anything the narrower tools don't cover, to cross-reference, or to double-check. Write correct SQLite using the schema.
+- Convenience read tools (find_properties, find_people, get_property_summary, find_transactions, get_cap_table, list_bills, get_settlement, list_property_documents) run immediately too. get_settlement returns the recorded settlement line items + totals + whether it balances; get_cap_table returns the investors (with their master investor_id); list_property_documents lists the files uploaded to a property's Drive folder.
+- Use these to VERIFY before answering or acting — never speculate about the data when you can query it.
 - Action tools (recategorize_transactions, update_transaction, split_transaction, record_transactions, delete_transactions, create_transaction, create_bill, pay_bill, record_earnest_as_equity, update_investor_contribution, delete_investor, update_property_fields, delete_properties, delete_people) DO NOT run immediately. When you call one it is shown to the user as a proposed action with a Confirm button — they approve it. Look up exact record ids first, then propose the action(s). Briefly tell the user what you're proposing.
 
 Rules:
@@ -103,6 +127,16 @@ const READ_TOOLS = [
   {
     name: 'get_settlement',
     description: "The property's recorded settlement statement — every line item with its treatment, the rolled-up totals, and whether it balances (cash-to-close). Use this to reason about acquisition entries before proposing changes.",
+    input_schema: { type: 'object', properties: { property_id: { type: 'number' } }, required: ['property_id'] },
+  },
+  {
+    name: 'run_sql',
+    description: "Run a READ-ONLY SQL SELECT against the CRM database to answer anything about what the user has recorded — across ALL tables (properties, people, accounting_transactions, property_investors, property_bills, property_settlements, loan_schedules, investor_distributions, operators, deals, journal entries, etc.). Use the provided schema. Single SELECT/WITH statement only; auto-limited. Prefer this for anything the narrower tools don't cover.",
+    input_schema: { type: 'object', properties: { sql: { type: 'string', description: 'A single read-only SELECT (or WITH) statement.' } }, required: ['sql'] },
+  },
+  {
+    name: 'list_property_documents',
+    description: "List the files in a property's Google Drive folder (the documents that have been uploaded/filed for it) — names + ids. The user can attach any of these to the chat for you to read in full.",
     input_schema: { type: 'object', properties: { property_id: { type: 'number' } }, required: ['property_id'] },
   },
 ]
@@ -184,7 +218,7 @@ const WRITE_NAMES = new Set(WRITE_TOOLS.map(t => t.name))
 
 // ── Read tool execution ───────────────────────────────────────────────────────
 
-function execReadTool(name, input) {
+async function execReadTool(name, input) {
   if (name === 'find_properties') {
     const q = `%${(input.query || '').toLowerCase()}%`
     return db.prepare(`
@@ -255,6 +289,17 @@ function execReadTool(name, input) {
         balanced: Math.abs(cashStated - cashExpected) < 2,
       },
     }
+  }
+  if (name === 'run_sql') {
+    try { return { rows: runReadOnlySql(input.sql) } }
+    catch (e) { return { error: e.message } }
+  }
+  if (name === 'list_property_documents') {
+    try {
+      const out = await searchDriveForProperty(input.property_id)
+      if (out.connected === false) return { error: 'No Google Drive account is connected.' }
+      return { folder: out.folder?.name || null, files: (out.files || []).map(f => ({ id: f.id, name: f.name, path: f.folderPath || '' })) }
+    } catch (e) { return { error: e.message } }
   }
   return { error: 'Unknown tool' }
 }
@@ -337,6 +382,7 @@ router.post('/chat', async (req, res) => {
   if (!incoming.length) return res.status(400).json({ error: 'messages required' })
 
   let system = SYSTEM_PROMPT
+  if (DB_SCHEMA) system += `\n\n=== DATABASE SCHEMA (query read-only via run_sql) ===\n${DB_SCHEMA}`
   if (context) system += `\n\n=== What the user is currently looking at ===\n${context.slice(0, 8000)}`
 
   // Seed conversation with prior turns (text only)
@@ -370,7 +416,7 @@ router.post('/chat', async (req, res) => {
             results.push({ type: 'tool_result', tool_use_id: block.id, content: 'Shown to the user as a proposed action awaiting their confirmation. Do not call this tool again; briefly summarize the proposal in text.' })
           } else {
             let data
-            try { data = execReadTool(block.name, block.input) } catch (e) { data = { error: e.message } }
+            try { data = await execReadTool(block.name, block.input) } catch (e) { data = { error: e.message } }
             results.push({ type: 'tool_result', tool_use_id: block.id, content: JSON.stringify(data).slice(0, 8000) })
           }
         }
