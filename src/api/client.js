@@ -310,6 +310,7 @@ export const createInvestor      = (data)   => req('POST',   '/investors', data)
 export const updateInvestor      = (id, d)  => req('PATCH',  `/investors/${id}`, d)
 export const deleteInvestorRecord = (id)    => req('DELETE', `/investors/${id}`)
 export const bulkDeleteInvestors = (opts)   => req('POST',   '/investors/bulk-delete', opts) // { ids } or { all: true }
+export const mergeInvestors      = (opts)   => req('POST',   '/investors/merge', opts) // { keep_id, merge_ids, name }
 export const getInvestorContacts   = (id)        => req('GET',    `/investors/${id}/contacts`)
 export const addInvestorContact    = (id, data)  => req('POST',   `/investors/${id}/contacts`, data)
 export const updateInvestorContact = (cid, data) => req('PATCH',  `/investors/contacts/${cid}`, data)

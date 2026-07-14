@@ -3,9 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import {
   TrendingUp, Plus, MoreHorizontal, Pencil, Trash2, Loader2,
   ChevronLeft, ChevronRight, AlertCircle, Upload, CheckCircle2,
-  XCircle, Info,
+  XCircle, Info, GitMerge,
 } from 'lucide-react'
-import { getCRMInvestors, createInvestor, updateInvestor, deleteInvestorRecord, bulkDeleteInvestors, bulkImportInvestors } from '../../api/client'
+import { getCRMInvestors, createInvestor, updateInvestor, deleteInvestorRecord, bulkDeleteInvestors, bulkImportInvestors, mergeInvestors } from '../../api/client'
 import AllocationsImportModal from './AllocationsImportModal'
 import TopBar from '../layout/TopBar'
 import Button from '../ui/Button'
@@ -64,6 +64,7 @@ export default function InvestorsPage() {
   const [selectedIds, setSelectedIds]   = useState(() => new Set())
   const [bulkConfirm, setBulkConfirm]   = useState(null) // 'selected' | 'all'
   const [bulkDeleting, setBulkDeleting] = useState(false)
+  const [mergeOpen, setMergeOpen]       = useState(false)
   const searchTimer = useRef(null)
 
   const load = useCallback(async (s, entity, pg) => {
@@ -167,6 +168,11 @@ export default function InvestorsPage() {
               {selectedIds.size > 0 ? (
                 <div className="flex items-center gap-3">
                   <span className="text-sm font-medium text-slate-700">{selectedIds.size} selected</span>
+                  {selectedIds.size >= 2 && (
+                    <Button variant="secondary" size="sm" onClick={() => setMergeOpen(true)}>
+                      <GitMerge className="w-4 h-4" /> Merge selected
+                    </Button>
+                  )}
                   <Button variant="danger" size="sm" onClick={() => setBulkConfirm('selected')}>
                     <Trash2 className="w-4 h-4" /> Delete selected
                   </Button>
@@ -334,6 +340,19 @@ export default function InvestorsPage() {
             : `The selected investor${selectedIds.size === 1 ? '' : 's'} and all their links and distribution records will be permanently deleted.`
         }
       />
+
+      {mergeOpen && (
+        <MergeInvestorsModal
+          investors={rows.filter(r => selectedIds.has(r.id))}
+          onClose={() => setMergeOpen(false)}
+          onDone={() => {
+            setMergeOpen(false)
+            setSelectedIds(new Set())
+            setPage(0)
+            load(search, entityFilter, 0)
+          }}
+        />
+      )}
 
       {openMenu && <div className="fixed inset-0 z-0" onClick={() => setOpenMenu(null)} />}
 
@@ -667,6 +686,106 @@ export function InvestorForm({ investor, onSave, onClose }) {
         </Button>
       </div>
     </form>
+  )
+}
+
+// ── Merge Investors Modal ─────────────────────────────────────────────────────
+// Fold 2+ duplicate investor records into one. The keeper receives all of the
+// others' contributions, distributions, property links and ledger entries; the
+// duplicates are deleted. Optionally rename the keeper to a canonical spelling.
+function MergeInvestorsModal({ investors, onClose, onDone }) {
+  // Default keeper = the record with the most properties, then most invested.
+  const ranked = [...investors].sort(
+    (a, b) => (b.num_properties || 0) - (a.num_properties || 0) || (b.total_invested || 0) - (a.total_invested || 0)
+  )
+  const [keepId, setKeepId] = useState(ranked[0]?.id ?? null)
+  const [name, setName]     = useState(ranked[0]?.name ?? '')
+  const [saving, setSaving] = useState(false)
+  const [error, setError]   = useState(null)
+
+  const handleMerge = async () => {
+    if (!keepId || !name.trim()) return
+    setSaving(true)
+    setError(null)
+    try {
+      await mergeInvestors({
+        keep_id:   keepId,
+        merge_ids: investors.map(i => i.id).filter(id => id !== keepId),
+        name:      name.trim(),
+      })
+      onDone()
+    } catch (err) {
+      setError(err.message || 'Merge failed')
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal isOpen onClose={onClose} title="Merge investors" size="md">
+      <div className="p-6 space-y-5">
+        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800 flex gap-3">
+          <Info className="w-4 h-4 mt-0.5 shrink-0" />
+          <p>
+            All contributions, distributions, property links, and ledger entries from the other {investors.length - 1} record{investors.length - 1 === 1 ? '' : 's'} will
+            move onto the record you keep, and their cap-table rows will be renamed. The duplicates are then deleted. This cannot be undone.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-xs font-semibold text-slate-400 uppercase tracking-widest mb-2">Keep this record</label>
+          <div className="space-y-1.5">
+            {ranked.map(inv => (
+              <label
+                key={inv.id}
+                className={`flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-colors ${
+                  keepId === inv.id ? 'border-blue-400 bg-blue-50/60' : 'border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <input
+                    type="radio"
+                    checked={keepId === inv.id}
+                    onChange={() => { setKeepId(inv.id); setName(inv.name) }}
+                    className="w-4 h-4 text-blue-600 shrink-0"
+                  />
+                  <span className="font-medium text-slate-800 truncate">{inv.name}</span>
+                </div>
+                <span className="text-xs text-slate-400 shrink-0 tabular-nums">
+                  {inv.num_properties || 0} propert{(inv.num_properties || 0) === 1 ? 'y' : 'ies'}
+                  {inv.total_invested > 0 && ` · ${fmt$(inv.total_invested)}`}
+                </span>
+              </label>
+            ))}
+          </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-slate-700 mb-1">Canonical name</label>
+          <input
+            value={name}
+            onChange={e => setName(e.target.value)}
+            className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="Name to use everywhere"
+          />
+          <p className="text-xs text-slate-400 mt-1">Everything above becomes this single investor, named exactly this.</p>
+        </div>
+
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700 flex items-center gap-2">
+            <XCircle className="w-4 h-4 shrink-0" /> {error}
+          </div>
+        )}
+
+        <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
+          <button onClick={onClose} className="px-4 py-2 text-sm font-medium text-slate-600 hover:bg-slate-50 rounded-lg">
+            Cancel
+          </button>
+          <Button onClick={handleMerge} disabled={saving || !keepId || !name.trim()}>
+            {saving ? <><Loader2 className="w-4 h-4 animate-spin" /> Merging…</> : <><GitMerge className="w-4 h-4" /> Merge {investors.length} into one</>}
+          </Button>
+        </div>
+      </div>
+    </Modal>
   )
 }
 

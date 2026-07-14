@@ -902,6 +902,68 @@ router.post('/bulk-delete', (req, res) => {
   res.json({ deleted })
 })
 
+// Merge duplicate investors into one canonical record. Re-points every
+// reference (ledger transactions, cap-table rows, distributions, property
+// links, contacts) from the merged records onto the keeper, optionally renames
+// the keeper + its cap-table rows to a canonical name, then deletes the empty
+// duplicates. Used to clean up the same investor imported under two spellings.
+router.post('/merge', (req, res) => {
+  const keepId  = Number(req.body?.keep_id)
+  const newName = typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name.trim() : null
+  const mergeIds = Array.isArray(req.body?.merge_ids)
+    ? [...new Set(req.body.merge_ids.map(Number).filter(Number.isInteger))].filter(id => id !== keepId)
+    : []
+
+  if (!Number.isInteger(keepId)) return res.status(400).json({ error: 'keep_id is required' })
+  const keeper = db.prepare('SELECT id, name FROM investors WHERE id = ?').get(keepId)
+  if (!keeper) return res.status(404).json({ error: 'Keeper investor not found' })
+  if (mergeIds.length === 0) return res.status(400).json({ error: 'Provide merge_ids to fold into the keeper' })
+
+  const ph = mergeIds.map(() => '?').join(',')
+  const mergedRows = db.prepare(`SELECT id, name FROM investors WHERE id IN (${ph})`).all(...mergeIds)
+  if (mergedRows.length !== mergeIds.length) return res.status(404).json({ error: 'One or more merge_ids not found' })
+
+  const run = db.transaction(() => {
+    // 1. Re-point references with no uniqueness constraint
+    db.prepare(`UPDATE accounting_transactions SET investor_id = ? WHERE investor_id IN (${ph})`).run(keepId, ...mergeIds)
+    db.prepare(`UPDATE property_investors      SET investor_id = ? WHERE investor_id IN (${ph})`).run(keepId, ...mergeIds)
+    db.prepare(`UPDATE investor_distributions  SET investor_id = ? WHERE investor_id IN (${ph})`).run(keepId, ...mergeIds)
+    db.prepare(`UPDATE investor_contacts       SET investor_id = ? WHERE investor_id IN (${ph})`).run(keepId, ...mergeIds)
+
+    // 2. Property links are UNIQUE(investor_id, property_id): if the keeper is
+    //    already linked to that property, drop the duplicate; otherwise re-point.
+    const keeperProps = new Set(
+      db.prepare('SELECT property_id FROM investor_property_links WHERE investor_id = ?').all(keepId).map(r => r.property_id)
+    )
+    for (const l of db.prepare(`SELECT id, property_id FROM investor_property_links WHERE investor_id IN (${ph})`).all(...mergeIds)) {
+      if (keeperProps.has(l.property_id)) {
+        db.prepare('DELETE FROM investor_property_links WHERE id = ?').run(l.id)
+      } else {
+        db.prepare('UPDATE investor_property_links SET investor_id = ? WHERE id = ?').run(keepId, l.id)
+        keeperProps.add(l.property_id)
+      }
+    }
+
+    // 3. Delete the now-empty duplicate shells
+    db.prepare(`DELETE FROM investors WHERE id IN (${ph})`).run(...mergeIds)
+
+    // 4. Rename the keeper + every cap-table row that is this investor — whether
+    //    linked to the keeper or a free-text row whose name matches one of the
+    //    merged spellings — so the canonical name shows everywhere.
+    if (newName) {
+      db.prepare('UPDATE investors SET name = ? WHERE id = ?').run(newName, keepId)
+      const keys = new Set([keeper.name, ...mergedRows.map(r => r.name)].map(normalizeName).filter(Boolean))
+      const upd = db.prepare('UPDATE property_investors SET name = ?, investor_id = ? WHERE id = ?')
+      for (const c of db.prepare('SELECT id, name, investor_id FROM property_investors').all()) {
+        if (c.investor_id === keepId || keys.has(normalizeName(c.name))) upd.run(newName, keepId, c.id)
+      }
+    }
+  })
+  run()
+
+  res.json({ ok: true, keeper: db.prepare('SELECT id, name FROM investors WHERE id = ?').get(keepId), merged_count: mergeIds.length })
+})
+
 router.delete('/:id', (req, res) => {
   db.prepare(`DELETE FROM investors WHERE id = ?`).run(req.params.id)
   res.status(204).end()
