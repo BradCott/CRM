@@ -320,8 +320,8 @@ router.post('/', (req, res) => {
          year_built,property_type,construction_type,lease_type,lease_start,lease_end,
          annual_rent,rent_bumps,renewal_options,noi,cap_rate,list_price,taxes,insurance,
          roof_year,hvac_year,parking_lot,notes,sf_id,fee_pct,listing_status,fee_amount,
-         purchase_price,dd_end_date,close_date,is_portfolio,addr_key)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         purchase_price,dd_end_date,close_date,is_portfolio,needs_ownership_review,addr_key)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     `).run(
       f.address, f.city||null, f.state||null, f.zip||null,
       f.tenant_brand_id||null, f.operator_id||null, resolveOwner(f),
@@ -338,6 +338,7 @@ router.post('/', (req, res) => {
       f.fee_amount != null ? f.fee_amount : null,
       f.purchase_price||null, f.dd_end_date||null, f.close_date||null,
       f.is_portfolio ? 1 : 0,
+      f.needs_ownership_review ? 1 : 0,
       normalizeAddr(f.address, f.city, f.state, f.zip) || null
     )
     console.log('[POST /api/properties] inserted rowid:', r.lastInsertRowid)
