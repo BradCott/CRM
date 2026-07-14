@@ -43,6 +43,7 @@ export function regexGuess(description, amount = -1) {
   if (/repair|maintenance|plumb|hvac|roof|contractor|hardware|home depot|lowes|ace hardware/.test(d)) return 'Repair'
   if (/landscap|lawn|cleaning|janitorial|pest|snow/.test(d))                  return 'Cleaning & Maintenance'
   if (/hoa|cam charge|association/.test(d))                                   return 'HOA / CAM'
+  if (/wire.*fee|fee.*wire|bank fee|service charge|service fee|\bnsf\b|overdraft|returned item|analysis charge/.test(d)) return 'Bank Charges'
   return 'Other'
 }
 
@@ -55,6 +56,7 @@ function plaidHint(plaidCategory) {
   if (c.includes('UTILITIES') || c.includes('UTILITY')) return 'Utilities'
   if (c.includes('TAX'))                           return 'Property Tax'
   if (c.includes('HOME_IMPROVEMENT') || c.includes('HARDWARE')) return 'Repair'
+  if (c.includes('BANK_FEE') || c.includes('BANK_FEES'))        return 'Bank Charges'
   return null
 }
 
@@ -124,7 +126,7 @@ export async function aiCategorize(items, apiKey) {
   const prompt = `You are categorizing real estate bank transactions. Choose the single best category for each from this exact list:
 ${BANK_CATEGORIES.join(', ')}
 
-Rules: deposits that look like rent → Rent. Loan/mortgage payments → Mortgage. Use the most specific expense category. If genuinely unclear, use Other.
+Rules: deposits that look like rent → Rent. Loan/mortgage payments → Mortgage. Wire fees, wire transfer fees, bank/service charges, overdraft/NSF, and monthly account fees → Bank Charges. Use the most specific expense category. If genuinely unclear, use Other.
 
 Transactions:
 ${list}
@@ -178,7 +180,9 @@ export async function categorizeBatch(transactions, apiKey) {
       const aiItems = needAI.map(i => transactions[i])
       const aiCats = await aiCategorize(aiItems, apiKey)
       needAI.forEach((origIdx, k) => {
-        if (aiCats[k]) result[origIdx] = { category: aiCats[k], source: 'ai' }
+        // Treat AI "Other" as non-committal so the plaid/regex fallback (which
+        // catches bank/wire fees, etc.) still gets a shot.
+        if (aiCats[k] && aiCats[k] !== 'Other') result[origIdx] = { category: aiCats[k], source: 'ai' }
       })
     } catch (e) {
       console.error('[categorize] AI batch failed:', e.message)

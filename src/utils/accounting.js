@@ -152,6 +152,7 @@ export function guessCategory(description, amount = -1) {
   if (/repair|maintenance|plumb|electric service|hvac|roof|contractor|hardware|home depot|lowes|ace hardware/.test(d)) return 'Repair'
   if (/landscap|lawn|cleaning|janitorial|pest|snow/.test(d))                      return 'Cleaning & Maintenance'
   if (/hoa|cam charge|association/.test(d))                                       return 'HOA / CAM'
+  if (/wire.*fee|fee.*wire|bank fee|service charge|service fee|\bnsf\b|overdraft|returned item|analysis charge/.test(d)) return 'Bank Charges'
   return 'Other'
 }
 
