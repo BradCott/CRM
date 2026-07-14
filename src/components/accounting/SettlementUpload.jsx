@@ -572,7 +572,7 @@ function TextField({ label, value, onChange, hint }) {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export default function SettlementUpload({ propertyId, property, onSaved, onClose }) {
+export default function SettlementUpload({ propertyId, property, initialFile, onSaved, onClose }) {
   const inputRef = useRef()
   const [step, setStep]               = useState('upload')
   const [error, setError]             = useState(null)
@@ -635,6 +635,9 @@ export default function SettlementUpload({ propertyId, property, onSaved, onClos
       setStep('upload')
     }
   }
+
+  // Auto-parse a file handed in from Drive
+  useEffect(() => { if (initialFile) handleFile(initialFile) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Buyer-side reconciliation on the current (edited) line items
   const rec       = derived ? reconcile(derived) : null

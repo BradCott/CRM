@@ -67,6 +67,14 @@ export const createProperty  = (data)   => req('POST',   '/properties', data)
 export const updateProperty  = (id, d)  => req('PUT',    `/properties/${id}`, d)
 export const deleteProperty        = (id)     => req('DELETE', `/properties/${id}`)
 export const getPropertyDriveDocs  = (id, rematch = false) => req('GET', `/properties/${id}/drive-docs${rematch ? '?rematch=1' : ''}`)
+// Fetch a Drive file's bytes and wrap it as a File, so it can be fed to the
+// settlement / amortization / investor importers exactly like a local upload.
+export async function fetchDriveFileAsFile(fileId, name) {
+  const res = await fetch(`${BASE}/properties/drive-file/${fileId}`, { credentials: 'include' })
+  if (!res.ok) throw new Error((await res.text()) || 'Could not fetch the Drive file')
+  const blob = await res.blob()
+  return new File([blob], name || 'drive-file', { type: blob.type })
+}
 export const bulkDeleteProperties  = (ids)    => req('POST', '/properties/bulk-delete', { ids })
 export const togglePortfolio       = (id, val) => req('PATCH',  `/properties/${id}/portfolio`, { is_portfolio: val })
 

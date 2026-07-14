@@ -24,6 +24,28 @@ function getDrive() {
   catch { return null }
 }
 
+// Download a Drive file's bytes (exporting Google-native docs to a real format)
+// so the browser can hand it straight to the accounting importers.
+export async function fetchDriveFile(fileId) {
+  const drive = getDrive()
+  if (!drive) throw new Error('No Google account is connected')
+  const meta = await drive.files.get({ fileId, fields: 'id, name, mimeType', supportsAllDrives: true })
+  let { name, mimeType } = meta.data
+  const EXPORT = {
+    'application/vnd.google-apps.spreadsheet':  { mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', ext: '.xlsx' },
+    'application/vnd.google-apps.document':     { mime: 'application/pdf', ext: '.pdf' },
+    'application/vnd.google-apps.presentation': { mime: 'application/pdf', ext: '.pdf' },
+  }
+  if (EXPORT[mimeType]) {
+    const ex = EXPORT[mimeType]
+    const res = await drive.files.export({ fileId, mimeType: ex.mime }, { responseType: 'arraybuffer' })
+    if (!name.toLowerCase().endsWith(ex.ext)) name += ex.ext
+    return { buffer: Buffer.from(res.data), name, mimeType: ex.mime }
+  }
+  const res = await drive.files.get({ fileId, alt: 'media', supportsAllDrives: true }, { responseType: 'arraybuffer' })
+  return { buffer: Buffer.from(res.data), name, mimeType }
+}
+
 // ── Global keyword search (fallback when no property folder is found) ──────────
 export async function searchDriveDocs(terms, { limit = 40 } = {}) {
   const drive = getDrive()

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles, Link2, AlertTriangle, Banknote } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, applyAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries, matchTransaction, unmatchTransaction, getMatchCandidates, recordEarnestAsEquity } from '../../api/client'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, applyAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries, matchTransaction, unmatchTransaction, getMatchCandidates, recordEarnestAsEquity, fetchDriveFileAsFile } from '../../api/client'
 import OpeningBalancesModal from './OpeningBalancesModal'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
@@ -63,6 +63,8 @@ export default function LedgerPage() {
   const [showCloseout, setShowCloseout]     = useState(false)
   const [exportOpen, setExportOpen]         = useState(false)
   const [showInvestors, setShowInvestors]   = useState(false)
+  const [driveInitialFile, setDriveInitialFile] = useState(null)   // File pulled from Drive → settlement/investor modal
+  const [driveImporting, setDriveImporting]     = useState(false)
   const [deleting, setDeleting]             = useState(null)
 
   const [investors, setInvestors]           = useState([])
@@ -103,6 +105,26 @@ export default function LedgerPage() {
     try { await removeInvestorExcelEntries(propertyId); await reload() }
     catch (e) { setError(e.message) }
     finally { setCleaningExcel(false) }
+  }
+
+  // Pull a Drive file down and route it into the right accounting importer.
+  async function handleDriveImport(target, driveFile) {
+    setDriveImporting(true)
+    setError(null)
+    try {
+      const file = await fetchDriveFileAsFile(driveFile.id, driveFile.name)
+      if (target === 'amortization') {
+        await handleAmortUpload(file)
+      } else if (target === 'settlement') {
+        setDriveInitialFile(file); setShowSettlement(true)
+      } else if (target === 'investors') {
+        setDriveInitialFile(file); setShowInvestors(true)
+      }
+    } catch (e) {
+      setError(`Couldn't import from Drive: ${e.message}`)
+    } finally {
+      setDriveImporting(false)
+    }
   }
 
   async function handleAmortUpload(file) {
@@ -529,7 +551,8 @@ export default function LedgerPage() {
             <Button variant="secondary" onClick={() => setShowInvestors(true)}>
               <Users className="w-4 h-4" /> Investor Contributions
             </Button>
-            <DriveDocsButton propertyId={propertyId} />
+            <DriveDocsButton propertyId={propertyId} onImport={handleDriveImport} />
+            {driveImporting && <span className="inline-flex items-center gap-1 text-xs text-slate-500"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Pulling from Drive…</span>}
             <div className="relative">
               <Button variant="secondary" onClick={() => setExportOpen(o => !o)} title="Export the ledger + reports">
                 <Download className="w-4 h-4" /> Export <ChevronDown className="w-3.5 h-3.5" />
@@ -1336,8 +1359,9 @@ export default function LedgerPage() {
         <SettlementUpload
           propertyId={propertyId}
           property={property}
+          initialFile={driveInitialFile}
           onSaved={reload}
-          onClose={() => setShowSettlement(false)}
+          onClose={() => { setShowSettlement(false); setDriveInitialFile(null) }}
         />
       )}
 
@@ -1363,8 +1387,9 @@ export default function LedgerPage() {
       {showInvestors && (
         <InvestorUpload
           propertyId={propertyId}
+          initialFile={driveInitialFile}
           onSaved={reload}
-          onClose={() => setShowInvestors(false)}
+          onClose={() => { setShowInvestors(false); setDriveInitialFile(null) }}
         />
       )}
     </div>

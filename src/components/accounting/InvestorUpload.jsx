@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Upload, X, Loader2, Check, Pencil, Link, AlertCircle, UserPlus } from 'lucide-react'
 import { uploadInvestorContributions, saveInvestors, confirmInvestorMatch, createInvestor } from '../../api/client'
 
@@ -9,7 +9,7 @@ function fmt$(v) {
   return '$' + Number(v).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })
 }
 
-export default function InvestorUpload({ propertyId, onSaved, onClose }) {
+export default function InvestorUpload({ propertyId, initialFile, onSaved, onClose }) {
   const fileRef = useRef(null)
 
   // step: 'upload' | 'parsing' | 'review' | 'saving' | 'done' | 'match_review'
@@ -45,6 +45,9 @@ export default function InvestorUpload({ propertyId, onSaved, onClose }) {
     const file = e.dataTransfer.files[0]
     if (file) handleFile(file)
   }
+
+  // Auto-parse a file handed in from Drive
+  useEffect(() => { if (initialFile) handleFile(initialFile) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Inline editing ──────────────────────────────────────────────────────────
   function updateInvestor(idx, field, value) {

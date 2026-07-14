@@ -3,7 +3,7 @@ import db from '../db.js'
 import { requireRole } from '../middleware/auth.js'
 import { seedDefaultTasks } from './management.js'
 import { normalizeAddr, tokenSearch } from '../utils/normalize.js'
-import { searchDriveForProperty } from '../services/driveSearch.js'
+import { searchDriveForProperty, fetchDriveFile } from '../services/driveSearch.js'
 
 const router = Router()
 
@@ -505,6 +505,22 @@ router.get('/:id/drive-docs', async (req, res) => {
     res.json(out)
   } catch (err) {
     console.error('[GET /api/properties/:id/drive-docs] error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Stream a Drive file's bytes so the browser can feed it to the accounting
+// importers (settlement / amortization / investor upload).
+router.get('/drive-file/:fileId', async (req, res) => {
+  try {
+    const { buffer, name, mimeType } = await fetchDriveFile(req.params.fileId)
+    res.setHeader('Content-Type', mimeType || 'application/octet-stream')
+    res.setHeader('Content-Disposition', `inline; filename="${encodeURIComponent(name)}"`)
+    res.setHeader('X-Filename', encodeURIComponent(name))
+    res.setHeader('Access-Control-Expose-Headers', 'X-Filename')
+    res.send(buffer)
+  } catch (err) {
+    console.error('[GET /api/properties/drive-file/:fileId] error:', err.message)
     res.status(500).json({ error: err.message })
   }
 })
