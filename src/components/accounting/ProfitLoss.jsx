@@ -73,9 +73,12 @@ function Cell({ value, txs, label, onChanged, bold, color }) {
 }
 
 function MonthlyView({ transactions, onChanged }) {
-  const base = transactions.filter(t => PL_CATS.has(t.category))
-
-  const monthKeys = [...new Set(base.map(t => t.date.slice(0, 7)))].sort()
+  // Pass FULL transactions to computePL — it filters P&L internally but also needs
+  // Mortgage Principal (a NON_PL category) for the principal / cash-available lines.
+  const monthKeys = [...new Set(
+    transactions.filter(t => PL_CATS.has(t.category) || t.category === 'Mortgage Principal')
+      .map(t => t.date.slice(0, 7))
+  )].sort()
   if (monthKeys.length === 0) {
     return <p className="text-sm text-slate-400 py-8 text-center">No transactions to display</p>
   }
@@ -84,10 +87,10 @@ function MonthlyView({ transactions, onChanged }) {
     const [year, month] = key.split('-')
     const label = new Date(Number(year), Number(month) - 1, 1)
       .toLocaleDateString(undefined, { month: 'short', year: '2-digit' })
-    return { key, label, pl: computePL(base.filter(t => t.date.startsWith(key))) }
+    return { key, label, pl: computePL(transactions.filter(t => t.date.startsWith(key))) }
   })
 
-  const totals = computePL(base)
+  const totals = computePL(transactions)
 
   // Expense categories with any activity across the whole range
   const activeExpenseCats = EXPENSE_CATEGORIES.filter(cat =>
