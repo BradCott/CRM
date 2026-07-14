@@ -56,6 +56,8 @@ export function plRows(recorded) {
     ['Total Expenses', money(p.totalExpenses)],
     ['', ''],
     ['Net Operating Income', money(p.noi)],
+    ['  Less: Mortgage Principal', money(-p.principalPaid)],
+    ['Cash Available', money(p.cashAvailable)],
   ]
 }
 

@@ -186,9 +186,16 @@ export function computePL(transactions) {
   const totalExpenses = expenses.reduce((s, e) => s + e.amount, 0)
   const noi = totalRevenue - totalExpenses
 
+  // Mortgage PRINCIPAL isn't a P&L expense (it pays down the loan), so it's not
+  // in NOI — but it's real cash out. "Cash available" = NOI minus principal paid.
+  const principalTxs = transactions.filter(t => t.category === 'Mortgage Principal' && t.source !== 'Settlement Statement')
+  const principalPaid = principalTxs.reduce((s, t) => s + Math.abs(Number(t.amount)), 0)
+  const cashAvailable = noi - principalPaid
+
   return {
     rentRevenue, otherRevenue, totalRevenue,
     expenses, totalExpenses, noi,
+    principalPaid, cashAvailable, principalTxs,
     margin: totalRevenue > 0 ? (noi / totalRevenue) * 100 : null,
     txs: { rentTxs, otherRevTxs, allExpenseTxs: expenses.flatMap(e => e.txs) },
   }

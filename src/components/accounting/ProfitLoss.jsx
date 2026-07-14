@@ -109,6 +109,8 @@ function MonthlyView({ transactions, onChanged }) {
     })),
     { key: 'totalExp', label: 'Total Expenses', get: pl => ({ value: pl.totalExpenses, txs: pl.txs.allExpenseTxs }), color: 'text-red-600', bold: true, divider: true },
     { key: 'noi', label: 'Net Operating Income', get: pl => ({ value: pl.noi, txs: [] }), noi: true, bold: true },
+    { key: 'principal', label: 'Less: Mortgage Principal', get: pl => ({ value: pl.principalPaid, txs: pl.principalTxs }), color: 'text-red-600' },
+    { key: 'cashAvail', label: 'Cash Available', get: pl => ({ value: pl.cashAvailable, txs: [] }), noi: true, bold: true, divider: true },
   ]
 
   return (
@@ -278,6 +280,16 @@ export default function ProfitLoss({ property, transactions, onChanged }) {
                 Margin: {Math.round((pl.noi / pl.totalRevenue) * 100)}%
               </p>
             )}
+
+            {/* Below NOI: principal isn't a P&L expense but is real cash out */}
+            <ClickableAmount label="Less: Mortgage Principal" value={-pl.principalPaid}
+              transactions={pl.principalTxs} color="text-red-600" onChanged={onChanged} />
+            <div className="flex items-center justify-between border-t-2 border-slate-200 mt-2 pt-2">
+              <span className="text-sm font-bold text-slate-900" title="NOI minus principal paid — the actual cash left after debt service">Cash Available</span>
+              <span className={`text-lg font-bold tabular-nums ${pl.cashAvailable >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                {fmt$(pl.cashAvailable)}
+              </span>
+            </div>
           </div>
         </div>
       )}
