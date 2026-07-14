@@ -358,11 +358,13 @@ function summarizeAction(name, input) {
 
 // ── Anthropic call ────────────────────────────────────────────────────────────
 
-async function callClaude(apiKey, system, messages) {
+async function callClaude(apiKey, system, messages, noTools = false) {
+  const body = { model: MODEL, max_tokens: 4000, thinking: { type: 'disabled' }, system, messages }
+  if (!noTools) body.tools = [...READ_TOOLS, ...WRITE_TOOLS]
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: MODEL, max_tokens: 4000, thinking: { type: 'disabled' }, system, tools: [...READ_TOOLS, ...WRITE_TOOLS], messages }),
+    body: JSON.stringify(body),
   })
   if (!response.ok) {
     const err = await response.json().catch(() => ({}))
@@ -403,10 +405,13 @@ router.post('/chat', async (req, res) => {
 
   const actions = []
   try {
-    for (let i = 0; i < 5; i++) {
-      const resp = await callClaude(apiKey, system, messages)
+    const MAX_ROUNDS = 14
+    for (let i = 0; i < MAX_ROUNDS; i++) {
+      // On the last round, force a text answer (drop tools) so it always wraps up.
+      const lastRound = i === MAX_ROUNDS - 1
+      const resp = await callClaude(apiKey, system, messages, lastRound)
 
-      if (resp.stop_reason === 'tool_use') {
+      if (resp.stop_reason === 'tool_use' && !lastRound) {
         messages.push({ role: 'assistant', content: resp.content })
         const results = []
         for (const block of resp.content) {
@@ -425,9 +430,9 @@ router.post('/chat', async (req, res) => {
       }
 
       const reply = (resp.content || []).filter(c => c.type === 'text').map(c => c.text).join('\n').trim()
-      return res.json({ reply: reply || 'Done.', actions })
+      return res.json({ reply: reply || (actions.length ? 'Here\'s what I propose — confirm below.' : 'Done.'), actions })
     }
-    res.json({ reply: 'I gathered what I could — let me know how to proceed.', actions })
+    res.json({ reply: actions.length ? 'Here\'s what I propose — confirm below.' : 'I gathered what I could — let me know how to proceed.', actions })
   } catch (err) {
     console.error('[assistant]', err.message)
     res.status(500).json({ error: err.message })
