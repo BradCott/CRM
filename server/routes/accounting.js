@@ -1029,49 +1029,76 @@ router.get('/:propertyId/investors-list', (req, res) => {
  * table), contributed (recorded equity contributions attributed to them),
  * distributions received, and the resulting capital balance.
  */
+/**
+ * The per-property cap table (`property_investors`) with each row resolved to a
+ * global investor profile. A manual investor_id (set via /link) wins; otherwise
+ * a normalized name match (ignores LLC/Inc), then a high-confidence fuzzy pass.
+ * `linked` flags a manual (user-confirmed) link. This is the SINGLE source of
+ * truth for "who invested in this property" — both the Ledger investors block
+ * and the Capital Accounts tab derive from it so the two can never disagree.
+ */
+function capTableWithResolvedInvestorId(propertyId) {
+  const rows = db.prepare(`
+    SELECT id, property_id, name, address, contribution, percentage, class, preferred_return, created_at, investor_id
+    FROM property_investors
+    WHERE property_id = ?
+    ORDER BY contribution DESC
+  `).all(propertyId)
+
+  const investors = db.prepare('SELECT id, name FROM investors').all()
+  const normd = investors.map(iv => ({ id: iv.id, name: iv.name, key: normalizeName(iv.name) }))
+  for (const r of rows) {
+    r.linked = r.investor_id != null
+    if (r.investor_id != null) continue
+    const rk = normalizeName(r.name)
+    let inv = rk && normd.find(x => x.key === rk)
+    if (!inv) {
+      let best = null, score = 0
+      for (const x of normd) { const s = nameSimilarity(r.name, x.name); if (s > score) { score = s; best = x } }
+      if (best && score >= 0.85) inv = best
+    }
+    r.investor_id = inv ? inv.id : null
+  }
+  return rows
+}
+
 router.get('/:propertyId/capital-accounts', (req, res) => {
   const pid = req.params.propertyId
-  const committed = db.prepare(`
-    SELECT l.investor_id, i.name, i.entity_type, l.contribution AS committed
-    FROM investor_property_links l JOIN investors i ON i.id = l.investor_id
-    WHERE l.property_id = ?
-  `).all(pid)
+  // Same source + resolution as the Ledger investors block (the cap table),
+  // so investor count and committed amounts always match between the two tabs.
+  const rows = capTableWithResolvedInvestorId(pid)
+
   const contributed = db.prepare(`
     SELECT investor_id, COALESCE(SUM(amount), 0) AS total
     FROM accounting_transactions
     WHERE property_id = ? AND category = 'Equity Contribution'
-      AND review_status = 'recorded' AND investor_id IS NOT NULL
+      AND review_status = 'recorded' AND amount > 0 AND investor_id IS NOT NULL
     GROUP BY investor_id
   `).all(pid)
   const dist = db.prepare(`
     SELECT investor_id, COALESCE(SUM(amount), 0) AS total
     FROM investor_distributions WHERE property_id = ? GROUP BY investor_id
   `).all(pid)
-
   const contribMap = new Map(contributed.map(r => [r.investor_id, r.total]))
   const distMap    = new Map(dist.map(r => [r.investor_id, r.total]))
-  const byId       = new Map()
-  for (const c of committed) byId.set(c.investor_id, { investor_id: c.investor_id, name: c.name, entity_type: c.entity_type, committed: c.committed || 0 })
-  // Include anyone who contributed but isn't in the cap table
-  for (const c of contributed) {
-    if (byId.has(c.investor_id)) continue
-    const inv = db.prepare('SELECT name, entity_type FROM investors WHERE id = ?').get(c.investor_id)
-    byId.set(c.investor_id, { investor_id: c.investor_id, name: inv?.name || 'Unknown', entity_type: inv?.entity_type, committed: 0 })
-  }
 
-  const rows = [...byId.values()].map(r => {
-    const contributed_amt = contribMap.get(r.investor_id) || 0
-    const distributions   = distMap.get(r.investor_id) || 0
+  const out = rows.map(r => {
+    const committed       = r.contribution || 0
+    const contributed_amt = r.investor_id ? (contribMap.get(r.investor_id) || 0) : 0
+    const distributions   = r.investor_id ? (distMap.get(r.investor_id) || 0) : 0
     return {
-      ...r,
-      contributed:  contributed_amt,
+      id:            r.id,            // cap-table row id (stable React key)
+      investor_id:   r.investor_id,
+      name:          r.name,
+      committed,
+      contributed:   contributed_amt,
       distributions,
       capital_balance: contributed_amt - distributions,
-      unfunded:        Math.max(0, (r.committed || 0) - contributed_amt),
+      unfunded:        Math.max(0, committed - contributed_amt),
     }
-  }).sort((a, b) => b.committed - a.committed || a.name.localeCompare(b.name))
+  })
 
-  res.json(rows)
+  res.json(out)
 })
 
 /** PATCH set/clear the investor attributed to a transaction. */
@@ -1183,30 +1210,9 @@ router.delete('/rules/:id', (req, res) => {
 
 router.get('/:propertyId/investors', (req, res) => {
   const { propertyId } = req.params
-  const rows = db.prepare(`
-    SELECT id, property_id, name, address, contribution, percentage, class, preferred_return, created_at, investor_id
-    FROM property_investors
-    WHERE property_id = ?
-    ORDER BY contribution DESC
-  `).all(propertyId)
-
-  // A manual investor_id (set via /link) wins. Otherwise resolve the name to a
-  // global investor profile: normalized match (ignores LLC/Inc), then a
-  // high-confidence fuzzy pass. `linked` flags a manual (user-confirmed) link.
-  const investors = db.prepare('SELECT id, name FROM investors').all()
-  const normd = investors.map(iv => ({ id: iv.id, name: iv.name, key: normalizeName(iv.name) }))
-  for (const r of rows) {
-    r.linked = r.investor_id != null
-    if (r.investor_id != null) continue
-    const rk = normalizeName(r.name)
-    let inv = rk && normd.find(x => x.key === rk)
-    if (!inv) {
-      let best = null, score = 0
-      for (const x of normd) { const s = nameSimilarity(r.name, x.name); if (s > score) { score = s; best = x } }
-      if (best && score >= 0.85) inv = best
-    }
-    r.investor_id = inv ? inv.id : null
-  }
+  // Cap table with each row resolved to a global investor profile — shared with
+  // the Capital Accounts tab so the two views always show the same investors.
+  const rows = capTableWithResolvedInvestorId(propertyId)
 
   // Reconciliation: how much equity has actually been booked from the bank for
   // each investor (attributed Equity Contributions), split by recorded vs pending.
