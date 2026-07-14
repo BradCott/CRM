@@ -66,7 +66,7 @@ export const getProperty     = (id)     => req('GET',    `/properties/${id}`)
 export const createProperty  = (data)   => req('POST',   '/properties', data)
 export const updateProperty  = (id, d)  => req('PUT',    `/properties/${id}`, d)
 export const deleteProperty        = (id)     => req('DELETE', `/properties/${id}`)
-export const getPropertyDriveDocs  = (id)     => req('GET',    `/properties/${id}/drive-docs`)
+export const getPropertyDriveDocs  = (id, rematch = false) => req('GET', `/properties/${id}/drive-docs${rematch ? '?rematch=1' : ''}`)
 export const bulkDeleteProperties  = (ids)    => req('POST', '/properties/bulk-delete', { ids })
 export const togglePortfolio       = (id, val) => req('PATCH',  `/properties/${id}/portfolio`, { is_portfolio: val })
 

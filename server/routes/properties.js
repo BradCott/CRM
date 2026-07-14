@@ -501,7 +501,7 @@ router.post('/:id/lease-data', requireRole('admin'), (req, res) => {
 // management pages.
 router.get('/:id/drive-docs', async (req, res) => {
   try {
-    const out = await searchDriveForProperty(req.params.id)
+    const out = await searchDriveForProperty(req.params.id, { rematch: req.query.rematch === '1' })
     res.json(out)
   } catch (err) {
     console.error('[GET /api/properties/:id/drive-docs] error:', err.message)

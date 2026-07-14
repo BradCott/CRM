@@ -281,6 +281,10 @@ const migrations = [
   `ALTER TABLE properties ADD COLUMN operator_id INTEGER REFERENCES operators(id) ON DELETE SET NULL`,
   `INSERT OR IGNORE INTO operators (name, is_corporate) VALUES ('Corporate', 1), ('Flynn', 0), ('Sun Holdings', 0)`,
   `CREATE INDEX IF NOT EXISTS idx_prop_operator ON properties(operator_id)`,
+  // Cached Google Drive folder for the property (the "Brand - City, State" folder
+  // under Knox CRE) so "Find Drive Docs" lists the right folder, not a global search.
+  `ALTER TABLE properties ADD COLUMN drive_folder_id   TEXT`,
+  `ALTER TABLE properties ADD COLUMN drive_folder_name TEXT`,
   // Name/address match keys for duplicate detection
   `ALTER TABLE people     ADD COLUMN name_key TEXT`,
   `ALTER TABLE properties ADD COLUMN addr_key TEXT`,
