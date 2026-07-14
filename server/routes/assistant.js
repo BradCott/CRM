@@ -55,13 +55,14 @@ You CAN see the user's screen: each message includes the visible page text (and 
 
 The user can ATTACH DOCUMENTS (PDFs, spreadsheets, images, closing statements, leases, rent rolls). When they do, read the document carefully and use it: extract the relevant figures, compare them to what's in the CRM, and PROPOSE the concrete changes that make sense (create/edit transactions, fix categories, update property or cap-table fields). Don't just describe the document — turn it into proposed actions.
 
-You have TOOLS:
-- Read tools (find_properties, find_people, get_property_summary, find_transactions, get_cap_table, list_bills) run immediately and return data — use them to look things up before answering or acting.
-- Action tools (recategorize_transactions, update_transaction, split_transaction, record_transactions, delete_transactions, create_transaction, create_bill, pay_bill, update_investor_contribution, delete_investor, update_property_fields, delete_properties, delete_people) DO NOT run immediately. When you call one it is shown to the user as a proposed action with a Confirm button — they approve it. Look up exact record ids first, then propose the action(s). You can propose several at once. Briefly tell the user what you're proposing.
+You have TOOLS — you are NOT limited to what's on screen; query the data directly:
+- Read tools (find_properties, find_people, get_property_summary, find_transactions, get_cap_table, list_bills, get_settlement) run immediately and return data — use them to look things up and VERIFY before answering or acting. get_settlement returns the recorded settlement line items + totals + whether it balances; get_cap_table returns the investors (with their master investor_id).
+- Action tools (recategorize_transactions, update_transaction, split_transaction, record_transactions, delete_transactions, create_transaction, create_bill, pay_bill, record_earnest_as_equity, update_investor_contribution, delete_investor, update_property_fields, delete_properties, delete_people) DO NOT run immediately. When you call one it is shown to the user as a proposed action with a Confirm button — they approve it. Look up exact record ids first, then propose the action(s). Briefly tell the user what you're proposing.
 
 Rules:
-- Always resolve real record ids with read tools before proposing an action. Never guess ids.
-- Be proactive and specific: when the user's intent is clear, propose the exact edits rather than asking a series of questions. Ask only when genuinely ambiguous.
+- Always resolve real record ids with read tools before proposing an action. Never guess ids or speculate about the data model — use get_settlement / find_transactions / get_cap_table to CHECK.
+- Be proactive and specific: when intent is clear, propose the exact edits rather than asking a series of questions.
+- EARNEST MONEY → EQUITY: to credit earnest money as an investor's equity, use record_earnest_as_equity (transaction_id = the earnest-money line from find_transactions; investor_id = the master investor_id from get_cap_table). It ADDS an offsetting Equity Contribution and leaves the earnest line and the settlement untouched, so the statement stays balanced. Do NOT recategorize the earnest-money line to do this — that would distort the settlement. You can call get_settlement before and after to confirm it still balances.
 - For destructive actions (delete), be explicit about how many records and which ones.
 - Amounts: POSITIVE = money in, NEGATIVE = money out. Mortgage Interest is a P&L expense; Mortgage Principal is a loan paydown (not P&L).
 - Be concise and practical. You are not a substitute for a CPA on filing decisions, but give your best practical recommendation.`
@@ -98,6 +99,11 @@ const READ_TOOLS = [
     name: 'list_bills',
     description: 'Bills (accounts payable) for a property — id, payee, amount, category, due date, paid status. Use the id for pay_bill.',
     input_schema: { type: 'object', properties: { property_id: { type: 'number' }, unpaid_only: { type: 'boolean' } }, required: ['property_id'] },
+  },
+  {
+    name: 'get_settlement',
+    description: "The property's recorded settlement statement — every line item with its treatment, the rolled-up totals, and whether it balances (cash-to-close). Use this to reason about acquisition entries before proposing changes.",
+    input_schema: { type: 'object', properties: { property_id: { type: 'number' } }, required: ['property_id'] },
   },
 ]
 
@@ -156,6 +162,11 @@ const WRITE_TOOLS = [
     name: 'update_property_fields',
     description: 'Update fields on a property. Allowed: address, city, state, zip, notes, listing_status, annual_rent, cap_rate, list_price, purchase_price, lease_start, lease_end. Only include fields to change.',
     input_schema: { type: 'object', properties: { property_id: { type: 'number' }, fields: { type: 'object' } }, required: ['property_id', 'fields'] },
+  },
+  {
+    name: 'record_earnest_as_equity',
+    description: "Book a settlement Earnest Money line as an investor's equity contribution — the SAFE way. It ADDS an offsetting Equity Contribution (+amount) attributed to the investor, keeping the original earnest-money line so cash nets to zero and the settlement stays balanced. Use this instead of recategorizing the earnest-money line. transaction_id = the earnest-money ledger line; investor_id = the master investor id (from get_cap_table's investor_id field).",
+    input_schema: { type: 'object', properties: { transaction_id: { type: 'number' }, investor_id: { type: 'number' } }, required: ['transaction_id', 'investor_id'] },
   },
   {
     name: 'delete_properties',
@@ -222,6 +233,29 @@ function execReadTool(name, input) {
     sql += ' ORDER BY (paid_at IS NOT NULL) ASC, due_date ASC'
     return db.prepare(sql).all(input.property_id)
   }
+  if (name === 'get_settlement') {
+    const row = db.prepare('SELECT data FROM property_settlements WHERE property_id = ?').get(input.property_id)
+    if (!row) return { error: 'No settlement statement is recorded for this property.' }
+    let d; try { d = JSON.parse(row.data) } catch { return { error: 'Settlement data is unreadable.' } }
+    const items = Array.isArray(d.lineItems) ? d.lineItems : []
+    const sum = t => items.filter(x => x.treatment === t).reduce((s, x) => s + (Number(x.amount) || 0), 0)
+    const purchase = sum('Purchase Price'), sellerCredit = sum('Seller Credit')
+    const closing = sum('Buyer Closing Cost'), buyerTaxes = sum('Buyer Taxes Paid')
+    const loan = sum('Loan'), exch = sum('1031 Exchange'), earnest = sum('Earnest Money')
+    const credits = sum('Tax Proration Credit') + sum('Rent Proration Credit') + sum('Insurance Credit') + sum('CAM Credit')
+    const cashStated = sum('Cash to Close')
+    const cashExpected = (purchase - sellerCredit + closing + buyerTaxes) - (loan + exch + earnest + credits)
+    return {
+      line_items: items,
+      totals: {
+        purchase_price: purchase, seller_credit: sellerCredit, buyer_closing_costs: closing, buyer_taxes_paid: buyerTaxes,
+        loan, exchange_1031: exch, earnest_money: earnest, proration_credits: credits,
+        cash_to_close_stated: cashStated, cash_to_close_expected: cashExpected,
+        balance_gap: Math.round((cashStated - cashExpected) * 100) / 100,
+        balanced: Math.abs(cashStated - cashExpected) < 2,
+      },
+    }
+  }
   return { error: 'Unknown tool' }
 }
 
@@ -261,6 +295,10 @@ function summarizeAction(name, input) {
   if (name === 'update_property_fields') {
     const fields = Object.entries(input.fields || {}).map(([k, v]) => `${k} → "${v}"`).join(', ')
     return `Update property #${input.property_id}: ${fields || '(no fields)'}`
+  }
+  if (name === 'record_earnest_as_equity') {
+    const inv = db.prepare('SELECT name FROM investors WHERE id = ?').get(input.investor_id)
+    return `Book earnest money (tx #${input.transaction_id}) as ${inv?.name || 'the investor'}'s equity — adds an offsetting Equity Contribution, keeps the settlement balanced`
   }
   if (name === 'delete_properties') {
     const rows = db.prepare(`SELECT address FROM properties WHERE id IN (${(input.property_ids || []).map(() => '?').join(',') || 'NULL'})`).all(...(input.property_ids || []))
@@ -420,6 +458,18 @@ router.post('/execute', (req, res) => {
     } else if (type === 'delete_investor') {
       db.prepare('DELETE FROM property_investors WHERE id = ?').run(params.investor_row_id)
       result = `Investor row removed from cap table`
+    } else if (type === 'record_earnest_as_equity') {
+      const tx = db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(params.transaction_id)
+      if (!tx) throw new Error('Transaction not found')
+      const inv = db.prepare('SELECT id, name FROM investors WHERE id = ?').get(params.investor_id)
+      if (!inv) throw new Error('Investor not found')
+      const existing = db.prepare(`SELECT id FROM accounting_transactions WHERE matched_to_id = ? AND category = 'Equity Contribution'`).get(tx.id)
+      if (existing) { result = 'Already booked as equity'; }
+      else {
+        db.prepare(`INSERT INTO accounting_transactions (property_id, date, description, category, amount, source, investor_id, review_status, matched_to_id) VALUES (?, ?, ?, 'Equity Contribution', ?, 'Manual', ?, 'recorded', ?)`)
+          .run(tx.property_id, tx.date, `Earnest money — ${inv.name} equity`, Math.abs(Number(tx.amount) || 0), inv.id, tx.id)
+        result = `Booked ${'$' + Math.abs(Math.round(Number(tx.amount))).toLocaleString()} earnest money as ${inv.name}'s equity`
+      }
     } else if (type === 'update_property_fields') {
       const entries = Object.entries(params.fields || {}).filter(([k]) => EDITABLE_PROPERTY_FIELDS.has(k))
       if (!entries.length) throw new Error('No editable fields provided')
