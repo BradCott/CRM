@@ -1456,6 +1456,22 @@ router.post('/:propertyId/settlement', upload.single('file'), async (req, res) =
   }
 })
 
+// ── Seller-side settlement (for the "We Sold It" close-out) ───────────────────
+// Parses the SELLER's closing statement into the numbers the close-out needs:
+// gross sale price, total selling costs, existing-loan payoff, and net proceeds.
+router.post('/:propertyId/sale-settlement', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set' })
+  try {
+    const result = await parseSaleSettlement(req.file.buffer, req.file.originalname, apiKey)
+    res.json({ ok: true, ...result })
+  } catch (err) {
+    console.error('[accounting] Sale settlement parse error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ── Settlement re-balance ─────────────────────────────────────────────────────
 // Re-reads the whole PDF from scratch (a fresh parse is far more reliable than
 // asking the model to minimally edit an already-wrong extraction), then the
@@ -1764,6 +1780,55 @@ function cleanDate(v) {
 // Settlement statements are dense multi-column tables with cross-column
 // reconciling rows — use a stronger model than the default for column fidelity.
 const SETTLEMENT_MODEL = 'claude-sonnet-5'
+
+const SELLER_SETTLEMENT_PROMPT = `You are extracting the SELLER's numbers from a real estate settlement / closing statement for a property SALE. Our user is the SELLER. Read the columns carefully — HUD-1/ALTA has Borrower(Buyer) vs Seller columns; First American-style has "Seller Charge" / "Seller Credit" columns. Use ONLY the seller's side.
+
+Return ONLY a valid JSON object in exactly this shape (use 0 if not present):
+{
+  "settlement_date": "YYYY-MM-DD or null",
+  "sale_price": number,        // gross sale price / total consideration / contract sales price (the seller CREDIT for the price)
+  "selling_costs": number,     // SUM of ALL seller-side closing COSTS: real estate/broker commission, seller's title/escrow/settlement/closing fees, owner's title policy paid by seller, documentary/transfer/conveyance/excise tax, deed prep, seller attorney, recording of releases, HOA/estoppel/tax certs, home warranty, seller-paid buyer credits/concessions, and any tax/rent/CAM proration CHARGED to the seller (credited to the buyer). EXCLUDE the sale price, the loan payoff, and the seller's net cash.
+  "loan_payoff": number,       // payoff of the seller's existing mortgage(s)/loans/liens being released at closing
+  "net_proceeds": number,      // net cash / proceeds to the seller ("Cash to Seller", "Balance due to Seller", "Proceeds to Seller")
+  "broker_commission": number, // the real estate commission portion (already included in selling_costs)
+  "line_items": [ { "description": "exact label", "amount": positive number, "kind": "sale_price|selling_cost|loan_payoff|proration|net_proceeds|other" } ]
+}
+
+Rules:
+- All amounts POSITIVE numbers.
+- selling_costs must NOT include the sale price, the loan payoff, or the net proceeds — only actual closing costs the seller pays.
+- If the statement shows a seller commission of e.g. 6%, that dollar amount is part of selling_costs AND reported in broker_commission.
+- A property-tax proration the SELLER owes the buyer (seller charge / buyer credit) is a selling cost. A proration the buyer owes the seller (seller credit) reduces selling costs — net it out.
+- Sanity: sale_price - selling_costs - loan_payoff should ≈ net_proceeds. If your numbers don't foot to the stated net proceeds, re-check the columns before answering.
+- Include a per-line "line_items" breakdown for transparency.
+Return ONLY the JSON object, no markdown.`
+
+async function parseSaleSettlement(buffer, originalname, apiKey) {
+  const ext = (originalname.split('.').pop() || '').toLowerCase()
+  let raw
+  if (ext === 'pdf') {
+    raw = await callClaudeWithPrompt(apiKey, buffer, SELLER_SETTLEMENT_PROMPT, SETTLEMENT_MODEL)
+  } else if (['xlsx', 'xls', 'csv'].includes(ext)) {
+    const wb = XLSX.read(buffer, { type: 'buffer' })
+    const csv = XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]])
+    raw = await callClaudeTextJson(apiKey, csv, SELLER_SETTLEMENT_PROMPT)
+  } else {
+    throw new Error('Upload a PDF, XLSX, or CSV settlement statement')
+  }
+  const cn = v => { const n = cleanNum(v); return (n !== null && isFinite(n) && n > 0) ? n : 0 }
+  return {
+    settlement_date:   cleanDate(raw.settlement_date),
+    sale_price:        cn(raw.sale_price),
+    selling_costs:     cn(raw.selling_costs),
+    loan_payoff:       cn(raw.loan_payoff),
+    net_proceeds:      cn(raw.net_proceeds),
+    broker_commission: cn(raw.broker_commission),
+    line_items: (Array.isArray(raw.line_items) ? raw.line_items : [])
+      .filter(it => it && typeof it.description === 'string' && it.description.trim())
+      .map(it => ({ description: String(it.description).trim(), amount: cn(it.amount), kind: it.kind || 'other' }))
+      .filter(it => it.amount > 0),
+  }
+}
 
 async function parseSettlementStatement(buffer, apiKey) {
   const raw = await callClaudeWithPrompt(apiKey, buffer, SETTLEMENT_PROMPT, SETTLEMENT_MODEL)

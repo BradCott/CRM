@@ -257,6 +257,11 @@ export const deleteBill  = (id)            => req('DELETE', `/accounting/bills/$
 export const getPropertyDistributions = (propertyId) => req('GET', `/accounting/${propertyId}/distributions`)
 export const getAllDistributions      = ()            => req('GET', '/accounting/distributions')
 export const saleCloseout             = (propertyId, d) => req('POST', `/accounting/${propertyId}/sale-closeout`, d)
+export async function uploadSaleSettlement(propertyId, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return req('POST', `/accounting/${propertyId}/sale-settlement`, fd)
+}
 export async function uploadSettlement(propertyId, file) {
   const fd = new FormData()
   fd.append('file', file)

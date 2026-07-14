@@ -3,12 +3,12 @@
 // The waterfall (computeWaterfall) matches Knox's deal calculator to the cent.
 import { useState, useEffect, useMemo } from 'react'
 import {
-  X, Loader2, AlertTriangle, CheckCircle, AlertCircle, ChevronRight, ChevronLeft, Banknote,
+  X, Loader2, AlertTriangle, CheckCircle, AlertCircle, ChevronRight, ChevronLeft, Banknote, Upload,
 } from 'lucide-react'
 import Button from '../ui/Button'
 import { Input } from '../ui/Input'
 import { computeBalanceSheet, computeWaterfall } from '../../utils/accounting'
-import { getPropertyDistributions, getBills, saleCloseout } from '../../api/client'
+import { getPropertyDistributions, getBills, saleCloseout, uploadSaleSettlement } from '../../api/client'
 
 const STEPS = ['Sale', 'Safety Check', 'Reserves', 'Distribute', 'Review']
 const money = n => (n == null || isNaN(n) ? '—' : (n < 0 ? `-$${Math.abs(Math.round(n)).toLocaleString()}` : `$${Math.round(n).toLocaleString()}`))
@@ -33,6 +33,9 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
   const [loanPayoff, setLoanPayoff]     = useState('')
   const [memberPayoff, setMemberPayoff] = useState('')
   const [includeCash, setIncludeCash]   = useState(true)
+  const [parsing, setParsing]           = useState(false)
+  const [dragOver, setDragOver]         = useState(false)
+  const [parsedNet, setParsedNet]       = useState(null)   // net proceeds from the statement, for cross-check
 
   // ── Step 3: Reserves ──
   const [reserves, setReserves] = useState([
@@ -96,6 +99,24 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
     next.has(id) ? next.delete(id) : next.add(id)
     return next
   })
+
+  async function handleSettlementFile(file) {
+    if (!file) return
+    setParsing(true)
+    setError(null)
+    try {
+      const r = await uploadSaleSettlement(propertyId, file)
+      if (r.sale_price)    setSalePrice(String(Math.round(r.sale_price)))
+      if (r.selling_costs) setSellingCosts(String(Math.round(r.selling_costs)))
+      if (r.loan_payoff)   setLoanPayoff(String(Math.round(r.loan_payoff)))
+      if (r.settlement_date) setSaleDate(r.settlement_date)
+      setParsedNet(r.net_proceeds || null)
+    } catch (e) {
+      setError(`Couldn't read that statement: ${e.message}`)
+    } finally {
+      setParsing(false)
+    }
+  }
 
   async function handleConfirm() {
     setSaving(true)
@@ -163,7 +184,37 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
               {/* STEP 1 — SALE */}
               {step === 0 && (
                 <div className="space-y-4">
-                  <p className="text-sm text-slate-500">Enter the sale from your closing statement. Payoffs are pre-filled from the current balance sheet.</p>
+                  {/* Drop the seller's closing statement to auto-fill */}
+                  <label
+                    onDragOver={e => { e.preventDefault(); setDragOver(true) }}
+                    onDragLeave={() => setDragOver(false)}
+                    onDrop={e => { e.preventDefault(); setDragOver(false); handleSettlementFile(e.dataTransfer.files[0]) }}
+                    className={`block border-2 border-dashed rounded-xl px-4 py-5 text-center cursor-pointer transition-colors ${
+                      dragOver ? 'border-emerald-400 bg-emerald-50' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                    }`}
+                  >
+                    <input type="file" accept=".pdf,.xlsx,.xls,.csv" className="hidden"
+                      onChange={e => handleSettlementFile(e.target.files[0])} />
+                    {parsing ? (
+                      <span className="inline-flex items-center gap-2 text-sm text-slate-500"><Loader2 className="w-4 h-4 animate-spin" /> Reading the settlement statement…</span>
+                    ) : (
+                      <>
+                        <Upload className="w-6 h-6 text-slate-400 mx-auto mb-1" />
+                        <p className="text-sm font-medium text-slate-700">Drop the seller's closing statement to auto-fill</p>
+                        <p className="text-xs text-slate-400 mt-0.5">PDF, Excel, or CSV — reads the sale price, selling costs &amp; loan payoff. Or just type them below.</p>
+                      </>
+                    )}
+                  </label>
+
+                  {parsedNet != null && (
+                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs ${Math.abs(parsedNet - netProceeds) < 2 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
+                      {Math.abs(parsedNet - netProceeds) < 2
+                        ? <><CheckCircle className="w-3.5 h-3.5 shrink-0" /> Matches the statement's net proceeds to seller ({money(parsedNet)}).</>
+                        : <><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Statement says net proceeds {money(parsedNet)}, but sale − costs − payoff = {money(netProceeds)}. Check the figures.</>}
+                    </div>
+                  )}
+
+                  <p className="text-sm text-slate-500">Confirm the sale figures. Payoffs are pre-filled from the current balance sheet.</p>
                   <div className="grid grid-cols-2 gap-4">
                     <Input label="Sale date" type="date" value={saleDate} onChange={e => setSaleDate(e.target.value)} />
                     <Input label="Sale price" type="number" value={salePrice} onChange={e => setSalePrice(e.target.value)} placeholder="0" />
