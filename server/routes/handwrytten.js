@@ -666,6 +666,40 @@ router.get('/drips/:id', (req, res) => {
 })
 
 /**
+ * GET /api/handwrytten/drips/:id/queue — per-recipient outcomes for a drip, with
+ * a grouped tally of failure/skip reasons so a mass failure is diagnosable at a
+ * glance. `failed` = the Handwrytten API rejected the order; `skipped` = we never
+ * sent it (no address, DNC, paused).
+ */
+router.get('/drips/:id/queue', (req, res) => {
+  const rows = db.prepare(`
+    SELECT q.id, q.status, q.error_message, q.processed_at,
+           p.name  AS contact_name,
+           p.city  AS contact_city,
+           p.state AS contact_state
+    FROM handwrytten_drip_queue q
+    LEFT JOIN people p ON p.id = q.contact_id
+    WHERE q.drip_id = ?
+    ORDER BY
+      CASE q.status WHEN 'failed' THEN 0 WHEN 'skipped' THEN 1 WHEN 'sent' THEN 2 ELSE 3 END,
+      q.position ASC, q.id ASC
+  `).all(req.params.id)
+
+  const tally = new Map()
+  for (const r of rows) {
+    if (r.status === 'failed' || r.status === 'skipped') {
+      const key = `${r.status}:${r.error_message || 'Unknown'}`
+      const cur = tally.get(key) || { status: r.status, reason: r.error_message || 'Unknown', count: 0 }
+      cur.count++
+      tally.set(key, cur)
+    }
+  }
+  const reasons = [...tally.values()].sort((a, b) => b.count - a.count)
+
+  res.json({ rows, reasons })
+})
+
+/**
  * POST /api/handwrytten/drips — create a drip and queue recipients.
  * Body: { name?, recipients:[{contact_id, property_id?}], message, card_id?, font?,
  *         batch_size, interval_days, filters? }

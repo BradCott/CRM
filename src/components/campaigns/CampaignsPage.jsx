@@ -3,7 +3,7 @@ import { Mail, Loader2, ChevronDown, ChevronRight, CheckCircle, AlertCircle, Clo
 import {
   getHandwryttenCampaigns, getHandwryttenSends,
   getHandwryttenDrips, updateHandwryttenDrip, cancelHandwryttenDrip,
-  getMailResponseSummary, markSendResponded,
+  getHandwryttenDripQueue, getMailResponseSummary, markSendResponded,
 } from '../../api/client'
 import TopBar from '../layout/TopBar'
 import MailPauseControl from '../handwrytten/MailPauseControl'
@@ -227,11 +227,23 @@ function DripCard({ drip, onChange }) {
   const [editing, setEditing] = useState(false)
   const [batch, setBatch]     = useState(drip.batch_size)
   const [interval, setInterval] = useState(drip.interval_days)
+  const [showDetail, setShowDetail] = useState(false)
+  const [detail, setDetail]         = useState(null)   // { rows, reasons }
+  const [loadingDetail, setLoadingDetail] = useState(false)
 
   const done    = drip.sent_count + drip.failed_count
   const pct     = drip.total_count > 0 ? Math.round((done / drip.total_count) * 100) : 0
   const st      = DRIP_STATUS[drip.status] || DRIP_STATUS.active
   const live    = drip.status === 'active' || drip.status === 'paused'
+
+  async function toggleDetail() {
+    if (!showDetail && !detail) {
+      setLoadingDetail(true)
+      try { setDetail(await getHandwryttenDripQueue(drip.id)) } catch (_) {}
+      setLoadingDetail(false)
+    }
+    setShowDetail(v => !v)
+  }
 
   async function act(fn) {
     setBusy(true)
@@ -304,6 +316,62 @@ function DripCard({ drip, onChange }) {
             className="ml-auto px-3 py-1 text-xs font-semibold rounded-lg bg-blue-600 text-white hover:bg-blue-700">
             Save
           </button>
+        </div>
+      )}
+
+      {/* Send details / failure breakdown */}
+      {done > 0 && (
+        <div className="mt-3 border-t border-slate-100 pt-2">
+          <button onClick={toggleDetail}
+            className="flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-700">
+            {showDetail ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+            {drip.failed_count > 0 ? `View ${drip.failed_count} failure${drip.failed_count === 1 ? '' : 's'} & details` : 'View send details'}
+          </button>
+
+          {showDetail && (
+            <div className="mt-2">
+              {loadingDetail ? (
+                <div className="flex items-center gap-2 text-xs text-slate-400 py-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading…
+                </div>
+              ) : !detail ? (
+                <p className="text-xs text-slate-400 py-2">Couldn't load details.</p>
+              ) : (
+                <>
+                  {detail.reasons.length > 0 ? (
+                    <div className="space-y-1.5 mb-3">
+                      <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Why letters didn't send</p>
+                      {detail.reasons.map((r, i) => (
+                        <div key={i} className={`flex items-start gap-2 text-xs rounded-lg px-2.5 py-1.5 border ${
+                          r.status === 'failed' ? 'bg-red-50 border-red-100 text-red-700' : 'bg-amber-50 border-amber-100 text-amber-700'
+                        }`}>
+                          <span className="font-bold tabular-nums shrink-0">{r.count}×</span>
+                          <span className="uppercase text-[10px] font-semibold mt-0.5 shrink-0 opacity-70">{r.status}</span>
+                          <span className="break-words">{r.reason}</span>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-emerald-600 mb-3">No problems — every processed letter was sent.</p>
+                  )}
+
+                  <div className="max-h-56 overflow-auto rounded-lg border border-slate-100">
+                    <table className="min-w-full text-[11px]">
+                      <tbody>
+                        {detail.rows.filter(r => r.status === 'failed' || r.status === 'skipped').map(r => (
+                          <tr key={r.id} className="border-b border-slate-50 last:border-0">
+                            <td className="px-2.5 py-1.5 text-slate-700 font-medium whitespace-nowrap">{r.contact_name || '—'}</td>
+                            <td className="px-2.5 py-1.5 text-slate-400 whitespace-nowrap">{[r.contact_city, r.contact_state].filter(Boolean).join(', ')}</td>
+                            <td className="px-2.5 py-1.5 text-slate-500">{r.error_message || r.status}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

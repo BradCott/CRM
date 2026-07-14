@@ -445,5 +445,6 @@ export const setMailPause            = (personId, duration, reason=null)  => req
 export const createHandwryttenDrip = (data)        => req('POST',  '/handwrytten/drips', data)
 export const getHandwryttenDrips   = ()            => req('GET',   '/handwrytten/drips')
 export const getHandwryttenDrip    = (id)          => req('GET',   `/handwrytten/drips/${id}`)
+export const getHandwryttenDripQueue = (id)        => req('GET',   `/handwrytten/drips/${id}/queue`)
 export const updateHandwryttenDrip = (id, data)    => req('PATCH', `/handwrytten/drips/${id}`, data)
 export const cancelHandwryttenDrip = (id)          => req('POST',  `/handwrytten/drips/${id}/cancel`)
