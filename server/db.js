@@ -519,6 +519,10 @@ const migrations = [
   `ALTER TABLE people ADD COLUMN mail_pause_until  TEXT`,             // YYYY-MM-DD; '2999-12-31' = forever
   `ALTER TABLE people ADD COLUMN mail_pause_reason TEXT`,
   `CREATE INDEX IF NOT EXISTS idx_hw_sends_responded ON handwrytten_sends(responded_at)`,
+  // Link a campaign row back to the drip that produced it, so each drip batch can
+  // appear in the campaigns table like a one-shot bulk send.
+  `ALTER TABLE handwrytten_campaigns ADD COLUMN drip_id INTEGER`,
+  `CREATE INDEX IF NOT EXISTS idx_hw_campaigns_drip ON handwrytten_campaigns(drip_id)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

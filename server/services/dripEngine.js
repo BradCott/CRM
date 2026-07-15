@@ -168,6 +168,55 @@ async function processDrip(drip) {
   return { drip_id: drip.id, sent, failed, complete: remaining === 0 }
 }
 
+/**
+ * Roll a drip's already-sent letters up into per-batch campaign rows so each
+ * batch appears in the campaigns table exactly like a one-shot bulk send.
+ * Groups the drip's sends (linked via the queue) that aren't attached to a
+ * campaign yet by their batch date, creating one handwrytten_campaigns row per
+ * date and stamping campaign_id onto those sends. Idempotent: only touches
+ * sends where campaign_id IS NULL, so completed batches are folded in once.
+ */
+export function backfillDripBatches() {
+  const run = db.transaction(() => {
+    const drips = db.prepare(`SELECT * FROM handwrytten_drips`).all()
+    for (const drip of drips) {
+      const groups = db.prepare(`
+        SELECT DATE(q.processed_at) AS batch_date,
+               MIN(q.processed_at)  AS first_at,
+               COUNT(*)             AS total,
+               SUM(CASE WHEN s.status = 'sent'   THEN 1 ELSE 0 END) AS sent,
+               SUM(CASE WHEN s.status = 'failed' THEN 1 ELSE 0 END) AS failed
+        FROM handwrytten_drip_queue q
+        JOIN handwrytten_sends s ON s.id = q.send_id
+        WHERE q.drip_id = ? AND s.campaign_id IS NULL AND q.processed_at IS NOT NULL
+        GROUP BY DATE(q.processed_at)
+        ORDER BY batch_date ASC
+      `).all(drip.id)
+
+      for (const g of groups) {
+        const status = g.failed === 0 ? 'complete' : g.sent === 0 ? 'failed' : 'partial'
+        const camp = db.prepare(`
+          INSERT INTO handwrytten_campaigns
+            (message_template, card_id, font, sent_by_user_id, sent_at, total_count, sent_count, failed_count, status, drip_id)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(
+          drip.message_template, drip.card_id || null, drip.font || null, drip.created_by_user_id || null,
+          g.first_at, g.total, g.sent, g.failed, status, drip.id,
+        )
+        db.prepare(`
+          UPDATE handwrytten_sends SET campaign_id = ?
+          WHERE id IN (
+            SELECT s.id FROM handwrytten_sends s
+            JOIN handwrytten_drip_queue q ON q.send_id = s.id
+            WHERE q.drip_id = ? AND s.campaign_id IS NULL AND DATE(q.processed_at) = ?
+          )
+        `).run(camp.lastInsertRowid, drip.id, g.batch_date)
+      }
+    }
+  })
+  try { run() } catch (err) { console.error('[drip] backfillDripBatches error:', err.message) }
+}
+
 /** Cron entry point: process every active drip whose next_run_at is due. */
 export async function processDueDrips() {
   if (!HW_KEY) { console.warn('[drip] no HANDWRYTTEN_API_KEY — skipping tick'); return }
@@ -184,6 +233,8 @@ export async function processDueDrips() {
     try { await processDrip(drip) }
     catch (err) { console.error(`[drip] #${drip.id} error:`, err.message) }
   }
+  // Fold the batch(es) we just sent into campaign rows for the campaigns table.
+  backfillDripBatches()
 }
 
 /** Schedule the hourly tick. */
@@ -193,6 +244,9 @@ export function startDripEngine() {
       processDueDrips().catch(err => console.error('[drip] tick error:', err.message))
     })
     console.log('[drip] engine scheduled — hourly')
+    // Fold any already-sent drip batches into campaign rows (one-time catch-up
+    // for batches that sent before this feature existed).
+    try { backfillDripBatches() } catch (_) {}
     // Also run shortly after boot so a drip due during downtime fires promptly.
     setTimeout(() => processDueDrips().catch(() => {}), 30_000)
   }).catch(err => console.warn('[drip] could not start:', err.message))
