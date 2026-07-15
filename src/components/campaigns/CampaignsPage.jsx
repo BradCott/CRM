@@ -245,6 +245,10 @@ function DripCard({ drip, onChange }) {
     setShowDetail(v => !v)
   }
 
+  const onDetailResponded = (sendId, responded) =>
+    setDetail(d => d ? { ...d, rows: d.rows.map(r => r.send_id === sendId
+      ? { ...r, responded_at: responded ? new Date().toISOString() : null } : r) } : d)
+
   async function handleRetry() {
     if (!window.confirm(`Resend the ${drip.failed_count} failed letter${drip.failed_count === 1 ? '' : 's'}? They'll be re-queued and start sending now.`)) return
     setBusy(true)
@@ -311,6 +315,12 @@ function DripCard({ drip, onChange }) {
           {drip.batch_size} every {drip.interval_days} day{drip.interval_days !== 1 ? 's' : ''}
           {live && drip.next_run_at && ` · next batch ${fmtDate(drip.next_run_at + 'Z')}`}
         </p>
+        {drip.sent_count > 0 && (
+          <p className="text-xs text-emerald-700 mt-1 flex items-center gap-1">
+            <Reply className="w-3 h-3" />
+            {(drip.responded_count || 0).toLocaleString()} responded · {Math.round((drip.responded_count || 0) / drip.sent_count * 100)}% response rate
+          </p>
+        )}
       </div>
 
       {editing && (
@@ -391,6 +401,32 @@ function DripCard({ drip, onChange }) {
                       </tbody>
                     </table>
                   </div>
+
+                  {detail.rows.some(r => r.status === 'sent') && (
+                    <div className="mt-4">
+                      <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1">
+                        Sent letters ({detail.summary?.sent ?? 0}) · {detail.summary?.rate ?? 0}% responded
+                      </p>
+                      <div className="max-h-64 overflow-auto rounded-lg border border-slate-100">
+                        <table className="min-w-full text-[11px]">
+                          <tbody>
+                            {detail.rows.filter(r => r.status === 'sent').map(r => (
+                              <tr key={r.id} className="border-b border-slate-50 last:border-0">
+                                <td className="px-2.5 py-1.5 text-slate-700 font-medium whitespace-nowrap">{r.contact_name || '—'}</td>
+                                <td className="px-2.5 py-1.5 text-slate-400 whitespace-nowrap">{[r.contact_city, r.contact_state].filter(Boolean).join(', ')}</td>
+                                <td className="px-2.5 py-1.5">
+                                  <RespondedToggle
+                                    send={{ id: r.send_id, sent_at: r.sent_at, responded_at: r.responded_at, response_channel: r.response_channel }}
+                                    onChange={onDetailResponded}
+                                  />
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
                 </>
               )}
             </div>

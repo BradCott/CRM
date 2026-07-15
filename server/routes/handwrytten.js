@@ -649,7 +649,10 @@ import { processDueDrips, nextRunIso } from '../services/dripEngine.js'
 router.get('/drips', (_req, res) => {
   const rows = db.prepare(`
     SELECT d.*, u.name AS created_by_name,
-      (SELECT COUNT(*) FROM handwrytten_drip_queue q WHERE q.drip_id = d.id AND q.status = 'queued') AS remaining
+      (SELECT COUNT(*) FROM handwrytten_drip_queue q WHERE q.drip_id = d.id AND q.status = 'queued') AS remaining,
+      (SELECT COUNT(*) FROM handwrytten_drip_queue q
+         JOIN handwrytten_sends s ON s.id = q.send_id
+        WHERE q.drip_id = d.id AND s.responded_at IS NOT NULL) AS responded_count
     FROM handwrytten_drips d
     LEFT JOIN users u ON u.id = d.created_by_user_id
     ORDER BY d.created_at DESC
@@ -673,11 +676,13 @@ router.get('/drips/:id', (req, res) => {
  */
 router.get('/drips/:id/queue', (req, res) => {
   const rows = db.prepare(`
-    SELECT q.id, q.status, q.error_message, q.processed_at,
+    SELECT q.id, q.status, q.error_message, q.processed_at, q.contact_id, q.send_id,
+           s.sent_at, s.responded_at, s.response_channel,
            p.name  AS contact_name,
            p.city  AS contact_city,
            p.state AS contact_state
     FROM handwrytten_drip_queue q
+    LEFT JOIN handwrytten_sends s ON s.id = q.send_id
     LEFT JOIN people p ON p.id = q.contact_id
     WHERE q.drip_id = ?
     ORDER BY
@@ -686,7 +691,9 @@ router.get('/drips/:id/queue', (req, res) => {
   `).all(req.params.id)
 
   const tally = new Map()
+  let sent = 0, responded = 0
   for (const r of rows) {
+    if (r.status === 'sent') { sent++; if (r.responded_at) responded++ }
     if (r.status === 'failed' || r.status === 'skipped') {
       const key = `${r.status}:${r.error_message || 'Unknown'}`
       const cur = tally.get(key) || { status: r.status, reason: r.error_message || 'Unknown', count: 0 }
@@ -695,8 +702,9 @@ router.get('/drips/:id/queue', (req, res) => {
     }
   }
   const reasons = [...tally.values()].sort((a, b) => b.count - a.count)
+  const summary = { sent, responded, rate: sent ? +(responded / sent * 100).toFixed(1) : 0 }
 
-  res.json({ rows, reasons })
+  res.json({ rows, reasons, summary })
 })
 
 /**
