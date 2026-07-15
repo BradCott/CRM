@@ -90,7 +90,7 @@ function buildPropertyWhere(query) {
   const params = []
 
   if (search) {
-    const { clause, params: sp } = tokenSearch(['p.address', 'p.city', 'o.name', 't.name'], search)
+    const { clause, params: sp } = tokenSearch(['p.address', 'p.city', 'o.name', 't.name', 'p.notes'], search)
     if (clause) { conditions.push(clause); params.push(...sp) }
   }
 
