@@ -446,5 +446,6 @@ export const createHandwryttenDrip = (data)        => req('POST',  '/handwrytten
 export const getHandwryttenDrips   = ()            => req('GET',   '/handwrytten/drips')
 export const getHandwryttenDrip    = (id)          => req('GET',   `/handwrytten/drips/${id}`)
 export const getHandwryttenDripQueue = (id)        => req('GET',   `/handwrytten/drips/${id}/queue`)
+export const retryHandwryttenDripFailed = (id)     => req('POST',  `/handwrytten/drips/${id}/retry-failed`)
 export const updateHandwryttenDrip = (id, data)    => req('PATCH', `/handwrytten/drips/${id}`, data)
 export const cancelHandwryttenDrip = (id)          => req('POST',  `/handwrytten/drips/${id}/cancel`)

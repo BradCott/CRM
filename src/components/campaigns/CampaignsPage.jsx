@@ -1,9 +1,9 @@
 import { useState, useEffect, useCallback, Fragment } from 'react'
-import { Mail, Loader2, ChevronDown, ChevronRight, CheckCircle, AlertCircle, Clock, Pause, Play, X, Pencil, Droplet, Reply, Send, TrendingUp } from 'lucide-react'
+import { Mail, Loader2, ChevronDown, ChevronRight, CheckCircle, AlertCircle, Clock, Pause, Play, X, Pencil, Droplet, Reply, Send, TrendingUp, RefreshCw } from 'lucide-react'
 import {
   getHandwryttenCampaigns, getHandwryttenSends,
   getHandwryttenDrips, updateHandwryttenDrip, cancelHandwryttenDrip,
-  getHandwryttenDripQueue, getMailResponseSummary, markSendResponded,
+  getHandwryttenDripQueue, retryHandwryttenDripFailed, getMailResponseSummary, markSendResponded,
 } from '../../api/client'
 import TopBar from '../layout/TopBar'
 import MailPauseControl from '../handwrytten/MailPauseControl'
@@ -245,6 +245,17 @@ function DripCard({ drip, onChange }) {
     setShowDetail(v => !v)
   }
 
+  async function handleRetry() {
+    if (!window.confirm(`Resend the ${drip.failed_count} failed letter${drip.failed_count === 1 ? '' : 's'}? They'll be re-queued and start sending now.`)) return
+    setBusy(true)
+    try {
+      const { requeued } = await retryHandwryttenDripFailed(drip.id)
+      await onChange()
+      try { setDetail(await getHandwryttenDripQueue(drip.id)) } catch (_) {}
+      window.alert(`${requeued} letter${requeued === 1 ? '' : 's'} re-queued — they're sending now.`)
+    } catch (e) { window.alert(e.message) } finally { setBusy(false) }
+  }
+
   async function act(fn) {
     setBusy(true)
     try { await fn(); await onChange() } catch (e) { alert(e.message) } finally { setBusy(false) }
@@ -338,6 +349,18 @@ function DripCard({ drip, onChange }) {
                 <p className="text-xs text-slate-400 py-2">Couldn't load details.</p>
               ) : (
                 <>
+                  {drip.failed_count > 0 && (
+                    <div className="flex items-center justify-between gap-2 mb-3 bg-red-50 border border-red-100 rounded-lg px-3 py-2">
+                      <span className="text-xs text-red-700">
+                        {drip.failed_count} letter{drip.failed_count === 1 ? '' : 's'} failed at the mail service — fixed the cause? Resend them.
+                      </span>
+                      <button onClick={handleRetry} disabled={busy}
+                        className="flex items-center gap-1 text-xs font-semibold px-3 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 disabled:opacity-50 shrink-0">
+                        {busy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        Resend {drip.failed_count} failed
+                      </button>
+                    </div>
+                  )}
                   {detail.reasons.length > 0 ? (
                     <div className="space-y-1.5 mb-3">
                       <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Why letters didn't send</p>

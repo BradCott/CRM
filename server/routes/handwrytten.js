@@ -803,6 +803,44 @@ router.patch('/drips/:id', (req, res) => {
   res.json(db.prepare(`SELECT * FROM handwrytten_drips WHERE id = ?`).get(drip.id))
 })
 
+/**
+ * POST /api/handwrytten/drips/:id/retry-failed — re-queue the letters that
+ * FAILED at the Handwrytten API (e.g. the account was out of funds) so they
+ * send again. Only touches status='failed' rows — 'skipped' ones (no address /
+ * DNC / paused) are left alone since retrying won't help them. Reactivates the
+ * drip and fires a batch immediately.
+ */
+router.post('/drips/:id/retry-failed', (req, res) => {
+  const drip = db.prepare(`SELECT * FROM handwrytten_drips WHERE id = ?`).get(req.params.id)
+  if (!drip) return res.status(404).json({ error: 'Drip not found' })
+
+  const failed = db.prepare(`SELECT COUNT(*) AS n FROM handwrytten_drip_queue WHERE drip_id = ? AND status = 'failed'`).get(drip.id).n
+  if (failed === 0) return res.json({ requeued: 0, message: 'No failed letters to resend.' })
+
+  const run = db.transaction(() => {
+    db.prepare(`
+      UPDATE handwrytten_drip_queue
+      SET status = 'queued', error_message = NULL, processed_at = NULL, send_id = NULL
+      WHERE drip_id = ? AND status = 'failed'
+    `).run(drip.id)
+    // Those rows are no longer failures — drop them from the count and make the
+    // drip active + due now so the engine picks them up.
+    db.prepare(`
+      UPDATE handwrytten_drips
+      SET failed_count = MAX(0, failed_count - ?),
+          status       = CASE WHEN status IN ('complete','cancelled','paused') THEN 'active' ELSE status END,
+          next_run_at  = datetime('now')
+      WHERE id = ?
+    `).run(failed, drip.id)
+  })
+  run()
+
+  // Kick a batch right away (async — don't block the response).
+  processDueDrips().catch(err => console.error('[drip] retry tick error:', err.message))
+
+  res.json({ requeued: failed })
+})
+
 /** POST /api/handwrytten/drips/:id/cancel — stop and discard remaining queue */
 router.post('/drips/:id/cancel', (req, res) => {
   const drip = db.prepare(`SELECT * FROM handwrytten_drips WHERE id = ?`).get(req.params.id)
