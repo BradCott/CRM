@@ -1,0 +1,10 @@
+#!/bin/sh
+# Runs before every `git push`. Blocks the push if the app won't build, so a
+# broken change never reaches Railway (which auto-deploys main to production).
+# Emergency bypass (use sparingly): git push --no-verify
+node scripts/precheck.mjs || {
+  echo ""
+  echo "❌ Push blocked — the app failed to build. Fix the errors above, then push again."
+  echo "   Emergency bypass: git push --no-verify"
+  exit 1
+}

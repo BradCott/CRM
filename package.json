@@ -9,7 +9,9 @@
     "client": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "start": "NODE_ENV=production node --experimental-sqlite server/index.js"
+    "start": "NODE_ENV=production node --experimental-sqlite server/index.js",
+    "check": "node scripts/precheck.mjs",
+    "prepare": "git config core.hooksPath .githooks || true"
   },
   "engines": {
     "node": ">=22"

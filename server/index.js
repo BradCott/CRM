@@ -131,6 +131,10 @@ app.listen(PORT, '0.0.0.0', () => {
   import('./services/dripEngine.js').then(({ startDripEngine }) => {
     startDripEngine()
   }).catch(err => console.warn('[drip] could not start:', err.message))
+  // Automated database backups — daily snapshot, keeps the most recent 14
+  import('./services/backupEngine.js').then(({ startBackupEngine }) => {
+    startBackupEngine()
+  }).catch(err => console.warn('[backup] could not start:', err.message))
   // Gmail sync — log emails to matching contacts + flag mailer replies (every 15 min)
   import('./services/gmailSync.js').then(({ syncGmail }) => {
     const run = () => syncGmail().catch(err => console.error('[gmailSync] error:', err.message))
