@@ -4,6 +4,7 @@ import {
   getHandwryttenCards,
   getHandwryttenFonts,
   sendHandwryttenBulk,
+  sendHandwryttenProof,
   downloadHandwryttenBulkFile,
   createHandwryttenDrip,
   getProperties,
@@ -288,6 +289,7 @@ export default function BulkSendModal({ onClose, onDone }) {
   const [selectedCard,  setSelectedCard]  = useState(null)
   const [selectedFont,  setSelectedFont]  = useState(null)
   const [loadingMeta,   setLoadingMeta]   = useState(false)
+  const [sendCopyToSelf, setSendCopyToSelf] = useState(false)   // also mail a proof to me
 
   // ── Send state ─────────────────────────────────────────────────────────────
   const [step,          setStep]          = useState('filters')
@@ -494,6 +496,18 @@ export default function BulkSendModal({ onClose, onDone }) {
     }
   }
 
+  // Mail one proof copy of the letter to yourself, merged against a sample
+  // recipient so it reads like a real one. Best-effort — never blocks the run.
+  async function maybeSendProof() {
+    if (!sendCopyToSelf) return
+    const sample = includedRecipients[0]
+    const proofMessage = sample
+      ? applyMerge(message, sample, { tenant_brand_name: sample.tenant, city: sample.property_city, state: sample.property_state })
+      : message
+    try { await sendHandwryttenProof({ message: proofMessage, card_id: selectedCard, font: selectedFont }) }
+    catch (e) { console.warn('Proof-to-self send failed:', e.message) }
+  }
+
   // ── Send ───────────────────────────────────────────────────────────────────
   async function handleSend() {
     setStep('sending')
@@ -506,6 +520,7 @@ export default function BulkSendModal({ onClose, onDone }) {
         card_id: selectedCard,
         font:    selectedFont,
       })
+      await maybeSendProof()
       setSendResult(result)
       setStep('done')      // show the confirmation panel; its Done button closes
     } catch (err) {
@@ -530,6 +545,7 @@ export default function BulkSendModal({ onClose, onDone }) {
         interval_days: Math.max(1, parseInt(intervalDays, 10) || 1),
         filters:       { states: filterStates, tenant: filterTenant, ownerTypes: filterOwnerTypes },
       })
+      await maybeSendProof()
       setDripResult(result)
       setStep('done')      // show the "Drip Campaign Started" confirmation; Done button closes
     } catch (err) {
@@ -991,6 +1007,22 @@ export default function BulkSendModal({ onClose, onDone }) {
                 <p className="text-xs text-slate-400 mt-1">This is the name that appears as the sender on every letter.</p>
               </div>
 
+              {/* Send a proof copy to yourself */}
+              <label className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={sendCopyToSelf}
+                  onChange={e => setSendCopyToSelf(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 accent-blue-600 shrink-0"
+                />
+                <span className="text-sm text-slate-700">
+                  Also mail a copy to me
+                  <span className="block text-xs text-slate-400">
+                    Sends one proof letter to your Knox address (Stilwell, KS) so you can see the real card & handwriting. Not counted in the campaign.
+                  </span>
+                </span>
+              </label>
+
               {/* Send mode: all-at-once vs throttled drip */}
               <div>
                 <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2 block">Sending</label>
@@ -1102,6 +1134,9 @@ export default function BulkSendModal({ onClose, onDone }) {
                 {dripResult.total.toLocaleString()} letters queued — sending {dripResult.batch_size} every {dripResult.interval_days} day{dripResult.interval_days !== 1 ? 's' : ''}.
                 The first batch is going out now.
               </p>
+              {sendCopyToSelf && (
+                <p className="text-xs text-blue-600 mt-2">📬 A proof copy is also on its way to your Knox address.</p>
+              )}
               {dripResult.removed_dnc > 0 && (
                 <p className="text-xs text-amber-600 mt-2">
                   {dripResult.removed_dnc} do-not-contact or duplicate recipient{dripResult.removed_dnc !== 1 ? 's were' : ' was'} skipped.
@@ -1128,6 +1163,9 @@ export default function BulkSendModal({ onClose, onDone }) {
                   {sendResult.sent} letter{sendResult.sent !== 1 ? 's' : ''} sent successfully
                   {sendResult.failed > 0 && `, ${sendResult.failed} failed`}.
                 </p>
+                {sendCopyToSelf && (
+                  <p className="text-xs text-blue-600 mt-1">📬 A proof copy is also on its way to your Knox address.</p>
+                )}
               </div>
 
               <div className="grid grid-cols-3 gap-3 mb-6">

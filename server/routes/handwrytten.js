@@ -316,6 +316,46 @@ router.post('/send', async (req, res) => {
   }
 })
 
+/**
+ * POST /api/handwrytten/send-proof — mail ONE copy of the campaign letter to
+ * yourself (the Knox return address) so you can see the real physical piece —
+ * card, handwriting, layout, signature — before committing to the full run.
+ * Not recorded in send history; it's a proof, not a campaign recipient.
+ */
+router.post('/send-proof', async (req, res) => {
+  const { message, card_id, font } = req.body
+  if (!message) return res.status(400).json({ error: 'message is required' })
+
+  const finalMessage = message + ' <sig:1427BC offset=1>'
+  try {
+    const hwResult = await hwPost('/orders/singleStepOrder', {
+      card_id:              card_id || '',
+      font_label:           font    || '',
+      message:              finalMessage,
+      wishes:               '',
+      // Recipient = the Knox return address (i.e. yourself)
+      recipient_first_name: 'Brad',
+      recipient_last_name:  'Cottam',
+      recipient_address1:   '7500 W 160th St Ste 101',
+      recipient_city:       'Stilwell',
+      recipient_state:      'KS',
+      recipient_zip:        '66085',
+      tocountry:            'US',
+      sender_first_name:    'Brad',
+      sender_last_name:     'Cottam',
+      sender_address1:      '7500 W 160th St Ste 101',
+      sender_city:          'Stilwell',
+      sender_state:         'KS',
+      sender_zip:           '66085',
+      sender_country_id:    1,
+    })
+    const orderId = hwResult?.order?.id || hwResult?.id || hwResult?.order_id || null
+    res.json({ success: true, order_id: orderId })
+  } catch (err) {
+    res.status(502).json({ error: err.message })
+  }
+})
+
 /** POST /api/handwrytten/send-bulk — send letters to many contacts */
 router.post('/send-bulk', async (req, res) => {
   const { recipients, message, card_id, font, campaign_name } = req.body

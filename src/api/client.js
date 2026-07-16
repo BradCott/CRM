@@ -408,6 +408,7 @@ export const getHandwryttenCards      = ()          => req('GET', '/handwrytten/
 export const getHandwryttenFonts      = ()          => req('GET', '/handwrytten/fonts')
 export const sendHandwryttenLetter    = (data)      => req('POST', '/handwrytten/send', data)
 export const sendHandwryttenBulk      = (data)      => req('POST', '/handwrytten/send-bulk', data)
+export const sendHandwryttenProof     = (data)      => req('POST', '/handwrytten/send-proof', data)
 export const sendHandwryttenBasket    = (data)      => req('POST', '/handwrytten/send-basket', data) // TEST: one batched order
 export async function downloadHandwryttenBulkFile(data) {
   const res = await fetch('/api/handwrytten/bulk-file', {
