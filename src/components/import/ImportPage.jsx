@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Upload, CheckCircle, AlertCircle, FileText, Landmark, Download, Loader2, ShieldAlert, Building2 } from 'lucide-react'
+import { Upload, CheckCircle, AlertCircle, FileText, Landmark, Download, Loader2, ShieldAlert, Building2, RefreshCw } from 'lucide-react'
 import { importCsv, getImportStats, importRecentSales } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import Button from '../ui/Button'
@@ -232,6 +232,147 @@ function RecentSalesImportCard() {
   )
 }
 
+// Update-only importer — corrects owner/mailing on properties already in the CRM.
+// Never creates. Built for re-prospected returned mail.
+function PropertyUpdateCard() {
+  const [file, setFile]     = useState(null)
+  const [loading, setLoad]  = useState(false)
+  const [result, setResult] = useState(null)
+  const [error, setError]   = useState(null)
+  const [dragging, setDrag] = useState(false)
+  const inputRef = useRef()
+
+  const handleFile = (f) => { if (f) { setFile(f); setResult(null); setError(null) } }
+
+  const handleImport = async () => {
+    if (!file) return
+    setLoad(true); setError(null)
+    const fd = new FormData()
+    fd.append('file', file)
+    try {
+      const res  = await fetch('/api/import/property-updates', { method: 'POST', body: fd, credentials: 'include' })
+      const data = await res.json()
+      if (!res.ok) setError(data.error || 'Update failed')
+      else setResult(data)
+    } catch (e) {
+      setError(e.message)
+    } finally {
+      setLoad(false)
+    }
+  }
+
+  return (
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="px-6 py-5 border-b border-slate-100">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center">
+            <RefreshCw className="w-5 h-5 text-blue-600" />
+          </div>
+          <div className="flex-1">
+            <h3 className="text-base font-semibold text-slate-900">Update Existing Properties</h3>
+            <p className="text-sm text-slate-500">Fix owner &amp; mailing address on properties already in your CRM — e.g. after re-prospecting returned mail</p>
+          </div>
+          <a
+            href="/api/import/property-updates-template"
+            download
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 shrink-0"
+          >
+            <Download className="w-3.5 h-3.5" /> Template
+          </a>
+        </div>
+      </div>
+
+      <div className="px-6 py-5 space-y-4">
+        <div className="flex items-start gap-2 rounded-xl bg-blue-50 border border-blue-100 px-3 py-2.5 text-xs text-blue-800">
+          <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" />
+          <span>
+            <span className="font-semibold">Update-only.</span> Rows are matched to existing properties by address; the owner name &amp; mailing
+            address you provide <span className="font-semibold">overwrite</span> the old values, and the “needs ownership review” flag is cleared.
+            Rows that don’t match an existing property are <span className="font-semibold">reported, never created</span>.
+          </span>
+        </div>
+
+        <div
+          className={`border-2 border-dashed rounded-xl p-8 text-center transition-colors cursor-pointer ${
+            dragging ? 'border-blue-400 bg-blue-50' : file ? 'border-green-400 bg-green-50' : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+          }`}
+          onDragOver={e => { e.preventDefault(); setDrag(true) }}
+          onDragLeave={() => setDrag(false)}
+          onDrop={e => { e.preventDefault(); setDrag(false); handleFile(e.dataTransfer.files[0]) }}
+          onClick={() => inputRef.current?.click()}
+        >
+          <input ref={inputRef} type="file" accept=".csv,.xlsx,.xls" className="hidden" onChange={e => handleFile(e.target.files[0])} />
+          {file ? (
+            <>
+              <FileText className="w-10 h-10 text-green-500 mx-auto mb-2" />
+              <p className="text-sm font-semibold text-green-700">{file.name}</p>
+              <p className="text-xs text-green-600 mt-0.5">{(file.size / 1024 / 1024).toFixed(1)} MB — click to change</p>
+            </>
+          ) : (
+            <>
+              <Upload className="w-10 h-10 text-slate-400 mx-auto mb-2" />
+              <p className="text-sm font-semibold text-slate-700">Drop your corrections file here or click to browse</p>
+              <p className="text-xs text-slate-400 mt-1">.csv or .xlsx — matched on address, updates owner &amp; mailing only</p>
+            </>
+          )}
+        </div>
+
+        {result && (
+          <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl">
+            <div className="flex items-start gap-3">
+              <CheckCircle className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-blue-800 mb-1">
+                  {result.updated} propert{result.updated === 1 ? 'y' : 'ies'} updated
+                </p>
+                <div className="flex flex-wrap gap-4 text-sm text-blue-700">
+                  <span>{result.total} rows in file</span>
+                  <span><strong>{result.people_updated}</strong> owners updated</span>
+                  <span><strong>{result.people_created}</strong> new owners</span>
+                  {result.not_found > 0 && <span className="text-amber-700"><strong>{result.not_found}</strong> not found (skipped)</span>}
+                </div>
+                {result.unmatched_sample?.length > 0 && (
+                  <details className="mt-2">
+                    <summary className="text-xs text-amber-600 cursor-pointer hover:text-amber-800">
+                      Show addresses not in the CRM ({result.not_found})
+                    </summary>
+                    <ul className="mt-1 space-y-0.5">
+                      {result.unmatched_sample.map((a, i) => (
+                        <li key={i} className="text-xs text-amber-700 font-mono">{a}</li>
+                      ))}
+                      {result.not_found > result.unmatched_sample.length && (
+                        <li className="text-xs text-amber-500">…and {result.not_found - result.unmatched_sample.length} more</li>
+                      )}
+                    </ul>
+                  </details>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {error && (
+          <div className="flex items-start gap-3 p-4 bg-red-50 border border-red-200 rounded-xl">
+            <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5" />
+            <p className="text-sm text-red-700">{error}</p>
+          </div>
+        )}
+
+        <Button className="w-full justify-center" disabled={!file || loading} onClick={handleImport}>
+          {loading
+            ? <><Loader2 className="w-4 h-4 animate-spin" /> Updating…</>
+            : 'Update Properties'
+          }
+        </Button>
+
+        <p className="text-xs text-slate-400 text-center">
+          Match on <code className="bg-slate-100 px-1 rounded">address</code>, <code className="bg-slate-100 px-1 rounded">city</code>, <code className="bg-slate-100 px-1 rounded">state</code>; apply <code className="bg-slate-100 px-1 rounded">owner_name</code> + <code className="bg-slate-100 px-1 rounded">owner_address/city/state/zip/phone/email</code>.
+        </p>
+      </div>
+    </div>
+  )
+}
+
 function StatBadge({ label, value, color = 'slate' }) {
   const colors = {
     slate: 'bg-slate-100 text-slate-700',
@@ -402,6 +543,9 @@ export default function ImportPage() {
               </p>
             </div>
           </div>
+
+          {/* Update-only importer — corrections to properties already in the CRM */}
+          <PropertyUpdateCard />
 
           {/* Knox Portfolio import */}
           <PortfolioImportCard />

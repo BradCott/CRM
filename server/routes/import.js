@@ -609,6 +609,118 @@ router.post('/prospects', upload.single('file'), (req, res) => {
   })
 })
 
+// GET /api/import/property-updates-template — the columns the update-only importer reads
+router.get('/property-updates-template', (_req, res) => {
+  const headers = ['address', 'city', 'state', 'zip', 'owner_name', 'owner_address', 'owner_city', 'owner_state', 'owner_zip', 'owner_phone', 'owner_email']
+  res.setHeader('Content-Type', 'text/csv')
+  res.setHeader('Content-Disposition', 'attachment; filename="property-updates-template.csv"')
+  res.send(headers.join(',') + '\n')
+})
+
+// POST /api/import/property-updates — UPDATE-ONLY importer.
+// Matches each row to an EXISTING property by address and updates its owner /
+// mailing info. It NEVER creates properties — unmatched rows are reported, not
+// added. Built for corrections (e.g. re-prospected returned mail): the owner
+// fields you provide OVERWRITE the old (wrong) values, and the property's
+// ownership-review flag is cleared. Columns: address,city,state[,zip] to match,
+// plus owner_name, owner_address, owner_city, owner_state, owner_zip,
+// owner_phone, owner_email to apply.
+router.post('/property-updates', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+
+  const ext = req.file.originalname.split('.').pop().toLowerCase()
+  let rows = []
+  try {
+    if (ext === 'csv') {
+      rows = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true, bom: true })
+    } else {
+      const XLSX = require('xlsx')
+      const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+      rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' })
+    }
+  } catch (e) {
+    return res.status(400).json({ error: `File parse error: ${e.message}` })
+  }
+
+  const results = { total: rows.length, updated: 0, not_found: 0, people_created: 0, people_updated: 0, unmatched_sample: [], errors: [] }
+
+  // Overwrite a person's mailing fields — but only the ones actually provided in
+  // the row (a blank cell leaves the existing value alone).
+  const updateOwnerFields = db.prepare(`
+    UPDATE people SET
+      address = CASE WHEN ? <> '' THEN ? ELSE address END,
+      city    = CASE WHEN ? <> '' THEN ? ELSE city    END,
+      state   = CASE WHEN ? <> '' THEN ? ELSE state   END,
+      zip     = CASE WHEN ? <> '' THEN ? ELSE zip     END,
+      phone   = CASE WHEN ? <> '' THEN ? ELSE phone   END,
+      email   = CASE WHEN ? <> '' THEN ? ELSE email   END
+    WHERE id = ?
+  `)
+  const applyOwner = (personId, row) => {
+    const oa = (row.owner_address || '').trim(), oc = (row.owner_city || '').trim(), os = (row.owner_state || '').trim()
+    const oz = (row.owner_zip || '').trim(), op = (row.owner_phone || '').trim(), oe = (row.owner_email || '').trim()
+    updateOwnerFields.run(oa, oa, oc, oc, os, os, oz, oz, op, op, oe, oe, personId)
+  }
+
+  db.exec('BEGIN')
+  try {
+    for (const row of rows) {
+      const addr = (row.address || '').trim(), city = (row.city || '').trim()
+      const state = (row.state || '').trim(), zip = (row.zip || '').trim()
+      if (!addr) { results.errors.push('Skipped row — no address'); continue }
+
+      const addrKey = normalizeAddrKey(addr, city, state, zip)
+      const prop = addrKey ? db.prepare(`SELECT id, owner_id FROM properties WHERE addr_key = ?`).get(addrKey) : null
+      if (!prop) {
+        results.not_found++
+        if (results.unmatched_sample.length < 25) results.unmatched_sample.push([addr, city, state].filter(Boolean).join(', '))
+        continue
+      }
+
+      const ownerName = (row.owner_name || '').trim()
+      let ownerId = prop.owner_id
+      if (ownerName) {
+        const nameKey = normalizeName(ownerName)
+        const current = prop.owner_id ? db.prepare(`SELECT id, name_key FROM people WHERE id = ?`).get(prop.owner_id) : null
+        if (current && current.name_key === nameKey) {
+          // Same owner, corrected address → update their mailing in place
+          applyOwner(current.id, row); ownerId = current.id; results.people_updated++
+        } else {
+          // Different owner → reuse an existing person by name, else create one
+          const cand = db.prepare(`SELECT id FROM people WHERE name_key = ? LIMIT 1`).get(nameKey)
+          if (cand) { applyOwner(cand.id, row); ownerId = cand.id; results.people_updated++ }
+          else {
+            const ins = db.prepare(`
+              INSERT INTO people (name, role, owner_type, address, city, state, zip, phone, email, name_key)
+              VALUES (?, 'owner', 'LLC', ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              ownerName,
+              (row.owner_address || '').trim() || null, (row.owner_city || '').trim() || null,
+              (row.owner_state || '').trim() || null,   (row.owner_zip || '').trim() || null,
+              (row.owner_phone || '').trim() || null,   (row.owner_email || '').trim() || null,
+              nameKey,
+            )
+            ownerId = Number(ins.lastInsertRowid); results.people_created++
+          }
+        }
+        // Ownership was corrected — clear the review flag.
+        db.prepare(`UPDATE properties SET owner_id = ?, needs_ownership_review = 0 WHERE id = ?`).run(ownerId, prop.id)
+      } else {
+        // No owner change in this row — still clear the review flag if all we did
+        // was confirm the property (rare); keep owner as-is.
+        db.prepare(`UPDATE properties SET needs_ownership_review = 0 WHERE id = ?`).run(prop.id)
+      }
+      results.updated++
+    }
+    db.exec('COMMIT')
+  } catch (e) {
+    db.exec('ROLLBACK')
+    return res.status(500).json({ error: e.message })
+  }
+
+  res.json(results)
+})
+
 // Stats endpoint
 router.get('/stats', (req, res) => {
   res.json({
