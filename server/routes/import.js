@@ -642,7 +642,11 @@ router.post('/property-updates', upload.single('file'), (req, res) => {
     return res.status(400).json({ error: `File parse error: ${e.message}` })
   }
 
-  const results = { total: rows.length, updated: 0, not_found: 0, people_created: 0, people_updated: 0, unmatched_sample: [], errors: [] }
+  // When set, each corrected property is flagged "ready to re-mail" so it can be
+  // sent in one campaign afterward.
+  const queueRemail = req.body?.queue_remail === '1' || req.body?.queue_remail === 'true'
+
+  const results = { total: rows.length, updated: 0, queued: 0, not_found: 0, people_created: 0, people_updated: 0, unmatched_sample: [], errors: [] }
 
   // Overwrite a person's mailing fields — but only the ones actually provided in
   // the row (a blank cell leaves the existing value alone).
@@ -709,6 +713,10 @@ router.post('/property-updates', upload.single('file'), (req, res) => {
         // No owner change in this row — still clear the review flag if all we did
         // was confirm the property (rare); keep owner as-is.
         db.prepare(`UPDATE properties SET needs_ownership_review = 0 WHERE id = ?`).run(prop.id)
+      }
+      if (queueRemail) {
+        db.prepare(`UPDATE properties SET remail_ready = 1 WHERE id = ?`).run(prop.id)
+        results.queued++
       }
       results.updated++
     }

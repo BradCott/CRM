@@ -523,6 +523,10 @@ const migrations = [
   // appear in the campaigns table like a one-shot bulk send.
   `ALTER TABLE handwrytten_campaigns ADD COLUMN drip_id INTEGER`,
   `CREATE INDEX IF NOT EXISTS idx_hw_campaigns_drip ON handwrytten_campaigns(drip_id)`,
+  // "Ready to re-mail" queue — set when the update-only importer corrects an
+  // address, cleared once a mail campaign goes out to that property.
+  `ALTER TABLE properties ADD COLUMN remail_ready INTEGER DEFAULT 0`,
+  `CREATE INDEX IF NOT EXISTS idx_prop_remail ON properties(remail_ready)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

@@ -129,6 +129,8 @@ function buildPropertyWhere(query) {
 
   if (query.needsReview === '1') conditions.push(`p.needs_ownership_review = 1`)
 
+  if (query.remailReady === '1') conditions.push(`p.remail_ready = 1`)
+
   if (query.portfolio !== undefined) {
     conditions.push(`p.is_portfolio = ?`)
     params.push(query.portfolio === '1' ? 1 : 0)

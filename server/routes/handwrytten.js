@@ -505,6 +505,12 @@ router.post('/send-bulk', async (req, res) => {
     WHERE id = ?
   `).run(sentCount, failedCount, finalStatus, campaignId)
 
+  // Mailed these — drop them off the "ready to re-mail" queue.
+  const mailedPropIds = recipients.map(r => r.property_id).filter(Boolean)
+  if (mailedPropIds.length) {
+    db.prepare(`UPDATE properties SET remail_ready = 0 WHERE id IN (${mailedPropIds.map(() => '?').join(',')})`).run(...mailedPropIds)
+  }
+
   res.json({
     campaign_id:  campaignId,
     total:        recipients.length,
@@ -804,6 +810,12 @@ router.post('/drips', (req, res) => {
   })
 
   const dripId = create()
+
+  // Queued to send — drop these off the "ready to re-mail" queue.
+  const queuedPropIds = clean.map(r => r.property_id).filter(Boolean)
+  if (queuedPropIds.length) {
+    db.prepare(`UPDATE properties SET remail_ready = 0 WHERE id IN (${queuedPropIds.map(() => '?').join(',')})`).run(...queuedPropIds)
+  }
 
   // Kick the first batch right away (async — don't block the response).
   processDueDrips().catch(err => console.error('[drip] initial tick error:', err.message))

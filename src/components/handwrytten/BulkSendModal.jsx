@@ -268,6 +268,7 @@ export default function BulkSendModal({ onClose, onDone }) {
   const [filterOperators,  setFilterOperators]  = useState([])       // operator names — target Corporate vs a franchisee
   const [filterLeaseStart, setFilterLeaseStart] = useState('')       // optional
   const [filterLeaseEnd,   setFilterLeaseEnd]   = useState('')       // optional
+  const [remailOnly,       setRemailOnly]       = useState(false)    // only owners with a freshly corrected address
 
   // ── Recipients state ───────────────────────────────────────────────────────
   const [recipients,    setRecipients]    = useState([])
@@ -334,6 +335,7 @@ export default function BulkSendModal({ onClose, onDone }) {
       const BATCH = 2000
       const serverParams = { portfolio: '0', limit: BATCH, offset: 0 }
       if (filterTenant.trim()) serverParams.tenant = filterTenant.trim()
+      if (remailOnly)          serverParams.remailReady = '1'   // re-mail queue only
 
       const allRows = []
       while (true) {
@@ -431,7 +433,7 @@ export default function BulkSendModal({ onClose, onDone }) {
     } finally {
       setLoadingRec(false)
     }
-  }, [filterStates, filterTenant, filterOwnerTypes, filterOperators, filterLeaseStart, filterLeaseEnd])
+  }, [filterStates, filterTenant, filterOwnerTypes, filterOperators, filterLeaseStart, filterLeaseEnd, remailOnly])
 
   // Recipients actually getting mailed this round (excluded ones removed)
   const includedRecipients = useMemo(
@@ -616,6 +618,20 @@ export default function BulkSendModal({ onClose, onDone }) {
               <p className="text-sm text-slate-500">
                 Narrow which property owners receive letters. All filters are optional — leave everything blank to include every owner with a valid mailing address.
               </p>
+
+              {/* Re-mail queue — owners whose address was just corrected */}
+              <label className={`flex items-start gap-2.5 px-3 py-2.5 rounded-xl border cursor-pointer transition-colors ${
+                remailOnly ? 'border-emerald-300 bg-emerald-50' : 'border-slate-200 hover:bg-slate-50'
+              }`}>
+                <input type="checkbox" checked={remailOnly} onChange={e => setRemailOnly(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 accent-emerald-600 shrink-0" />
+                <span className="text-sm text-slate-700">
+                  📬 Re-mail queue only
+                  <span className="block text-xs text-slate-400">
+                    Send only to owners whose address was just corrected (via Import → Update Existing Properties). They leave the queue once mailed.
+                  </span>
+                </span>
+              </label>
 
               {/* State multi-select */}
               <div>

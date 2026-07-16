@@ -240,6 +240,7 @@ function PropertyUpdateCard() {
   const [result, setResult] = useState(null)
   const [error, setError]   = useState(null)
   const [dragging, setDrag] = useState(false)
+  const [queueRemail, setQueueRemail] = useState(true)
   const inputRef = useRef()
 
   const handleFile = (f) => { if (f) { setFile(f); setResult(null); setError(null) } }
@@ -249,6 +250,7 @@ function PropertyUpdateCard() {
     setLoad(true); setError(null)
     const fd = new FormData()
     fd.append('file', file)
+    fd.append('queue_remail', queueRemail ? '1' : '0')
     try {
       const res  = await fetch('/api/import/property-updates', { method: 'POST', body: fd, credentials: 'include' })
       const data = await res.json()
@@ -324,6 +326,7 @@ function PropertyUpdateCard() {
               <div className="flex-1">
                 <p className="text-sm font-semibold text-blue-800 mb-1">
                   {result.updated} propert{result.updated === 1 ? 'y' : 'ies'} updated
+                  {result.queued > 0 && <span className="text-emerald-700"> · {result.queued} queued to re-mail</span>}
                 </p>
                 <div className="flex flex-wrap gap-4 text-sm text-blue-700">
                   <span>{result.total} rows in file</span>
@@ -331,6 +334,11 @@ function PropertyUpdateCard() {
                   <span><strong>{result.people_created}</strong> new owners</span>
                   {result.not_found > 0 && <span className="text-amber-700"><strong>{result.not_found}</strong> not found (skipped)</span>}
                 </div>
+                {result.queued > 0 && (
+                  <p className="text-xs text-emerald-700 mt-2">
+                    📬 {result.queued} added to the re-mail queue — send them from <span className="font-semibold">Mail Campaign → Re-mail queue</span>.
+                  </p>
+                )}
                 {result.unmatched_sample?.length > 0 && (
                   <details className="mt-2">
                     <summary className="text-xs text-amber-600 cursor-pointer hover:text-amber-800">
@@ -357,6 +365,17 @@ function PropertyUpdateCard() {
             <p className="text-sm text-red-700">{error}</p>
           </div>
         )}
+
+        <label className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl border border-slate-200 hover:bg-slate-50 cursor-pointer">
+          <input type="checkbox" checked={queueRemail} onChange={e => setQueueRemail(e.target.checked)}
+            className="mt-0.5 w-4 h-4 accent-blue-600 shrink-0" />
+          <span className="text-sm text-slate-700">
+            Queue updated properties to re-mail
+            <span className="block text-xs text-slate-400">
+              Adds each corrected property to the re-mail queue so you can send them in one campaign afterward.
+            </span>
+          </span>
+        </label>
 
         <Button className="w-full justify-center" disabled={!file || loading} onClick={handleImport}>
           {loading
