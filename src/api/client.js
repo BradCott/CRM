@@ -76,6 +76,8 @@ export async function fetchDriveFileAsFile(fileId, name) {
   return new File([blob], name || 'drive-file', { type: blob.type })
 }
 export const bulkDeleteProperties  = (ids)    => req('POST', '/properties/bulk-delete', { ids })
+export const prepareTenantNotify   = (id)     => req('GET',  `/properties/${id}/tenant-notify/prepare`)
+export const sendTenantNotify      = (id, d)  => req('POST', `/properties/${id}/tenant-notify/send`, d)
 export const togglePortfolio       = (id, val) => req('PATCH',  `/properties/${id}/portfolio`, { is_portfolio: val })
 
 // Deals

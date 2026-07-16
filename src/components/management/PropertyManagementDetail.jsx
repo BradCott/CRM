@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import DriveDocsButton from '../properties/DriveDocsButton'
+import TenantNotifyButton from '../properties/TenantNotifyButton'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft, ClipboardList, Shield, Receipt, Wrench, Users,
@@ -1186,7 +1187,10 @@ export default function PropertyManagementDetail() {
               {property.tenant_brand_name ? ` · ${property.tenant_brand_name}` : ''}
             </p>
           </div>
-          <DriveDocsButton propertyId={propertyId} className="shrink-0" />
+          <div className="flex items-center gap-2 shrink-0">
+            <TenantNotifyButton propertyId={propertyId} />
+            <DriveDocsButton propertyId={propertyId} />
+          </div>
         </div>
       </div>
 

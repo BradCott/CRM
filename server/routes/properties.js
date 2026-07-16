@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import nodemailer from 'nodemailer'
 import db from '../db.js'
 import { requireRole } from '../middleware/auth.js'
 import { seedDefaultTasks } from './management.js'
@@ -526,6 +527,157 @@ router.get('/drive-file/:fileId', async (req, res) => {
     console.error('[GET /api/properties/drive-file/:fileId] error:', err.message)
     res.status(500).json({ error: err.message })
   }
+})
+
+// ── Tenant new-ownership notification ─────────────────────────────────────────
+// A property-page button: notify the current tenant that Knox is the new
+// landlord, with the Deed / notice letter / Assignment of Lease / W-9 attached
+// straight from the property's Google Drive folder. Draft is AI-written; the
+// user reviews and confirms before anything is sent (never auto-fires).
+
+const DOC_PATTERNS = [
+  { type: 'Deed',                 re: /\bdeed\b/i },
+  { type: 'Tenant Notice Letter', re: /notif|notice|welcome|landlord|estoppel/i },
+  { type: 'Assignment of Lease',  re: /assign/i },
+  { type: 'W-9',                  re: /\bw-?9\b/i },
+]
+function classifyDoc(name) {
+  for (const d of DOC_PATTERNS) if (d.re.test(name || '')) return d.type
+  return null
+}
+
+async function draftTenantEmail({ brand, address, city, state }) {
+  const loc = [address, city, state].filter(Boolean).join(', ')
+  const fallback = {
+    subject: `New ownership — ${brand ? brand + ' at ' : ''}${address}${city ? ', ' + city : ''}`,
+    body:
+`Hello,
+
+We're writing to let you know that Knox Capital has acquired the property at ${loc}, where your ${brand || 'business'} operates. Effective as of closing, Knox Capital is your new landlord.
+
+Attached you'll find the recorded Deed, the tenant notification letter, the Assignment of Lease, and our W-9 for your records. Please update your files with our information and direct future rent payments and correspondence to us going forward — remittance details are in the notification letter.
+
+We'd also appreciate an updated certificate of insurance naming Knox Capital as an additional insured at your earliest convenience.
+
+We're glad to have you and look forward to a great relationship. Please don't hesitate to reach out with any questions.
+
+Best regards,
+Brad Cottam
+Knox Capital`,
+  }
+
+  const key = process.env.ANTHROPIC_API_KEY
+  if (!key) return fallback
+  try {
+    const prompt = `Write a short, warm, professional email from Knox Capital to the current tenant of a commercial property we just acquired, telling them we're the new landlord. Property: ${brand || ''} at ${loc}. Note that the recorded Deed, the tenant notification letter, the Assignment of Lease, and our W-9 are attached. Ask them to update their records, direct future rent/correspondence to us (details are in the notification letter), and send an updated certificate of insurance naming Knox Capital. Sign as Brad Cottam, Knox Capital. Return ONLY JSON: {"subject":"...","body":"..."} — plain-text body using \\n for line breaks, no markdown.`
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: process.env.ASSISTANT_MODEL || 'claude-sonnet-5',
+        max_tokens: 1200, thinking: { type: 'disabled' },
+        messages: [{ role: 'user', content: prompt }],
+      }),
+    })
+    const data = await r.json()
+    const text = data?.content?.find(b => b.type === 'text')?.text || ''
+    const m = text.match(/\{[\s\S]*\}/)
+    if (m) { const j = JSON.parse(m[0]); if (j.subject && j.body) return j }
+  } catch (e) {
+    console.warn('[tenant-notify] draft failed, using template:', e.message)
+  }
+  return fallback
+}
+
+// GET prepare — tenant contacts, the property's Drive docs (with suggestions
+// for the 4 target docs), and an AI-drafted email to review.
+router.get('/:id/tenant-notify/prepare', async (req, res) => {
+  const prop = db.prepare(`
+    SELECT p.id, p.address, p.city, p.state, p.tenant_brand_id, tb.name AS brand
+    FROM properties p LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
+    WHERE p.id = ?
+  `).get(req.params.id)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+
+  // Tenant contacts for this brand, preferring ones whose territory covers the state.
+  let contacts = []
+  if (prop.tenant_brand_id) {
+    contacts = db.prepare(`
+      SELECT id, name, email, title, territory_states
+      FROM people
+      WHERE role = 'tenant_contact' AND tenant_brand_id = ? AND email IS NOT NULL AND email <> ''
+      ORDER BY name
+    `).all(prop.tenant_brand_id)
+    const st = (prop.state || '').toUpperCase()
+    contacts.sort((a, b) =>
+      ((a.territory_states || '').includes(`"${st}"`) ? 0 : 1) -
+      ((b.territory_states || '').includes(`"${st}"`) ? 0 : 1))
+  }
+
+  let drive = { connected: false, folder: null, files: [] }
+  try { drive = await searchDriveForProperty(req.params.id) } catch (e) { console.warn('[tenant-notify] drive:', e.message) }
+  const files = (drive.files || []).map(f => ({ id: f.id, name: f.name, mimeType: f.mimeType, path: f.path, docType: classifyDoc(f.name) }))
+  // Suggest the most-recent match for each target doc (files are newest-first).
+  const suggested = new Set()
+  for (const type of ['Deed', 'Tenant Notice Letter', 'Assignment of Lease', 'W-9']) {
+    const hit = files.find(f => f.docType === type)
+    if (hit) suggested.add(hit.id)
+  }
+  files.forEach(f => { f.suggested = suggested.has(f.id) })
+
+  const draft = await draftTenantEmail(prop)
+  res.json({ property: prop, contacts, drive: { connected: drive.connected, folder: drive.folder || null }, files, draft })
+})
+
+// POST send — review-then-send the notification with the chosen Drive attachments.
+router.post('/:id/tenant-notify/send', async (req, res) => {
+  const { to, cc, subject, body, driveFileIds } = req.body || {}
+  const recipients = Array.isArray(to) ? to.filter(Boolean) : (to ? [to] : [])
+  if (!recipients.length)   return res.status(400).json({ error: 'At least one recipient is required' })
+  if (!subject || !body)    return res.status(400).json({ error: 'subject and body are required' })
+  if (!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS)) {
+    return res.status(400).json({ error: 'Email is not configured on the server (SMTP settings missing). Ask an admin to set SMTP_HOST/USER/PASS.' })
+  }
+
+  const prop = db.prepare('SELECT id, notes FROM properties WHERE id = ?').get(req.params.id)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+
+  // Download the selected Drive files as attachments.
+  const attachments = []
+  for (const fileId of (Array.isArray(driveFileIds) ? driveFileIds : [])) {
+    try {
+      const f = await fetchDriveFile(fileId)
+      attachments.push({ filename: f.name, content: f.buffer, contentType: f.mimeType })
+    } catch (e) {
+      return res.status(502).json({ error: `Couldn't fetch an attachment from Drive: ${e.message}` })
+    }
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT) || 587,
+      secure: process.env.SMTP_SECURE === 'true',
+      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+    })
+    await transporter.sendMail({
+      from: process.env.SMTP_FROM || process.env.SMTP_USER,
+      to:   recipients.join(', '),
+      cc:   cc || undefined,
+      subject,
+      text: body,
+      attachments,
+    })
+  } catch (e) {
+    console.error('[tenant-notify] send failed:', e.message)
+    return res.status(502).json({ error: `Send failed: ${e.message}` })
+  }
+
+  // Durable audit trail on the property.
+  const stamp = new Date().toISOString().slice(0, 10)
+  const note = `[${stamp}] Tenant ownership-change notice emailed to ${recipients.join(', ')}${attachments.length ? ` (${attachments.length} attachment${attachments.length === 1 ? '' : 's'})` : ''}.`
+  db.prepare(`UPDATE properties SET notes = TRIM(COALESCE(notes, '') || CHAR(10) || ?) WHERE id = ?`).run(note, prop.id)
+
+  res.json({ ok: true, sent_to: recipients, attachments: attachments.length })
 })
 
 export default router
