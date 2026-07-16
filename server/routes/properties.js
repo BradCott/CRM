@@ -680,12 +680,15 @@ router.post('/:id/tenant-notify/send', async (req, res) => {
       secure: process.env.SMTP_SECURE === 'true',
       auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
     })
+    // Tenant notices go out from the management mailbox (override via env).
+    const fromAddr = process.env.TENANT_NOTIFY_FROM || 'Knox Capital <management@knoxcre.com>'
     await transporter.sendMail({
-      from: process.env.SMTP_FROM || process.env.SMTP_USER,
-      to:   recipients.join(', '),
-      cc:   cc || undefined,
+      from:    fromAddr,
+      replyTo: process.env.TENANT_NOTIFY_REPLY_TO || 'management@knoxcre.com',
+      to:      recipients.join(', '),
+      cc:      cc || undefined,
       subject,
-      text: body,
+      text:    body,
       attachments,
     })
   } catch (e) {
