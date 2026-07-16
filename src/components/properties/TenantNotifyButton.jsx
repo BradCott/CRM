@@ -170,15 +170,20 @@ export default function TenantNotifyButton({ propertyId, className = '' }) {
                             <input type="checkbox" checked={selected.has(f.id)} onChange={() => toggleFile(f.id)}
                               className="w-4 h-4 accent-blue-600 shrink-0" />
                             <FileText className="w-4 h-4 text-slate-400 shrink-0" />
-                            <span className="text-sm text-slate-700 truncate flex-1">{f.name}</span>
+                            <div className="min-w-0 flex-1">
+                              <p className="text-sm text-slate-700 truncate">{f.name}</p>
+                              {f.path && <p className="text-[10px] text-slate-400 truncate">{f.path}</p>}
+                            </div>
                             {f.docType && (
-                              <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 shrink-0">{f.docType}</span>
+                              <span className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded-full shrink-0 ${
+                                f.source === 'llc' ? 'bg-violet-50 text-violet-700' : 'bg-blue-50 text-blue-700'
+                              }`}>{f.docType}</span>
                             )}
                           </label>
                         ))}
                       </div>
                     )}
-                    <p className="text-[11px] text-slate-400 mt-1">Deed, notice letter, Assignment of Lease, and W-9 are auto-selected when found. Double-check they're the right files before sending.</p>
+                    <p className="text-[11px] text-slate-400 mt-1">Deed, notice letter &amp; Assignment come from this property's folder. The <span className="text-violet-600 font-medium">W-9</span> is pulled from your LLC folders — if more than one shows, pick the right entity's. Double-check before sending.</p>
                   </div>
 
                   {error && (

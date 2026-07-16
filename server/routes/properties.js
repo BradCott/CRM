@@ -4,7 +4,7 @@ import db from '../db.js'
 import { requireRole } from '../middleware/auth.js'
 import { seedDefaultTasks } from './management.js'
 import { normalizeAddr, tokenSearch } from '../utils/normalize.js'
-import { searchDriveForProperty, fetchDriveFile } from '../services/driveSearch.js'
+import { searchDriveForProperty, searchDriveDocs, fetchDriveFile } from '../services/driveSearch.js'
 
 const router = Router()
 
@@ -614,15 +614,36 @@ router.get('/:id/tenant-notify/prepare', async (req, res) => {
       ((b.territory_states || '').includes(`"${st}"`) ? 0 : 1))
   }
 
+  // The property's own Drive folder (incl. subfolders like "Escrow") — Deed,
+  // notice letter, and Assignment of Lease live here.
   let drive = { connected: false, folder: null, files: [] }
   try { drive = await searchDriveForProperty(req.params.id) } catch (e) { console.warn('[tenant-notify] drive:', e.message) }
-  const files = (drive.files || []).map(f => ({ id: f.id, name: f.name, mimeType: f.mimeType, path: f.path, docType: classifyDoc(f.name) }))
-  // Suggest the most-recent match for each target doc (files are newest-first).
+  const files = (drive.files || []).map(f => ({ id: f.id, name: f.name, mimeType: f.mimeType, path: f.path, docType: classifyDoc(f.name), source: 'property' }))
+
+  // The W-9 lives in the owning LLC's folder, NOT the property folder, and the
+  // property record doesn't say which LLC — so pull W-9 candidates by name from
+  // across Drive for the user to pick the right entity's.
+  if (drive.connected) {
+    try {
+      const seen = new Set(files.map(f => f.id))
+      const w9 = await searchDriveDocs(['W-9', 'W9'])
+      for (const f of (w9.files || [])) {
+        if (seen.has(f.id)) continue
+        files.push({ id: f.id, name: f.name, mimeType: f.mimeType, path: 'LLC folder', docType: 'W-9', source: 'llc', webViewLink: f.webViewLink })
+        seen.add(f.id)
+      }
+    } catch (e) { console.warn('[tenant-notify] w9 search:', e.message) }
+  }
+
+  // Auto-select the escrow docs from the property folder. Only auto-select the
+  // W-9 when there's a single candidate — otherwise the user picks the entity.
   const suggested = new Set()
-  for (const type of ['Deed', 'Tenant Notice Letter', 'Assignment of Lease', 'W-9']) {
+  for (const type of ['Deed', 'Tenant Notice Letter', 'Assignment of Lease']) {
     const hit = files.find(f => f.docType === type)
     if (hit) suggested.add(hit.id)
   }
+  const w9s = files.filter(f => f.docType === 'W-9')
+  if (w9s.length === 1) suggested.add(w9s[0].id)
   files.forEach(f => { f.suggested = suggested.has(f.id) })
 
   const draft = await draftTenantEmail(prop)
