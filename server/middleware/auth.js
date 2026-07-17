@@ -29,11 +29,14 @@ export function issueJWT(res, user) {
 // against CRM endpoints (different cookie name + `kind` check), and CRM sessions
 // can never be used against the portal. This is the isolation boundary.
 export const PORTAL_COOKIE = 'knox_portal'
+// Portal tokens are signed with a DISTINCT secret so a portal JWT can never
+// verify against the CRM (and vice versa) even if it lands in the wrong cookie.
+const PORTAL_JWT_SECRET = process.env.PORTAL_JWT_SECRET || `${JWT_SECRET}::investor-portal`
 
 export function issuePortalJWT(res, iu) {
   const token = jwt.sign(
     { kind: 'portal', iu: iu.id, inv: iu.investor_id, email: iu.email, name: iu.name },
-    JWT_SECRET,
+    PORTAL_JWT_SECRET,
     { expiresIn: '7d' }
   )
   res.cookie(PORTAL_COOKIE, token, COOKIE_OPTIONS)
@@ -45,7 +48,7 @@ export function requirePortalAuth(req, res, next) {
   const token = req.cookies?.[PORTAL_COOKIE]
   if (!token) return res.status(401).json({ error: 'Not authenticated' })
   try {
-    const p = jwt.verify(token, JWT_SECRET)
+    const p = jwt.verify(token, PORTAL_JWT_SECRET)
     if (p.kind !== 'portal') throw new Error('wrong token kind')
     req.portal = { investorUserId: p.iu, investorId: p.inv, email: p.email, name: p.name }
     next()
@@ -61,7 +64,10 @@ export function requireAuth(req, res, next) {
   if (!token) return res.status(401).json({ error: 'Not authenticated' })
 
   try {
-    req.user = jwt.verify(token, JWT_SECRET)
+    const payload = jwt.verify(token, JWT_SECRET)
+    // A portal token must never be honored as a CRM session.
+    if (payload.kind === 'portal') { res.clearCookie(COOKIE_NAME); return res.status(401).json({ error: 'Invalid session' }) }
+    req.user = payload
     next()
   } catch {
     res.clearCookie(COOKIE_NAME)

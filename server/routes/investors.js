@@ -1052,6 +1052,7 @@ router.get('/:id/documents/:docId/file', (req, res) => {
   const d = db.prepare(`SELECT file_name, file_path, mime FROM investor_documents WHERE id = ? AND investor_id = ?`).get(req.params.docId, req.params.id)
   if (!d || !d.file_path || !existsSync(d.file_path)) return res.status(404).json({ error: 'Document not found' })
   res.setHeader('Content-Type', d.mime || 'application/octet-stream')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Content-Disposition', `attachment; filename="${(d.file_name || 'document').replace(/"/g, '')}"`)
   createReadStream(d.file_path).pipe(res)
 })

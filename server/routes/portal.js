@@ -29,6 +29,19 @@ function portalOAuth() {
 
 const norm = (e) => String(e || '').trim().toLowerCase()
 
+// ── Brute-force protection for password login ─────────────────────────────────
+const loginAttempts = new Map()   // ip -> { count, resetAt }
+const MAX_ATTEMPTS  = 10
+const WINDOW_MS     = 15 * 60 * 1000
+function isRateLimited(ip) {
+  const now = Date.now()
+  const rec = loginAttempts.get(ip)
+  if (!rec || rec.resetAt < now) { loginAttempts.set(ip, { count: 1, resetAt: now + WINDOW_MS }); return false }
+  rec.count++
+  return rec.count > MAX_ATTEMPTS
+}
+function clearAttempts(ip) { loginAttempts.delete(ip) }
+
 // Find an active-or-invited investor account by email (never disabled).
 function findAccount(email) {
   return db.prepare(`SELECT * FROM investor_users WHERE email = ? AND status != 'disabled'`).get(norm(email))
@@ -73,6 +86,7 @@ router.get('/auth/google/callback', async (req, res) => {
     const { data } = await google.oauth2({ version: 'v2', auth: oAuth }).userinfo.get()
     const email = norm(data.email)
     if (!email) return fail('google')
+    if (!data.verified_email) return fail('unverified')   // only trust Google-verified emails
 
     const iu = findAccount(email)
     if (!iu) return fail('not_invited')   // the email must be pre-invited — the security gate
@@ -89,11 +103,15 @@ router.get('/auth/google/callback', async (req, res) => {
 // ── Email / password ──────────────────────────────────────────────────────────
 
 router.post('/auth/password', async (req, res) => {
+  const ip = req.ip || req.socket?.remoteAddress || 'unknown'
+  if (isRateLimited(ip)) return res.status(429).json({ error: 'Too many sign-in attempts. Please wait a few minutes and try again.' })
+
   const { email, password } = req.body || {}
   const iu = findAccount(email)
   if (!iu || !iu.password_hash) return res.status(401).json({ error: 'Invalid email or password' })
   const ok = await bcrypt.compare(String(password || ''), iu.password_hash)
   if (!ok) return res.status(401).json({ error: 'Invalid email or password' })
+  clearAttempts(ip)
   db.prepare(`UPDATE investor_users SET status='active', last_login_at=datetime('now') WHERE id=?`).run(iu.id)
   issuePortalJWT(res, iu)
   res.json({ ok: true })
@@ -225,6 +243,7 @@ router.get('/documents/:id/file', requirePortalAuth, (req, res) => {
   const d = db.prepare(`SELECT file_name, file_path, mime FROM investor_documents WHERE id = ? AND investor_id = ?`).get(req.params.id, req.portal.investorId)
   if (!d || !d.file_path || !existsSync(d.file_path)) return res.status(404).json({ error: 'Document not found' })
   res.setHeader('Content-Type', d.mime || 'application/octet-stream')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
   res.setHeader('Content-Disposition', `attachment; filename="${(d.file_name || 'document').replace(/"/g, '')}"`)
   createReadStream(d.file_path).pipe(res)
 })

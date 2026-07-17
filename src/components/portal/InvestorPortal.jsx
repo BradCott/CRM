@@ -17,6 +17,7 @@ const ERRORS = {
   not_invited: "That Google account isn't on the invite list. Sign in with the exact email Knox invited, or contact Knox for access.",
   state:       'Your sign-in attempt expired — please try again.',
   google:      'Google sign-in failed — please try again.',
+  unverified:  "That Google account's email isn't verified. Please verify it with Google, or set a password instead.",
 }
 
 function Brandmark() {
