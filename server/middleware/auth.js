@@ -24,6 +24,37 @@ export function issueJWT(res, user) {
   return token
 }
 
+// ── Investor portal auth ──────────────────────────────────────────────────────
+// A SEPARATE cookie + token kind from the CRM. A portal session can never be used
+// against CRM endpoints (different cookie name + `kind` check), and CRM sessions
+// can never be used against the portal. This is the isolation boundary.
+export const PORTAL_COOKIE = 'knox_portal'
+
+export function issuePortalJWT(res, iu) {
+  const token = jwt.sign(
+    { kind: 'portal', iu: iu.id, inv: iu.investor_id, email: iu.email, name: iu.name },
+    JWT_SECRET,
+    { expiresIn: '7d' }
+  )
+  res.cookie(PORTAL_COOKIE, token, COOKIE_OPTIONS)
+  return token
+}
+
+/** Require a valid portal session. Sets req.portal = { investorUserId, investorId, email, name }. */
+export function requirePortalAuth(req, res, next) {
+  const token = req.cookies?.[PORTAL_COOKIE]
+  if (!token) return res.status(401).json({ error: 'Not authenticated' })
+  try {
+    const p = jwt.verify(token, JWT_SECRET)
+    if (p.kind !== 'portal') throw new Error('wrong token kind')
+    req.portal = { investorUserId: p.iu, investorId: p.inv, email: p.email, name: p.name }
+    next()
+  } catch {
+    res.clearCookie(PORTAL_COOKIE)
+    return res.status(401).json({ error: 'Session expired — please sign in again' })
+  }
+}
+
 /** Require a valid JWT cookie. Sets req.user = { sub, email, name, role }. */
 export function requireAuth(req, res, next) {
   const token = req.cookies?.[COOKIE_NAME]

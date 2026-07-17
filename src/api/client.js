@@ -387,6 +387,16 @@ export async function uploadInsurancePdf(propId, file) {
   return req('POST', `/management/${propId}/insurance/upload`, fd)
 }
 
+// Investor portal (separate auth surface)
+export const portalMe            = ()               => req('GET',  '/portal/me')
+export const portalPasswordLogin = (email, password) => req('POST', '/portal/auth/password', { email, password })
+export const portalInviteInfo    = (token)          => req('GET',  `/portal/auth/invite/${token}`)
+export const portalAccept        = (token, password, name) => req('POST', '/portal/auth/accept', { token, password, name })
+export const portalLogout        = ()               => req('POST', '/portal/logout')
+export const portalGoogleStartUrl = ()              => `${BASE}/portal/auth/google/start`
+// CRM side: invite an investor to the portal
+export const invitePortal        = (investorId, email) => req('POST', `/investors/${investorId}/portal-invite`, { email })
+
 // Property dashboard
 export const getPropertyDash     = (propId)      => req('GET',   `/management/${propId}/dash`)
 export const updatePropertyDash  = (propId, data) => req('PATCH', `/management/${propId}/dash`, data)

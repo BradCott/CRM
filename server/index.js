@@ -31,6 +31,7 @@ import extRouter             from './routes/ext.js'
 import tenantRolesRouter     from './routes/tenantRoles.js'
 import pluginRouter          from './routes/plugin.js'
 import extDistRouter         from './routes/extDist.js'
+import portalRouter          from './routes/portal.js'
 
 import { requireAuth, requireWrite, requireRole, requireExtKey } from './middleware/auth.js'
 
@@ -56,6 +57,8 @@ if (isProd && existsSync(distPath)) {
 
 // ── Public API routes (no auth required) ─────────────────────────────────────
 app.use('/api/auth', authRouter)
+// Investor portal — self-contained auth + investor-scoped data (NOT behind CRM auth)
+app.use('/api/portal', portalRouter)
 
 // ── Gmail browser extension (shared-key auth, not the login cookie) ──────────
 app.use('/api/ext', requireExtKey, extRouter)

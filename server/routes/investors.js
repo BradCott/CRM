@@ -1,6 +1,8 @@
 import { Router } from 'express'
 import multer from 'multer'
 import * as XLSX from 'xlsx'
+import nodemailer from 'nodemailer'
+import crypto from 'node:crypto'
 import db from '../db.js'
 import { normalizeName, nameSimilarity, autoLinkInvestors } from '../services/investorMatch.js'
 import { tokenSearch } from '../utils/normalize.js'
@@ -967,6 +969,54 @@ router.post('/merge', (req, res) => {
 router.delete('/:id', (req, res) => {
   db.prepare(`DELETE FROM investors WHERE id = ?`).run(req.params.id)
   res.status(204).end()
+})
+
+// ── Investor portal invite ────────────────────────────────────────────────────
+// Pre-authorize an investor's email for the portal and email them an access link.
+// The email is the security gate: portal login (Google or password) only works
+// for an address that's been invited here.
+router.post('/:id/portal-invite', async (req, res) => {
+  const inv = db.prepare('SELECT id, name, email FROM investors WHERE id = ?').get(req.params.id)
+  if (!inv) return res.status(404).json({ error: 'Investor not found' })
+  const email = String(req.body?.email || inv.email || '').trim().toLowerCase()
+  if (!email || !email.includes('@')) return res.status(400).json({ error: 'A valid email is required to invite this investor.' })
+
+  const existing = db.prepare('SELECT id, investor_id FROM investor_users WHERE email = ?').get(email)
+  if (existing && existing.investor_id !== inv.id) {
+    return res.status(409).json({ error: 'That email is already linked to a different investor.' })
+  }
+
+  const token   = crypto.randomBytes(24).toString('hex')
+  const expires = new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString()
+  if (existing) {
+    db.prepare(`UPDATE investor_users SET invite_token=?, invite_expires=?, status=CASE WHEN status='disabled' THEN 'invited' ELSE status END WHERE id=?`).run(token, expires, existing.id)
+  } else {
+    db.prepare(`INSERT INTO investor_users (investor_id, email, name, status, invite_token, invite_expires) VALUES (?, ?, ?, 'invited', ?, ?)`)
+      .run(inv.id, email, inv.name || null, token, expires)
+  }
+
+  const baseUrl = process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : 'http://localhost:5173'
+  const link = `${baseUrl}/portal/accept?token=${token}`
+
+  let emailed = false
+  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
+    try {
+      const transporter = nodemailer.createTransport({
+        host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT) || 587,
+        secure: process.env.SMTP_SECURE === 'true',
+        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
+      })
+      await transporter.sendMail({
+        from: process.env.PORTAL_FROM || process.env.SMTP_FROM || process.env.SMTP_USER,
+        to: email,
+        subject: 'Your Knox Capital investor portal access',
+        text: `Hello${inv.name ? ' ' + inv.name : ''},\n\nYou've been invited to the Knox Capital investor portal — view your investments, capital account, and distributions in one place.\n\nGet started: ${link}\n\nYou can sign in with Google (using this email) or set a password.\n\n— Knox Capital`,
+      })
+      emailed = true
+    } catch (e) { console.warn('[portal-invite] email failed:', e.message) }
+  }
+
+  res.json({ ok: true, email, emailed, link })
 })
 
 // ── Property links ────────────────────────────────────────────────────────────

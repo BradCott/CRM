@@ -2,12 +2,12 @@ import { useState, useEffect, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Pencil, Check, X, Plus, Trash2, Loader2,
-  DollarSign, Building2, TrendingUp, Calendar, AlertCircle, Users, Mail, Phone,
+  DollarSign, Building2, TrendingUp, Calendar, AlertCircle, Users, Mail, Phone, UserPlus,
 } from 'lucide-react'
 import {
   getInvestorProfile, updateInvestor, createDistribution, deleteDistribution,
   createInvestorLink, updateInvestorLink, deleteInvestorLink, getAllProperties,
-  addInvestorContact, updateInvestorContact, deleteInvestorContact,
+  addInvestorContact, updateInvestorContact, deleteInvestorContact, invitePortal,
 } from '../../api/client'
 import Button from '../ui/Button'
 import ConfirmDialog from '../ui/ConfirmDialog'
@@ -452,6 +452,20 @@ export default function InvestorProfilePage() {
               <AlertCircle className="w-3 h-3" /> Profile incomplete
             </span>
           )}
+          <button
+            onClick={async () => {
+              const email = window.prompt('Invite this investor to the portal. Send access to:', investor.email || '')
+              if (!email) return
+              try {
+                const r = await invitePortal(investor.id, email.trim())
+                window.alert(`Portal invite ${r.emailed ? 'emailed to' : 'created for'} ${r.email}.${r.emailed ? '' : `\n\nEmail isn't configured, so share this link with them:\n${r.link}`}`)
+              } catch (e) { window.alert(e.message) }
+            }}
+            className="ml-auto inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
+            title="Invite this investor to the secure investor portal"
+          >
+            <UserPlus className="w-4 h-4" /> Invite to portal
+          </button>
         </div>
       </div>
 

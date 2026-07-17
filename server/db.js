@@ -562,6 +562,23 @@ const migrations = [
     uploaded_at TEXT DEFAULT (datetime('now'))
   )`,
   `CREATE INDEX IF NOT EXISTS idx_lease_docs ON lease_documents(property_id)`,
+  // Investor portal accounts — a SEPARATE auth system from CRM users. Each row
+  // is hard-linked to one investor and can only ever see that investor's data.
+  `CREATE TABLE IF NOT EXISTS investor_users (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    investor_id    INTEGER NOT NULL REFERENCES investors(id) ON DELETE CASCADE,
+    email          TEXT NOT NULL UNIQUE,
+    name           TEXT,
+    google_sub     TEXT,
+    password_hash  TEXT,
+    status         TEXT NOT NULL DEFAULT 'invited',
+    invite_token   TEXT,
+    invite_expires TEXT,
+    created_at     TEXT DEFAULT (datetime('now')),
+    last_login_at  TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_investor_users_email ON investor_users(email)`,
+  `CREATE INDEX IF NOT EXISTS idx_investor_users_token ON investor_users(invite_token)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

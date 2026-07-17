@@ -18,6 +18,7 @@ import AccountingPage   from './components/accounting/AccountingPage'
 import LedgerPage       from './components/accounting/LedgerPage'
 import AccountingReports from './components/accounting/AccountingReports'
 import LoginPage        from './components/auth/LoginPage'
+import InvestorPortal, { PortalAccept } from './components/portal/InvestorPortal'
 import SignupPage       from './components/auth/SignupPage'
 import AdminPage                 from './components/admin/AdminPage'
 import ManagementDashboard       from './components/management/ManagementDashboard'
@@ -81,6 +82,10 @@ export default function App() {
           <Route path="/login"         element={<LoginPage />} />
           <Route path="/signup"        element={<SignupPage />} />
           <Route path="/signup/:token" element={<SignupPage />} />
+
+          {/* Investor portal — fully separate surface + auth, outside the CRM */}
+          <Route path="/portal"        element={<InvestorPortal />} />
+          <Route path="/portal/accept" element={<PortalAccept />} />
 
           {/* Protected: RequireAuth mounts AppProvider only after auth */}
           <Route element={<RequireAuth />}>
