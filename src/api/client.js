@@ -390,6 +390,21 @@ export async function uploadInsurancePdf(propId, file) {
 // Investor portal (separate auth surface)
 export const portalMe            = ()               => req('GET',  '/portal/me')
 export const portalPortfolio     = ()               => req('GET',  '/portal/portfolio')
+export const portalDocuments     = ()               => req('GET',  '/portal/documents')
+export const portalDocUrl        = (id)             => `${BASE}/portal/documents/${id}/file`
+export const deletePortalDoc     = (id)             => req('DELETE', `/portal/documents/${id}`)
+export async function uploadPortalDoc(file, category) {
+  const fd = new FormData(); fd.append('file', file); if (category) fd.append('category', category)
+  return req('POST', '/portal/documents', fd)
+}
+// CRM side: investor documents
+export const getInvestorDocuments = (id)            => req('GET',    `/investors/${id}/documents`)
+export const investorDocUrl       = (id, docId)     => `${BASE}/investors/${id}/documents/${docId}/file`
+export const deleteInvestorDoc    = (id, docId)     => req('DELETE', `/investors/${id}/documents/${docId}`)
+export async function uploadInvestorDoc(id, file, category) {
+  const fd = new FormData(); fd.append('file', file); if (category) fd.append('category', category)
+  return req('POST', `/investors/${id}/documents`, fd)
+}
 export const portalPasswordLogin = (email, password) => req('POST', '/portal/auth/password', { email, password })
 export const portalInviteInfo    = (token)          => req('GET',  `/portal/auth/invite/${token}`)
 export const portalAccept        = (token, password, name) => req('POST', '/portal/auth/accept', { token, password, name })

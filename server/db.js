@@ -579,6 +579,22 @@ const migrations = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_investor_users_email ON investor_users(email)`,
   `CREATE INDEX IF NOT EXISTS idx_investor_users_token ON investor_users(invite_token)`,
+  // Investor document vault. direction: 'to_investor' = Knox shared it (investor
+  // downloads); 'from_investor' = the investor uploaded it (Knox receives).
+  `CREATE TABLE IF NOT EXISTS investor_documents (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    investor_id         INTEGER NOT NULL REFERENCES investors(id) ON DELETE CASCADE,
+    file_name           TEXT,
+    file_path           TEXT,
+    mime                TEXT,
+    size                INTEGER,
+    category            TEXT DEFAULT 'Other',
+    direction           TEXT NOT NULL DEFAULT 'to_investor',
+    uploaded_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    notes               TEXT,
+    created_at          TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_investor_docs ON investor_documents(investor_id)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

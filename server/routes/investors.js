@@ -3,7 +3,9 @@ import multer from 'multer'
 import * as XLSX from 'xlsx'
 import nodemailer from 'nodemailer'
 import crypto from 'node:crypto'
-import db from '../db.js'
+import { join } from 'node:path'
+import { mkdirSync, writeFileSync, createReadStream, existsSync, unlink } from 'node:fs'
+import db, { DATA_DIR } from '../db.js'
 import { normalizeName, nameSimilarity, autoLinkInvestors } from '../services/investorMatch.js'
 import { tokenSearch } from '../utils/normalize.js'
 
@@ -1017,6 +1019,49 @@ router.post('/:id/portal-invite', async (req, res) => {
   }
 
   res.json({ ok: true, email, emailed, link })
+})
+
+// ── Investor document vault (CRM side) ────────────────────────────────────────
+const INV_DOCS_DIR = join(DATA_DIR, 'investor-docs')
+
+router.get('/:id/documents', (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, file_name, mime, size, category, direction, notes, created_at
+    FROM investor_documents WHERE investor_id = ? ORDER BY created_at DESC
+  `).all(req.params.id)
+  res.json({ documents: rows })
+})
+
+// Knox shares a document with the investor (they'll see + download it in the portal).
+router.post('/:id/documents', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  const inv = db.prepare('SELECT id FROM investors WHERE id = ?').get(req.params.id)
+  if (!inv) return res.status(404).json({ error: 'Investor not found' })
+  const dir = join(INV_DOCS_DIR, String(inv.id))
+  try { mkdirSync(dir, { recursive: true }) } catch (_) {}
+  const safe  = (req.file.originalname || 'document').replace(/[^\w.\-]+/g, '_')
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const filePath = join(dir, `${stamp}-${safe}`)
+  try { writeFileSync(filePath, req.file.buffer) } catch (e) { return res.status(500).json({ error: `Could not save file: ${e.message}` }) }
+  db.prepare(`INSERT INTO investor_documents (investor_id, file_name, file_path, mime, size, category, direction, uploaded_by_user_id) VALUES (?, ?, ?, ?, ?, ?, 'to_investor', ?)`)
+    .run(inv.id, req.file.originalname || safe, filePath, req.file.mimetype || null, req.file.size || null, String(req.body?.category || 'Other').slice(0, 40), req.user?.sub || null)
+  res.json({ ok: true })
+})
+
+router.get('/:id/documents/:docId/file', (req, res) => {
+  const d = db.prepare(`SELECT file_name, file_path, mime FROM investor_documents WHERE id = ? AND investor_id = ?`).get(req.params.docId, req.params.id)
+  if (!d || !d.file_path || !existsSync(d.file_path)) return res.status(404).json({ error: 'Document not found' })
+  res.setHeader('Content-Type', d.mime || 'application/octet-stream')
+  res.setHeader('Content-Disposition', `attachment; filename="${(d.file_name || 'document').replace(/"/g, '')}"`)
+  createReadStream(d.file_path).pipe(res)
+})
+
+router.delete('/:id/documents/:docId', (req, res) => {
+  const d = db.prepare(`SELECT file_path FROM investor_documents WHERE id = ? AND investor_id = ?`).get(req.params.docId, req.params.id)
+  if (!d) return res.status(404).json({ error: 'Document not found' })
+  if (d.file_path) { try { unlink(d.file_path, () => {}) } catch (_) {} }
+  db.prepare(`DELETE FROM investor_documents WHERE id = ?`).run(req.params.docId)
+  res.json({ ok: true })
 })
 
 // ── Property links ────────────────────────────────────────────────────────────

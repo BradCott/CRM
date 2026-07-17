@@ -1,11 +1,12 @@
 // Investor Portal — a separate front-end surface with its own auth (Google +
 // password), isolated from the CRM. Phase 1: login, invite-accept, and a home
 // that proves the isolated session. Investment views come in Phase 2.
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Building2, Loader2, LogOut, AlertCircle, Lock } from 'lucide-react'
+import { Building2, Loader2, LogOut, AlertCircle, Lock, FileText, Download, Upload, Trash2 } from 'lucide-react'
 import {
   portalMe, portalPortfolio, portalPasswordLogin, portalInviteInfo, portalAccept, portalLogout, portalGoogleStartUrl,
+  portalDocuments, portalDocUrl, uploadPortalDoc, deletePortalDoc,
 } from '../../api/client'
 
 const fmt$ = (n) => (n == null) ? '—' : '$' + Math.round(Number(n)).toLocaleString()
@@ -174,6 +175,76 @@ function Stat({ label, value, tint = 'text-slate-900' }) {
   )
 }
 
+function PortalDocuments() {
+  const [docs, setDocs]       = useState(null)
+  const [uploading, setUp]    = useState(false)
+  const ref = useRef(null)
+
+  async function load() { try { const r = await portalDocuments(); setDocs(r.documents) } catch (_) { setDocs([]) } }
+  useEffect(() => { load() }, [])
+
+  async function onUpload(file) {
+    if (!file) return
+    setUp(true)
+    try { await uploadPortalDoc(file); await load() } catch (e) { alert(e.message) } finally { setUp(false) }
+  }
+  async function onDelete(id) {
+    if (!window.confirm('Remove this document you uploaded?')) return
+    try { await deletePortalDoc(id); await load() } catch (e) { alert(e.message) }
+  }
+
+  if (docs === null) return null
+  const shared = docs.filter(d => d.direction === 'to_investor')
+  const mine   = docs.filter(d => d.direction === 'from_investor')
+
+  return (
+    <div>
+      <h2 className="text-sm font-semibold text-slate-700 mb-2">Documents</h2>
+      <div className="rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100">
+        <div className="px-4 py-3">
+          <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-2">Shared with you</p>
+          {shared.length ? (
+            <ul className="space-y-1.5">
+              {shared.map(d => (
+                <li key={d.id} className="flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span className="text-sm text-slate-700 truncate flex-1">{d.file_name}</span>
+                  {d.category && d.category !== 'Other' && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 shrink-0">{d.category}</span>}
+                  <a href={portalDocUrl(d.id)} className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 shrink-0"><Download className="w-3.5 h-3.5" /> Download</a>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="text-sm text-slate-400">Knox hasn't shared any documents yet.</p>}
+        </div>
+
+        <div className="px-4 py-3">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Your uploads</p>
+            <button onClick={() => ref.current?.click()} disabled={uploading}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-slate-900 text-white hover:bg-slate-800 disabled:opacity-50">
+              {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />} Upload
+            </button>
+            <input ref={ref} type="file" className="hidden" onChange={e => { onUpload(e.target.files[0]); e.target.value = '' }} />
+          </div>
+          {mine.length ? (
+            <ul className="space-y-1.5">
+              {mine.map(d => (
+                <li key={d.id} className="flex items-center gap-2">
+                  <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                  <span className="text-sm text-slate-700 truncate flex-1">{d.file_name}</span>
+                  <a href={portalDocUrl(d.id)} className="text-xs text-blue-600 hover:underline shrink-0">Download</a>
+                  <button onClick={() => onDelete(d.id)} className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+                </li>
+              ))}
+            </ul>
+          ) : <p className="text-sm text-slate-400">Nothing uploaded yet.</p>}
+          <p className="text-[11px] text-amber-600 mt-2 flex items-start gap-1"><AlertCircle className="w-3 h-3 mt-0.5 shrink-0" /> This portal is new — please hold off on highly sensitive documents until Knox confirms the security review is complete.</p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function PortalHome({ me }) {
   const [out, setOut]         = useState(false)
   const [pf, setPf]           = useState(null)
@@ -275,6 +346,8 @@ function PortalHome({ me }) {
                 </div>
               </div>
             )}
+
+            <PortalDocuments />
 
             <p className="text-[11px] text-slate-400 text-center pt-2">Figures are for your information and may not reflect the most recent activity. Contact Knox Capital with any questions.</p>
           </>

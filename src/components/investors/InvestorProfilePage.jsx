@@ -1,13 +1,15 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Pencil, Check, X, Plus, Trash2, Loader2,
   DollarSign, Building2, TrendingUp, Calendar, AlertCircle, Users, Mail, Phone, UserPlus,
+  FileText, Download, Upload,
 } from 'lucide-react'
 import {
   getInvestorProfile, updateInvestor, createDistribution, deleteDistribution,
   createInvestorLink, updateInvestorLink, deleteInvestorLink, getAllProperties,
   addInvestorContact, updateInvestorContact, deleteInvestorContact, invitePortal,
+  getInvestorDocuments, uploadInvestorDoc, investorDocUrl, deleteInvestorDoc,
 } from '../../api/client'
 import Button from '../ui/Button'
 import ConfirmDialog from '../ui/ConfirmDialog'
@@ -355,6 +357,89 @@ function ContactsCard({ investorId, contacts, onChanged }) {
   )
 }
 
+const DOC_CATEGORIES = ['K-1', 'Report', 'Statement', 'Agreement', 'Other']
+
+function PortalDocsCard({ investorId }) {
+  const [docs, setDocs]     = useState(null)
+  const [category, setCategory] = useState('K-1')
+  const [uploading, setUp]  = useState(false)
+  const fileRef = useRef(null)
+
+  async function load() { try { const r = await getInvestorDocuments(investorId); setDocs(r.documents) } catch (_) { setDocs([]) } }
+  useEffect(() => { load() }, [investorId]) // eslint-disable-line
+
+  async function onUpload(file) {
+    if (!file) return
+    setUp(true)
+    try { await uploadInvestorDoc(investorId, file, category); await load() } catch (e) { alert(e.message) } finally { setUp(false) }
+  }
+  async function onDelete(docId) {
+    if (!window.confirm('Delete this document? If it was shared with the investor, they will lose access.')) return
+    try { await deleteInvestorDoc(investorId, docId); await load() } catch (e) { alert(e.message) }
+  }
+
+  const shared = (docs || []).filter(d => d.direction === 'to_investor')
+  const fromInv = (docs || []).filter(d => d.direction === 'from_investor')
+
+  return (
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+      <div className="flex items-center justify-between gap-2 px-5 py-3 border-b border-slate-100 flex-wrap">
+        <h2 className="text-sm font-semibold text-slate-700">Portal Documents</h2>
+        <div className="flex items-center gap-2">
+          <select value={category} onChange={e => setCategory(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
+            {DOC_CATEGORIES.map(c => <option key={c}>{c}</option>)}
+          </select>
+          <button onClick={() => fileRef.current?.click()} disabled={uploading}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
+            {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />} Share with investor
+          </button>
+          <input ref={fileRef} type="file" className="hidden" onChange={e => { onUpload(e.target.files[0]); e.target.value = '' }} />
+        </div>
+      </div>
+      <div className="px-5 py-4">
+        {docs === null ? (
+          <div className="flex justify-center py-4"><Loader2 className="w-5 h-5 text-slate-300 animate-spin" /></div>
+        ) : (
+          <div className="space-y-4">
+            <div>
+              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Shared with investor ({shared.length})</p>
+              {shared.length ? (
+                <ul className="space-y-1.5">
+                  {shared.map(d => (
+                    <li key={d.id} className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                      <span className="text-sm text-slate-700 truncate flex-1">{d.file_name}</span>
+                      {d.category && d.category !== 'Other' && <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 shrink-0">{d.category}</span>}
+                      <a href={investorDocUrl(investorId, d.id)} className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 shrink-0"><Download className="w-3.5 h-3.5" /></a>
+                      <button onClick={() => onDelete(d.id)} className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p className="text-sm text-slate-400">Nothing shared yet. Upload a K-1, report, or statement above.</p>}
+            </div>
+            {fromInv.length > 0 && (
+              <div>
+                <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5">Uploaded by investor ({fromInv.length})</p>
+                <ul className="space-y-1.5">
+                  {fromInv.map(d => (
+                    <li key={d.id} className="flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-emerald-500 shrink-0" />
+                      <span className="text-sm text-slate-700 truncate flex-1">{d.file_name}</span>
+                      <a href={investorDocUrl(investorId, d.id)} className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 shrink-0"><Download className="w-3.5 h-3.5" /></a>
+                      <button onClick={() => onDelete(d.id)} className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            <p className="text-[11px] text-amber-600 flex items-start gap-1"><AlertCircle className="w-3 h-3 mt-0.5 shrink-0" /> Portal is newly launched — hold off on highly sensitive documents until the security review is complete.</p>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export default function InvestorProfilePage() {
   const { id }   = useParams()
   const navigate = useNavigate()
@@ -484,6 +569,9 @@ export default function InvestorProfilePage() {
             color={ps.net_preferred_return_owed > 0 ? 'amber' : 'slate'}
           />
         </div>
+
+        {/* Portal documents */}
+        <PortalDocsCard investorId={id} />
 
         {/* Contact Info */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">

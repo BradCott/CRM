@@ -2,13 +2,18 @@
 // Sign-In + email/password), its own session cookie, and every data query is
 // hard-scoped to the logged-in investor. It shares NO auth with the CRM.
 import { Router } from 'express'
+import multer from 'multer'
 import bcrypt from 'bcryptjs'
 import crypto from 'node:crypto'
+import { join } from 'node:path'
+import { mkdirSync, writeFileSync, createReadStream, existsSync, unlink } from 'node:fs'
 import { google } from 'googleapis'
-import db from '../db.js'
+import db, { DATA_DIR } from '../db.js'
 import { issuePortalJWT, requirePortalAuth, PORTAL_COOKIE } from '../middleware/auth.js'
 
 const router = Router()
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
+const DOCS_DIR = join(DATA_DIR, 'investor-docs')
 
 const CLIENT_ID     = process.env.GOOGLE_CLIENT_ID
 const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET
@@ -204,6 +209,48 @@ router.get('/portfolio', requirePortalAuth, (req, res) => {
   }
 
   res.json({ summary, holdings, distributions })
+})
+
+// ── Document vault (investor-scoped) ──────────────────────────────────────────
+
+router.get('/documents', requirePortalAuth, (req, res) => {
+  const rows = db.prepare(`
+    SELECT id, file_name, mime, size, category, direction, notes, created_at
+    FROM investor_documents WHERE investor_id = ? ORDER BY created_at DESC
+  `).all(req.portal.investorId)
+  res.json({ documents: rows })
+})
+
+router.get('/documents/:id/file', requirePortalAuth, (req, res) => {
+  const d = db.prepare(`SELECT file_name, file_path, mime FROM investor_documents WHERE id = ? AND investor_id = ?`).get(req.params.id, req.portal.investorId)
+  if (!d || !d.file_path || !existsSync(d.file_path)) return res.status(404).json({ error: 'Document not found' })
+  res.setHeader('Content-Type', d.mime || 'application/octet-stream')
+  res.setHeader('Content-Disposition', `attachment; filename="${(d.file_name || 'document').replace(/"/g, '')}"`)
+  createReadStream(d.file_path).pipe(res)
+})
+
+router.post('/documents', requirePortalAuth, upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  const invId = req.portal.investorId
+  const dir   = join(DOCS_DIR, String(invId))
+  try { mkdirSync(dir, { recursive: true }) } catch (_) {}
+  const safe  = (req.file.originalname || 'document').replace(/[^\w.\-]+/g, '_')
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const filePath = join(dir, `${stamp}-${safe}`)
+  try { writeFileSync(filePath, req.file.buffer) } catch (e) { return res.status(500).json({ error: `Could not save file: ${e.message}` }) }
+  db.prepare(`INSERT INTO investor_documents (investor_id, file_name, file_path, mime, size, category, direction) VALUES (?, ?, ?, ?, ?, ?, 'from_investor')`)
+    .run(invId, req.file.originalname || safe, filePath, req.file.mimetype || null, req.file.size || null, String(req.body?.category || 'Other').slice(0, 40))
+  res.json({ ok: true })
+})
+
+// Investors may remove only their OWN uploads, never Knox-shared documents.
+router.delete('/documents/:id', requirePortalAuth, (req, res) => {
+  const d = db.prepare(`SELECT file_path, direction FROM investor_documents WHERE id = ? AND investor_id = ?`).get(req.params.id, req.portal.investorId)
+  if (!d) return res.status(404).json({ error: 'Document not found' })
+  if (d.direction !== 'from_investor') return res.status(403).json({ error: 'You can only remove documents you uploaded.' })
+  if (d.file_path) { try { unlink(d.file_path, () => {}) } catch (_) {} }
+  db.prepare(`DELETE FROM investor_documents WHERE id = ?`).run(req.params.id)
+  res.json({ ok: true })
 })
 
 export default router
