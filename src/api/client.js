@@ -389,6 +389,7 @@ export async function uploadInsurancePdf(propId, file) {
 
 // Investor portal (separate auth surface)
 export const portalMe            = ()               => req('GET',  '/portal/me')
+export const portalPortfolio     = ()               => req('GET',  '/portal/portfolio')
 export const portalPasswordLogin = (email, password) => req('POST', '/portal/auth/password', { email, password })
 export const portalInviteInfo    = (token)          => req('GET',  `/portal/auth/invite/${token}`)
 export const portalAccept        = (token, password, name) => req('POST', '/portal/auth/accept', { token, password, name })

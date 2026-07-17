@@ -137,4 +137,73 @@ router.get('/me', requirePortalAuth, (req, res) => {
   })
 })
 
+// Simple-interest preferred-return accrual (mirrors investors.js calcPrefReturn).
+function calcPref(link) {
+  const rate = Number(link.preferred_return_rate) || 0
+  const contribution = Number(link.contribution) || 0
+  if (!rate || !link.created_at) return 0
+  const days = (Date.now() - new Date(link.created_at.replace(' ', 'T') + 'Z').getTime()) / 86_400_000
+  return contribution * (rate / 100) * (days / 365)
+}
+
+// The investor's whole portfolio in one call — summary + holdings + distributions.
+// EVERY query is scoped to req.portal.investorId; no other investor's data is
+// reachable from here.
+router.get('/portfolio', requirePortalAuth, (req, res) => {
+  const invId = req.portal.investorId
+  const inv   = db.prepare(`SELECT id, name FROM investors WHERE id = ?`).get(invId)
+
+  const links = db.prepare(`
+    SELECT ipl.id, ipl.property_id, ipl.contribution, ipl.ownership_percentage, ipl.preferred_return_rate, ipl.created_at,
+           p.address, p.city, p.state, tb.name AS tenant_brand
+    FROM investor_property_links ipl
+    JOIN properties p ON p.id = ipl.property_id
+    LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
+    WHERE ipl.investor_id = ?
+    ORDER BY ipl.created_at DESC
+  `).all(invId)
+
+  const distByProp = {}
+  for (const d of db.prepare(`SELECT property_id, COALESCE(SUM(amount),0) AS s FROM investor_distributions WHERE investor_id = ? GROUP BY property_id`).all(invId)) {
+    distByProp[d.property_id] = d.s
+  }
+
+  const holdings = links.map(l => {
+    const received = distByProp[l.property_id] || 0
+    const accrued  = calcPref(l)
+    return {
+      id: l.id,
+      property: { address: l.address, city: l.city, state: l.state, tenant_brand: l.tenant_brand },
+      contribution: l.contribution,
+      ownership_percentage: l.ownership_percentage,
+      preferred_return_rate: l.preferred_return_rate,
+      distributions_received: received,
+      accrued_preferred_return: accrued,
+      net_preferred_return_owed: Math.max(0, accrued - received),
+    }
+  })
+
+  const distributions = db.prepare(`
+    SELECT d.id, d.amount, d.distribution_date AS date, d.distribution_type AS type, d.notes,
+           p.address, p.city, p.state
+    FROM investor_distributions d
+    LEFT JOIN properties p ON p.id = d.property_id
+    WHERE d.investor_id = ?
+    ORDER BY d.distribution_date DESC, d.id DESC
+  `).all(invId).map(r => ({
+    id: r.id, amount: r.amount, date: r.date, type: r.type, notes: r.notes,
+    property: r.address ? { address: r.address, city: r.city, state: r.state } : null,
+  }))
+
+  const summary = {
+    investor: inv?.name || req.portal.name,
+    total_invested:      links.reduce((s, l) => s + (Number(l.contribution) || 0), 0),
+    num_properties:      links.length,
+    total_distributions: distributions.reduce((s, d) => s + (Number(d.amount) || 0), 0),
+    net_preferred_return_owed: holdings.reduce((s, h) => s + h.net_preferred_return_owed, 0),
+  }
+
+  res.json({ summary, holdings, distributions })
+})
+
 export default router

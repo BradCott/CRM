@@ -5,8 +5,12 @@ import { useState, useEffect } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Building2, Loader2, LogOut, AlertCircle, Lock } from 'lucide-react'
 import {
-  portalMe, portalPasswordLogin, portalInviteInfo, portalAccept, portalLogout, portalGoogleStartUrl,
+  portalMe, portalPortfolio, portalPasswordLogin, portalInviteInfo, portalAccept, portalLogout, portalGoogleStartUrl,
 } from '../../api/client'
+
+const fmt$ = (n) => (n == null) ? '—' : '$' + Math.round(Number(n)).toLocaleString()
+const fmtDate = (d) => d ? new Date(String(d).length === 10 ? d + 'T12:00:00' : d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
+const fmtPct = (n) => (n == null || n === '') ? '—' : `${Number(n).toFixed(2)}%`
 
 const ERRORS = {
   not_invited: "That Google account isn't on the invite list. Sign in with the exact email Knox invited, or contact Knox for access.",
@@ -161,34 +165,120 @@ function PortalAccept() {
 }
 
 // ── Home (authenticated) ──────────────────────────────────────────────────────
+function Stat({ label, value, tint = 'text-slate-900' }) {
+  return (
+    <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
+      <p className="text-xs text-slate-400">{label}</p>
+      <p className={`text-2xl font-bold tabular-nums mt-0.5 ${tint}`}>{value}</p>
+    </div>
+  )
+}
+
 function PortalHome({ me }) {
-  const [out, setOut] = useState(false)
+  const [out, setOut]         = useState(false)
+  const [pf, setPf]           = useState(null)
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => { portalPortfolio().then(setPf).catch(() => {}).finally(() => setLoading(false)) }, [])
   async function logout() { setOut(true); try { await portalLogout() } finally { window.location.href = '/portal' } }
+
+  const s = pf?.summary
+  const holdings = pf?.holdings || []
+  const distributions = pf?.distributions || []
+
   return (
     <div className="min-h-screen bg-slate-50">
       <header className="bg-white border-b border-slate-200">
-        <div className="max-w-4xl mx-auto px-5 py-3 flex items-center justify-between">
+        <div className="max-w-5xl mx-auto px-5 py-3 flex items-center justify-between">
           <Brandmark />
           <button onClick={logout} disabled={out} className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800">
             {out ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />} Sign out
           </button>
         </div>
       </header>
-      <main className="max-w-4xl mx-auto px-5 py-8">
-        <h1 className="text-xl font-bold text-slate-900">Welcome{me.name ? `, ${me.name.split(' ')[0]}` : ''}</h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Signed in as {me.email}{me.investor?.name ? ` · ${me.investor.name}` : ''}
-        </p>
 
-        <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-8 text-center">
-          <div className="w-12 h-12 rounded-2xl bg-slate-100 flex items-center justify-center mx-auto mb-3">
-            <Building2 className="w-6 h-6 text-slate-400" />
-          </div>
-          <p className="text-base font-semibold text-slate-800">Your investor dashboard is on the way</p>
-          <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
-            Your holdings, capital account, distributions, and documents will appear here shortly. Thanks for being an investor with Knox Capital.
-          </p>
+      <main className="max-w-5xl mx-auto px-5 py-8 space-y-6">
+        <div>
+          <h1 className="text-xl font-bold text-slate-900">Welcome{me.name ? `, ${me.name.split(' ')[0]}` : ''}</h1>
+          <p className="text-sm text-slate-500 mt-1">{me.investor?.name || me.email}</p>
         </div>
+
+        {loading ? (
+          <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 text-slate-400 animate-spin" /></div>
+        ) : !s ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">We couldn't load your portfolio right now. Please try again shortly.</div>
+        ) : (
+          <>
+            {/* Summary */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <Stat label="Total Invested"        value={fmt$(s.total_invested)} />
+              <Stat label="Properties"            value={s.num_properties} />
+              <Stat label="Distributions Received" value={fmt$(s.total_distributions)} tint="text-emerald-700" />
+              <Stat label="Pref Return Owed"      value={fmt$(s.net_preferred_return_owed)} tint="text-amber-700" />
+            </div>
+
+            {/* Holdings */}
+            <div>
+              <h2 className="text-sm font-semibold text-slate-700 mb-2">Your Investments</h2>
+              {holdings.length === 0 ? (
+                <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">No investments are on file yet. If this looks wrong, contact Knox Capital.</div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  {holdings.map(h => (
+                    <div key={h.id} className="rounded-2xl border border-slate-200 bg-white p-5">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="text-sm font-semibold text-slate-900 truncate">{h.property.address}</p>
+                          <p className="text-xs text-slate-400">{[h.property.city, h.property.state].filter(Boolean).join(', ')}{h.property.tenant_brand ? ` · ${h.property.tenant_brand}` : ''}</p>
+                        </div>
+                        {h.ownership_percentage != null && (
+                          <span className="text-xs font-semibold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full shrink-0">{fmtPct(h.ownership_percentage)}</span>
+                        )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-4 text-sm">
+                        <div><p className="text-[11px] text-slate-400">Invested</p><p className="font-medium text-slate-800 tabular-nums">{fmt$(h.contribution)}</p></div>
+                        <div><p className="text-[11px] text-slate-400">Pref Rate</p><p className="font-medium text-slate-800">{h.preferred_return_rate != null ? fmtPct(h.preferred_return_rate) : '—'}</p></div>
+                        <div><p className="text-[11px] text-slate-400">Distributions</p><p className="font-medium text-emerald-700 tabular-nums">{fmt$(h.distributions_received)}</p></div>
+                        <div><p className="text-[11px] text-slate-400">Pref Owed</p><p className="font-medium text-amber-700 tabular-nums">{fmt$(h.net_preferred_return_owed)}</p></div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Distributions */}
+            {distributions.length > 0 && (
+              <div>
+                <h2 className="text-sm font-semibold text-slate-700 mb-2">Distributions</h2>
+                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                  <table className="min-w-full text-sm">
+                    <thead className="bg-slate-50 border-b border-slate-100">
+                      <tr>
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Date</th>
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Property</th>
+                        <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Type</th>
+                        <th className="text-right px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {distributions.map(d => (
+                        <tr key={d.id} className="border-b border-slate-50 last:border-0">
+                          <td className="px-4 py-2 text-slate-600 whitespace-nowrap">{fmtDate(d.date)}</td>
+                          <td className="px-4 py-2 text-slate-700">{d.property ? `${d.property.address}${d.property.city ? `, ${d.property.city}` : ''}` : '—'}</td>
+                          <td className="px-4 py-2 text-slate-500">{d.type || '—'}</td>
+                          <td className="px-4 py-2 text-right font-medium text-emerald-700 tabular-nums">{fmt$(d.amount)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            <p className="text-[11px] text-slate-400 text-center pt-2">Figures are for your information and may not reflect the most recent activity. Contact Knox Capital with any questions.</p>
+          </>
+        )}
       </main>
     </div>
   )
