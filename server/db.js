@@ -543,6 +543,14 @@ const migrations = [
   // in the background, so a long call on a big PDF never times out the request.
   `ALTER TABLE property_leases ADD COLUMN status TEXT DEFAULT 'done'`,
   `ALTER TABLE property_leases ADD COLUMN error  TEXT`,
+  // Property management dashboard fields.
+  `ALTER TABLE properties ADD COLUMN store_phone          TEXT`,
+  `ALTER TABLE properties ADD COLUMN estimated_sales      REAL`,
+  `ALTER TABLE properties ADD COLUMN estimated_sales_date TEXT`,
+  `ALTER TABLE properties ADD COLUMN photo_path           TEXT`,
+  // Tenant reimbursement tracking on taxes (insurance already has it).
+  `ALTER TABLE property_taxes ADD COLUMN reimbursed_status TEXT NOT NULL DEFAULT 'unreimbursed'`,
+  `ALTER TABLE property_taxes ADD COLUMN reimbursed_date   TEXT`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

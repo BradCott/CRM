@@ -387,6 +387,16 @@ export async function uploadInsurancePdf(propId, file) {
   return req('POST', `/management/${propId}/insurance/upload`, fd)
 }
 
+// Property dashboard
+export const getPropertyDash     = (propId)      => req('GET',   `/management/${propId}/dash`)
+export const updatePropertyDash  = (propId, data) => req('PATCH', `/management/${propId}/dash`, data)
+export const propertyPhotoUrl    = (propId)      => `${BASE}/management/${propId}/photo`
+export async function uploadPropertyPhoto(propId, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return req('POST', `/management/${propId}/photo`, fd)
+}
+
 // Lease abstraction
 export const getPropertyLease    = (propId) => req('GET',    `/management/${propId}/lease`)
 export const deletePropertyLease = (propId) => req('DELETE', `/management/${propId}/lease`)

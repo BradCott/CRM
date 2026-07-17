@@ -8,6 +8,7 @@ import { PDFDocument } from 'pdf-lib'
 const router  = Router()
 const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
 const LEASE_DIR = join(DATA_DIR, 'leases')
+const PHOTO_DIR = join(DATA_DIR, 'property-photos')
 
 async function callClaude(buffer, mediaType, prompt) {
   const apiKey = process.env.ANTHROPIC_API_KEY
@@ -792,6 +793,136 @@ router.delete('/:propertyId/lease', (req, res) => {
   if (row?.file_path) { try { unlink(row.file_path, () => {}) } catch (_) {} }
   db.prepare(`DELETE FROM property_leases WHERE property_id = ?`).run(req.params.propertyId)
   res.json({ ok: true })
+})
+
+// ── Property dashboard ────────────────────────────────────────────────────────
+
+function daysUntilDate(d) {
+  if (!d) return null
+  const t = new Date(String(d).length === 10 ? d + 'T12:00:00' : d)
+  if (isNaN(t)) return null
+  return Math.round((t - new Date()) / 86400000)
+}
+
+// One call that assembles everything the property command-center needs.
+router.get('/:propertyId/dash', (req, res) => {
+  const p = db.prepare(`
+    SELECT p.id, p.address, p.city, p.state, p.zip, p.store_manager, p.store_phone,
+           p.estimated_sales, p.estimated_sales_date, p.photo_path, tb.name AS tenant_brand_name
+    FROM properties p LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
+    WHERE p.id = ?
+  `).get(req.params.propertyId)
+  if (!p) return res.status(404).json({ error: 'Property not found' })
+
+  const tasks = db.prepare(`
+    SELECT id, title, task_type, due_date, recurs
+    FROM property_tasks WHERE property_id = ? AND completed_at IS NULL
+    ORDER BY (due_date IS NULL), due_date ASC
+  `).all(p.id).map(t => ({ ...t, days_until: daysUntilDate(t.due_date) }))
+
+  const insurance = db.prepare(`
+    SELECT id, carrier, premium, expiry_date, paid_status, paid_date, reimbursed_status, reimbursed_date
+    FROM property_insurance WHERE property_id = ?
+    ORDER BY (expiry_date IS NULL), expiry_date DESC LIMIT 1
+  `).get(p.id)
+  if (insurance) insurance.days_until = daysUntilDate(insurance.expiry_date)
+
+  const taxes = db.prepare(`
+    SELECT id, tax_year, due_date, amount, paid_date, paid_amount, reimbursed_status, reimbursed_date
+    FROM property_taxes WHERE property_id = ?
+    ORDER BY (due_date IS NULL), due_date DESC
+  `).all(p.id).map(t => ({ ...t, days_until: daysUntilDate(t.due_date), paid: !!t.paid_date }))
+
+  const contacts = db.prepare(`
+    SELECT id, name, role, company, phone, email FROM property_contacts
+    WHERE property_id = ? ORDER BY role, name
+  `).all(p.id)
+  const maintenanceVendors = db.prepare(`
+    SELECT vendor AS name, MAX(date) AS last_date, COUNT(*) AS jobs
+    FROM property_maintenance WHERE property_id = ? AND vendor IS NOT NULL AND vendor <> ''
+    GROUP BY vendor ORDER BY last_date DESC
+  `).all(p.id)
+
+  // Landlord responsibilities from the lease abstract, if abstracted.
+  let landlord = []
+  const lease = db.prepare(`SELECT abstract FROM property_leases WHERE property_id = ? AND status = 'done'`).get(p.id)
+  if (lease?.abstract) {
+    try { landlord = (JSON.parse(lease.abstract).responsibilities || []).filter(r => r.party === 'Landlord').map(r => ({ category: r.category, detail: r.detail })) }
+    catch (_) {}
+  }
+
+  // Awaiting-reimbursement: things we've paid that the tenant still owes us back.
+  const awaiting = []
+  if (insurance && insurance.paid_status === 'paid' && insurance.reimbursed_status !== 'reimbursed') {
+    awaiting.push({ type: 'Insurance', label: `${insurance.carrier || 'Insurance'} premium`, amount: insurance.premium })
+  }
+  for (const t of taxes) {
+    if (t.paid && t.reimbursed_status !== 'reimbursed') {
+      awaiting.push({ type: 'Tax', label: `${t.tax_year || ''} property tax`.trim(), amount: t.paid_amount ?? t.amount })
+    }
+  }
+
+  res.json({
+    property: {
+      id: p.id, address: p.address, city: p.city, state: p.state, zip: p.zip,
+      tenant_brand_name: p.tenant_brand_name,
+      store_manager: p.store_manager, store_phone: p.store_phone,
+      estimated_sales: p.estimated_sales, estimated_sales_date: p.estimated_sales_date,
+      has_photo: !!(p.photo_path && existsSync(p.photo_path)),
+    },
+    tasks, insurance, taxes, contacts,
+    maintenance_vendors: maintenanceVendors,
+    landlord_responsibilities: landlord,
+    awaiting_reimbursement: awaiting,
+  })
+})
+
+// Update the dashboard-owned fields (store manager, phone, estimated sales).
+router.patch('/:propertyId/dash', (req, res) => {
+  const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(req.params.propertyId)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+  const { store_manager, store_phone, estimated_sales, estimated_sales_date } = req.body || {}
+  db.prepare(`
+    UPDATE properties SET
+      store_manager        = ?,
+      store_phone          = ?,
+      estimated_sales      = ?,
+      estimated_sales_date = ?
+    WHERE id = ?
+  `).run(
+    store_manager?.trim() || null,
+    store_phone?.trim() || null,
+    estimated_sales === '' || estimated_sales == null ? null : Number(estimated_sales),
+    estimated_sales_date || null,
+    prop.id,
+  )
+  res.json({ ok: true })
+})
+
+// Upload / replace the property photo.
+router.post('/:propertyId/photo', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(req.params.propertyId)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+  try {
+    const dir = join(PHOTO_DIR, String(prop.id))
+    mkdirSync(dir, { recursive: true })
+    const ext  = (req.file.originalname.split('.').pop() || 'jpg').replace(/[^\w]/g, '').toLowerCase()
+    const path = join(dir, `photo.${ext || 'jpg'}`)
+    writeFileSync(path, req.file.buffer)
+    db.prepare('UPDATE properties SET photo_path = ? WHERE id = ?').run(path, prop.id)
+    res.json({ ok: true })
+  } catch (e) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
+// Serve the property photo.
+router.get('/:propertyId/photo', (req, res) => {
+  const row = db.prepare('SELECT photo_path FROM properties WHERE id = ?').get(req.params.propertyId)
+  if (!row?.photo_path || !existsSync(row.photo_path)) return res.status(404).end()
+  res.setHeader('Cache-Control', 'no-cache')
+  createReadStream(row.photo_path).pipe(res)
 })
 
 export default router
