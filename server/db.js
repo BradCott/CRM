@@ -539,6 +539,10 @@ const migrations = [
     created_at  TEXT DEFAULT (datetime('now')),
     updated_at  TEXT
   )`,
+  // Async abstraction: upload returns immediately as 'processing' and the AI runs
+  // in the background, so a long call on a big PDF never times out the request.
+  `ALTER TABLE property_leases ADD COLUMN status TEXT DEFAULT 'done'`,
+  `ALTER TABLE property_leases ADD COLUMN error  TEXT`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

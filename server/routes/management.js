@@ -87,7 +87,7 @@ For "responsibilities", cover at least these categories where the lease addresse
     headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify({
       model:      LEASE_MODEL,
-      max_tokens: 4096,
+      max_tokens: 8000,
       thinking:   { type: 'disabled' },
       messages: [{
         role: 'user',
@@ -711,52 +711,70 @@ router.delete('/contacts/:id', (req, res) => {
 
 // ── Lease abstraction ─────────────────────────────────────────────────────────
 
-// GET the stored lease abstract for a property (null if none yet).
-router.get('/:propertyId/lease', (req, res) => {
-  const row = db.prepare(`SELECT property_id, file_name, abstract, model, created_at, updated_at, file_path FROM property_leases WHERE property_id = ?`).get(req.params.propertyId)
-  if (!row) return res.json({ lease: null })
+function leaseRow(propertyId) {
+  const row = db.prepare(`SELECT property_id, file_name, abstract, model, status, error, created_at, updated_at, file_path FROM property_leases WHERE property_id = ?`).get(propertyId)
+  if (!row) return null
   let abstract = null
   try { abstract = row.abstract ? JSON.parse(row.abstract) : null } catch (_) {}
-  res.json({ lease: { property_id: row.property_id, file_name: row.file_name, abstract, model: row.model, created_at: row.created_at, updated_at: row.updated_at, has_file: !!(row.file_path && existsSync(row.file_path)) } })
+  return {
+    property_id: row.property_id, file_name: row.file_name, abstract,
+    model: row.model, status: row.status || 'done', error: row.error,
+    created_at: row.created_at, updated_at: row.updated_at,
+    has_file: !!(row.file_path && existsSync(row.file_path)),
+  }
+}
+
+// GET the stored lease abstract for a property (null if none yet). While the AI
+// is running, status is 'processing'; the client polls this until 'done'/'error'.
+router.get('/:propertyId/lease', (req, res) => {
+  res.json({ lease: leaseRow(req.params.propertyId) })
 })
 
-// Upload a lease PDF → AI-abstract it → store the abstract + the source file.
-router.post('/:propertyId/lease/upload', upload.single('file'), async (req, res) => {
+// Upload a lease PDF. Saves the file + marks it 'processing' and returns
+// immediately; the AI abstraction runs in the background so a long call on a big
+// PDF never times out the request (which showed up as a Cloudflare 502).
+router.post('/:propertyId/lease/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
   const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(req.params.propertyId)
   if (!prop) return res.status(404).json({ error: 'Property not found' })
 
   const mediaType = req.file.mimetype || 'application/pdf'
-  let abstract
-  try {
-    abstract = await abstractLease(req.file.buffer, mediaType)
-  } catch (e) {
-    console.error('[lease] abstract failed:', e.message)
-    return res.status(502).json({ error: `Couldn't abstract the lease: ${e.message}` })
-  }
+  const buffer    = req.file.buffer
 
-  // Persist the source file on the data volume.
+  // Persist the source file up front.
   let filePath = null
   try {
     const dir = join(LEASE_DIR, String(prop.id))
     mkdirSync(dir, { recursive: true })
     const safe = (req.file.originalname || 'lease.pdf').replace(/[^\w.\-]+/g, '_')
     filePath = join(dir, safe)
-    writeFileSync(filePath, req.file.buffer)
+    writeFileSync(filePath, buffer)
   } catch (e) {
-    console.warn('[lease] could not save file (abstract still saved):', e.message)
+    console.warn('[lease] could not save file:', e.message)
   }
 
   db.prepare(`
-    INSERT INTO property_leases (property_id, file_name, file_path, abstract, model, updated_at)
-    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO property_leases (property_id, file_name, file_path, abstract, model, status, error, updated_at)
+    VALUES (?, ?, ?, NULL, ?, 'processing', NULL, datetime('now'))
     ON CONFLICT(property_id) DO UPDATE SET
       file_name = excluded.file_name, file_path = excluded.file_path,
-      abstract = excluded.abstract, model = excluded.model, updated_at = datetime('now')
-  `).run(prop.id, req.file.originalname || 'lease.pdf', filePath, JSON.stringify(abstract), LEASE_MODEL)
+      abstract = NULL, model = excluded.model, status = 'processing', error = NULL, updated_at = datetime('now')
+  `).run(prop.id, req.file.originalname || 'lease.pdf', filePath, LEASE_MODEL)
 
-  const row = db.prepare(`SELECT property_id, file_name, model, created_at, updated_at, file_path FROM property_leases WHERE property_id = ?`).get(prop.id)
-  res.json({ lease: { property_id: row.property_id, file_name: row.file_name, abstract, model: row.model, created_at: row.created_at, updated_at: row.updated_at, has_file: !!(row.file_path && existsSync(row.file_path)) } })
+  // Respond now; abstract in the background.
+  res.json({ lease: leaseRow(prop.id) })
+
+  abstractLease(buffer, mediaType)
+    .then(abstract => {
+      db.prepare(`UPDATE property_leases SET abstract = ?, status = 'done', error = NULL, updated_at = datetime('now') WHERE property_id = ?`)
+        .run(JSON.stringify(abstract), prop.id)
+      console.log(`[lease] abstracted property ${prop.id}`)
+    })
+    .catch(e => {
+      console.error('[lease] abstract failed:', e.message)
+      db.prepare(`UPDATE property_leases SET status = 'error', error = ?, updated_at = datetime('now') WHERE property_id = ?`)
+        .run(String(e.message).slice(0, 500), prop.id)
+    })
 })
 
 // Stream the stored lease PDF.

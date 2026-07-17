@@ -75,6 +75,15 @@ export default function LeaseSection({ propertyId }) {
   }, [propertyId])
   useEffect(() => { load() }, [load])
 
+  // While the AI abstracts in the background, poll until it's done or errors.
+  useEffect(() => {
+    if (lease?.status !== 'processing') return
+    const t = setInterval(async () => {
+      try { const r = await getPropertyLease(propertyId); setLease(r.lease) } catch (_) {}
+    }, 4000)
+    return () => clearInterval(t)
+  }, [lease?.status, propertyId])
+
   async function handleFile(file) {
     if (!file) return
     setUploading(true); setError(null)
@@ -89,6 +98,24 @@ export default function LeaseSection({ propertyId }) {
   }
 
   if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-slate-400 animate-spin" /></div>
+
+  // Abstracting in the background (upload in flight, or server still working).
+  if (uploading || lease?.status === 'processing') {
+    return (
+      <div className="max-w-xl mx-auto py-16 text-center">
+        <Loader2 className="w-10 h-10 text-blue-500 mx-auto mb-3 animate-spin" />
+        <p className="text-sm font-semibold text-slate-700">Abstracting the lease with AI…</p>
+        <p className="text-xs text-slate-400 mt-1">
+          {lease?.file_name ? `${lease.file_name} · ` : ''}This can take up to a minute for a long lease. You can leave this tab — it'll be ready when you come back.
+        </p>
+      </div>
+    )
+  }
+
+  // Abstraction failed — show why and let them retry.
+  if (lease?.status === 'error') {
+    return <UploadZone onFile={handleFile} uploading={uploading} error={lease.error || 'The lease could not be abstracted. Try re-uploading.'} dragging={dragging} setDragging={setDragging} inputRef={inputRef} hasExisting={false} />
+  }
 
   const a = lease?.abstract
   if (!lease || !a) {
