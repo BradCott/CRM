@@ -1,7 +1,7 @@
 import { Router }   from 'express'
 import multer        from 'multer'
 import { join }      from 'node:path'
-import { mkdirSync, writeFileSync, createReadStream, existsSync, unlink } from 'node:fs'
+import { mkdirSync, writeFileSync, readFileSync, createReadStream, existsSync, unlink } from 'node:fs'
 import db, { DATA_DIR } from '../db.js'
 import { PDFDocument } from 'pdf-lib'
 
@@ -53,15 +53,18 @@ const LEASE_CATEGORIES = [
   'Snow / Trash Removal', 'General Repairs', 'ADA / Code Compliance',
 ]
 
-// Read a lease PDF and return a structured abstract (summary + a tenant/landlord
-// responsibility matrix). Uses a stronger model + larger budget than the quick
-// insurance extractor. Returns a parsed object.
-async function abstractLease(buffer, mediaType) {
+// Read a lease and any amendments/exhibits and return a structured abstract
+// (summary + a tenant/landlord responsibility matrix) that reflects ALL of them
+// together. `docs` is [{ buffer, mediaType, name, doc_type }]. Uses a stronger
+// model + larger budget than the quick insurance extractor. Returns a parsed
+// object.
+async function abstractLease(docs) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set')
-  const isDoc = mediaType === 'application/pdf'
+  if (!docs.length) throw new Error('No lease documents to abstract')
 
-  const prompt = `You are a commercial real estate lease analyst. Read the attached lease and produce a faithful abstract. Return ONLY valid JSON (no markdown, no commentary) with exactly this shape:
+  const multi = docs.length > 1
+  const prompt = `You are a commercial real estate lease analyst. ${multi ? `You have been given ${docs.length} documents for ONE property — the base lease plus its amendments/exhibits (each is labeled above with its name and type). Read ALL of them and produce ONE combined abstract. Where a later amendment modifies the base lease, the amendment CONTROLS; reflect the current, in-effect terms. In "notes", call out anything an amendment changed.` : 'Read the attached lease and produce a faithful abstract.'} Return ONLY valid JSON (no markdown, no commentary) with exactly this shape:
 {
   "summary": {
     "tenant": string, "landlord": string, "guarantor": string|null,
@@ -93,9 +96,12 @@ For "responsibilities", cover at least these categories where the lease addresse
       messages: [{
         role: 'user',
         content: [
-          isDoc
-            ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } }
-            : { type: 'image',    source: { type: 'base64', media_type: mediaType,          data: buffer.toString('base64') } },
+          ...docs.flatMap(d => [
+            { type: 'text', text: `--- Document: ${d.name || 'Lease'} (${d.doc_type || 'Lease'}) ---` },
+            d.mediaType === 'application/pdf'
+              ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: d.buffer.toString('base64') } }
+              : { type: 'image',    source: { type: 'base64', media_type: d.mediaType,        data: d.buffer.toString('base64') } },
+          ]),
           { type: 'text', text: prompt },
         ],
       }],
@@ -712,85 +718,128 @@ router.delete('/contacts/:id', (req, res) => {
 
 // ── Lease abstraction ─────────────────────────────────────────────────────────
 
+function leaseDocuments(propertyId) {
+  return db.prepare(`SELECT id, file_name, doc_type, uploaded_at, file_path FROM lease_documents WHERE property_id = ? ORDER BY id ASC`).all(propertyId)
+    .map(d => ({ id: d.id, file_name: d.file_name, doc_type: d.doc_type, uploaded_at: d.uploaded_at, has_file: !!(d.file_path && existsSync(d.file_path)) }))
+}
+
 function leaseRow(propertyId) {
-  const row = db.prepare(`SELECT property_id, file_name, abstract, model, status, error, created_at, updated_at, file_path FROM property_leases WHERE property_id = ?`).get(propertyId)
-  if (!row) return null
+  const row = db.prepare(`SELECT abstract, model, status, error, created_at, updated_at FROM property_leases WHERE property_id = ?`).get(propertyId)
+  const documents = leaseDocuments(propertyId)
+  if (!row && documents.length === 0) return null
   let abstract = null
-  try { abstract = row.abstract ? JSON.parse(row.abstract) : null } catch (_) {}
+  try { abstract = row?.abstract ? JSON.parse(row.abstract) : null } catch (_) {}
   return {
-    property_id: row.property_id, file_name: row.file_name, abstract,
-    model: row.model, status: row.status || 'done', error: row.error,
-    created_at: row.created_at, updated_at: row.updated_at,
-    has_file: !!(row.file_path && existsSync(row.file_path)),
+    property_id: Number(propertyId), abstract,
+    model: row?.model, status: row?.status || 'done', error: row?.error,
+    created_at: row?.created_at, updated_at: row?.updated_at, documents,
   }
 }
 
-// GET the stored lease abstract for a property (null if none yet). While the AI
-// is running, status is 'processing'; the client polls this until 'done'/'error'.
+// (Re)generate the combined abstract across ALL of a property's lease documents.
+// Marks 'processing' and runs the AI in the background (client polls for result).
+function startAbstraction(propertyId) {
+  db.prepare(`
+    INSERT INTO property_leases (property_id, model, status, error, updated_at)
+    VALUES (?, ?, 'processing', NULL, datetime('now'))
+    ON CONFLICT(property_id) DO UPDATE SET status = 'processing', error = NULL, model = excluded.model, updated_at = datetime('now')
+  `).run(propertyId, LEASE_MODEL)
+
+  const docs = db.prepare(`SELECT file_name, file_path, doc_type FROM lease_documents WHERE property_id = ? ORDER BY id ASC`).all(propertyId)
+  const loaded = []
+  for (const d of docs) {
+    try { loaded.push({ buffer: readFileSync(d.file_path), mediaType: 'application/pdf', name: d.file_name, doc_type: d.doc_type }) }
+    catch (e) { console.warn('[lease] could not read doc:', e.message) }
+  }
+  if (!loaded.length) {
+    db.prepare(`UPDATE property_leases SET status = 'error', error = 'No readable documents', updated_at = datetime('now') WHERE property_id = ?`).run(propertyId)
+    return
+  }
+
+  abstractLease(loaded)
+    .then(abstract => {
+      db.prepare(`UPDATE property_leases SET abstract = ?, status = 'done', error = NULL, updated_at = datetime('now') WHERE property_id = ?`)
+        .run(JSON.stringify(abstract), propertyId)
+      console.log(`[lease] abstracted property ${propertyId} from ${loaded.length} doc(s)`)
+    })
+    .catch(e => {
+      console.error('[lease] abstract failed:', e.message)
+      db.prepare(`UPDATE property_leases SET status = 'error', error = ?, updated_at = datetime('now') WHERE property_id = ?`)
+        .run(String(e.message).slice(0, 500), propertyId)
+    })
+}
+
+// GET the stored abstract + document list (null if none). While the AI runs,
+// status is 'processing'; the client polls this until 'done'/'error'.
 router.get('/:propertyId/lease', (req, res) => {
   res.json({ lease: leaseRow(req.params.propertyId) })
 })
 
-// Upload a lease PDF. Saves the file + marks it 'processing' and returns
-// immediately; the AI abstraction runs in the background so a long call on a big
-// PDF never times out the request (which showed up as a Cloudflare 502).
+// Upload a lease document (base lease OR an amendment/exhibit). Appends it and
+// re-abstracts across ALL of the property's documents. Responds immediately; the
+// AI runs in the background so a long call never times out the request.
 router.post('/:propertyId/lease/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
   const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(req.params.propertyId)
   if (!prop) return res.status(404).json({ error: 'Property not found' })
 
-  const mediaType = req.file.mimetype || 'application/pdf'
-  const buffer    = req.file.buffer
+  const dir = join(LEASE_DIR, String(prop.id))
+  try { mkdirSync(dir, { recursive: true }) } catch (_) {}
 
-  // Persist the source file up front.
-  let filePath = null
-  try {
-    const dir = join(LEASE_DIR, String(prop.id))
-    mkdirSync(dir, { recursive: true })
-    const safe = (req.file.originalname || 'lease.pdf').replace(/[^\w.\-]+/g, '_')
-    filePath = join(dir, safe)
-    writeFileSync(filePath, buffer)
-  } catch (e) {
-    console.warn('[lease] could not save file:', e.message)
+  // Migrate a pre-existing single-file lease into lease_documents so it stays
+  // part of the combined abstract.
+  const existing = db.prepare(`SELECT COUNT(*) AS n FROM lease_documents WHERE property_id = ?`).get(prop.id).n
+  if (existing === 0) {
+    const legacy = db.prepare(`SELECT file_name, file_path FROM property_leases WHERE property_id = ?`).get(prop.id)
+    if (legacy?.file_path && existsSync(legacy.file_path)) {
+      db.prepare(`INSERT INTO lease_documents (property_id, file_name, file_path, doc_type) VALUES (?, ?, ?, 'Lease')`)
+        .run(prop.id, legacy.file_name || 'Lease.pdf', legacy.file_path)
+    }
   }
 
-  db.prepare(`
-    INSERT INTO property_leases (property_id, file_name, file_path, abstract, model, status, error, updated_at)
-    VALUES (?, ?, ?, NULL, ?, 'processing', NULL, datetime('now'))
-    ON CONFLICT(property_id) DO UPDATE SET
-      file_name = excluded.file_name, file_path = excluded.file_path,
-      abstract = NULL, model = excluded.model, status = 'processing', error = NULL, updated_at = datetime('now')
-  `).run(prop.id, req.file.originalname || 'lease.pdf', filePath, LEASE_MODEL)
+  // Save with a timestamped name so amendments don't overwrite the base lease.
+  const base  = (req.file.originalname || 'lease.pdf').replace(/[^\w.\-]+/g, '_')
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const filePath = join(dir, `${stamp}-${base}`)
+  try { writeFileSync(filePath, req.file.buffer) } catch (e) { return res.status(500).json({ error: `Could not save file: ${e.message}` }) }
 
-  // Respond now; abstract in the background.
+  const hadDocs = db.prepare(`SELECT COUNT(*) AS n FROM lease_documents WHERE property_id = ?`).get(prop.id).n
+  const docType = String(req.body?.doc_type || (hadDocs > 0 ? 'Amendment' : 'Lease')).slice(0, 40)
+  db.prepare(`INSERT INTO lease_documents (property_id, file_name, file_path, doc_type) VALUES (?, ?, ?, ?)`)
+    .run(prop.id, req.file.originalname || base, filePath, docType)
+
+  startAbstraction(prop.id)
   res.json({ lease: leaseRow(prop.id) })
-
-  abstractLease(buffer, mediaType)
-    .then(abstract => {
-      db.prepare(`UPDATE property_leases SET abstract = ?, status = 'done', error = NULL, updated_at = datetime('now') WHERE property_id = ?`)
-        .run(JSON.stringify(abstract), prop.id)
-      console.log(`[lease] abstracted property ${prop.id}`)
-    })
-    .catch(e => {
-      console.error('[lease] abstract failed:', e.message)
-      db.prepare(`UPDATE property_leases SET status = 'error', error = ?, updated_at = datetime('now') WHERE property_id = ?`)
-        .run(String(e.message).slice(0, 500), prop.id)
-    })
 })
 
-// Stream the stored lease PDF.
-router.get('/:propertyId/lease/file', (req, res) => {
-  const row = db.prepare(`SELECT file_name, file_path FROM property_leases WHERE property_id = ?`).get(req.params.propertyId)
-  if (!row || !row.file_path || !existsSync(row.file_path)) return res.status(404).json({ error: 'No lease file on record' })
+// Stream a specific lease document.
+router.get('/:propertyId/lease/documents/:docId/file', (req, res) => {
+  const d = db.prepare(`SELECT file_name, file_path FROM lease_documents WHERE id = ? AND property_id = ?`).get(req.params.docId, req.params.propertyId)
+  if (!d || !d.file_path || !existsSync(d.file_path)) return res.status(404).json({ error: 'Document not found' })
   res.setHeader('Content-Type', 'application/pdf')
-  res.setHeader('Content-Disposition', `inline; filename="${(row.file_name || 'lease.pdf').replace(/"/g, '')}"`)
-  createReadStream(row.file_path).pipe(res)
+  res.setHeader('Content-Disposition', `inline; filename="${(d.file_name || 'lease.pdf').replace(/"/g, '')}"`)
+  createReadStream(d.file_path).pipe(res)
 })
 
-// Remove the lease abstract + file.
+// Delete one lease document, then re-abstract across what remains.
+router.delete('/:propertyId/lease/documents/:docId', (req, res) => {
+  const d = db.prepare(`SELECT file_path FROM lease_documents WHERE id = ? AND property_id = ?`).get(req.params.docId, req.params.propertyId)
+  if (!d) return res.status(404).json({ error: 'Document not found' })
+  if (d.file_path) { try { unlink(d.file_path, () => {}) } catch (_) {} }
+  db.prepare(`DELETE FROM lease_documents WHERE id = ?`).run(req.params.docId)
+
+  const remaining = db.prepare(`SELECT COUNT(*) AS n FROM lease_documents WHERE property_id = ?`).get(req.params.propertyId).n
+  if (remaining > 0) startAbstraction(req.params.propertyId)
+  else db.prepare(`DELETE FROM property_leases WHERE property_id = ?`).run(req.params.propertyId)
+  res.json({ lease: leaseRow(req.params.propertyId) })
+})
+
+// Remove the entire lease (all documents + abstract).
 router.delete('/:propertyId/lease', (req, res) => {
-  const row = db.prepare(`SELECT file_path FROM property_leases WHERE property_id = ?`).get(req.params.propertyId)
-  if (row?.file_path) { try { unlink(row.file_path, () => {}) } catch (_) {} }
+  for (const d of db.prepare(`SELECT file_path FROM lease_documents WHERE property_id = ?`).all(req.params.propertyId)) {
+    if (d.file_path) { try { unlink(d.file_path, () => {}) } catch (_) {} }
+  }
+  db.prepare(`DELETE FROM lease_documents WHERE property_id = ?`).run(req.params.propertyId)
   db.prepare(`DELETE FROM property_leases WHERE property_id = ?`).run(req.params.propertyId)
   res.json({ ok: true })
 })

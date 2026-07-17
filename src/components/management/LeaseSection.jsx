@@ -3,7 +3,13 @@
 // for AI-driven management, so it's built to grow.
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { FileText, Upload, Loader2, ExternalLink, Trash2, AlertCircle, Sparkles, RefreshCw } from 'lucide-react'
-import { getPropertyLease, uploadPropertyLease, deletePropertyLease, leaseFileUrl } from '../../api/client'
+import { getPropertyLease, uploadPropertyLease, deletePropertyLease, deleteLeaseDocument, leaseDocumentUrl } from '../../api/client'
+
+const DOC_TYPES = ['Lease', 'Amendment', 'Exhibit', 'Other']
+const DOC_TINT = {
+  Lease: 'bg-blue-50 text-blue-700', Amendment: 'bg-violet-50 text-violet-700',
+  Exhibit: 'bg-amber-50 text-amber-700', Other: 'bg-slate-100 text-slate-600',
+}
 
 const PARTY_STYLE = {
   Tenant:   'bg-blue-50 text-blue-700 border-blue-200',
@@ -67,7 +73,9 @@ export default function LeaseSection({ propertyId }) {
   const [uploading, setUploading] = useState(false)
   const [error, setError]       = useState(null)
   const [dragging, setDragging] = useState(false)
+  const [addType, setAddType]   = useState('Amendment')
   const inputRef = useRef()
+  const addRef   = useRef()
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -84,16 +92,21 @@ export default function LeaseSection({ propertyId }) {
     return () => clearInterval(t)
   }, [lease?.status, propertyId])
 
-  async function handleFile(file) {
+  async function handleFile(file, docType = 'Lease') {
     if (!file) return
     setUploading(true); setError(null)
-    try { const r = await uploadPropertyLease(propertyId, file); setLease(r.lease) }
+    try { const r = await uploadPropertyLease(propertyId, file, docType); setLease(r.lease) }
     catch (e) { setError(e.message) }
     finally { setUploading(false) }
   }
 
+  async function handleDeleteDoc(docId) {
+    if (!window.confirm('Remove this document? The abstract will be regenerated from what remains.')) return
+    try { const r = await deleteLeaseDocument(propertyId, docId); setLease(r.lease) } catch (e) { alert(e.message) }
+  }
+
   async function handleDelete() {
-    if (!window.confirm('Remove this lease abstract and file?')) return
+    if (!window.confirm('Remove the entire lease — all documents and the abstract?')) return
     try { await deletePropertyLease(propertyId); setLease(null) } catch (e) { alert(e.message) }
   }
 
@@ -129,28 +142,45 @@ export default function LeaseSection({ propertyId }) {
 
   return (
     <div className="space-y-5">
-      {/* Header actions */}
+      {/* Header */}
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <div className="flex items-center gap-2 min-w-0">
           <FileText className="w-4 h-4 text-slate-400 shrink-0" />
-          <span className="text-sm font-medium text-slate-700 truncate">{lease.file_name || 'Lease'}</span>
+          <span className="text-sm font-medium text-slate-700">Lease</span>
           {lease.updated_at && <span className="text-xs text-slate-400 shrink-0">· abstracted {String(lease.updated_at).slice(0, 10)}</span>}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {lease.has_file && (
-            <a href={leaseFileUrl(propertyId)} target="_blank" rel="noreferrer"
-              className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50">
-              <ExternalLink className="w-3.5 h-3.5" /> View PDF
-            </a>
-          )}
-          <button onClick={() => inputRef.current?.click()} disabled={uploading}
-            className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50">
-            {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />} Re-upload
+        <button onClick={handleDelete} className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50 shrink-0">
+          <Trash2 className="w-3.5 h-3.5" /> Remove all
+        </button>
+      </div>
+
+      {/* Documents (base lease + amendments/exhibits) */}
+      <div className="rounded-xl border border-slate-200 overflow-hidden">
+        <div className="bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Documents ({lease.documents?.length || 0})</div>
+        <ul className="divide-y divide-slate-100">
+          {(lease.documents || []).map(d => (
+            <li key={d.id} className="flex items-center gap-2 px-4 py-2">
+              <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded-full shrink-0 ${DOC_TINT[d.doc_type] || DOC_TINT.Other}`}>{d.doc_type}</span>
+              <span className="text-sm text-slate-700 truncate flex-1">{d.file_name}</span>
+              {d.has_file && (
+                <a href={leaseDocumentUrl(propertyId, d.id)} target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline inline-flex items-center gap-1 shrink-0">
+                  <ExternalLink className="w-3.5 h-3.5" /> View
+                </a>
+              )}
+              <button onClick={() => handleDeleteDoc(d.id)} className="text-slate-300 hover:text-red-500 shrink-0" title="Remove document"><Trash2 className="w-3.5 h-3.5" /></button>
+            </li>
+          ))}
+        </ul>
+        <div className="flex items-center flex-wrap gap-2 px-4 py-2.5 border-t border-slate-100 bg-slate-50/60">
+          <select value={addType} onChange={e => setAddType(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
+            {DOC_TYPES.map(t => <option key={t}>{t}</option>)}
+          </select>
+          <button onClick={() => addRef.current?.click()} disabled={uploading}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
+            {uploading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />} Add document
           </button>
-          <button onClick={handleDelete} className="inline-flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-red-200 text-red-600 hover:bg-red-50">
-            <Trash2 className="w-3.5 h-3.5" /> Remove
-          </button>
-          <input ref={inputRef} type="file" accept=".pdf" className="hidden" onChange={e => handleFile(e.target.files[0])} />
+          <span className="text-[11px] text-slate-400">Add an amendment or a missing exhibit — the abstract regenerates across everything.</span>
+          <input ref={addRef} type="file" accept=".pdf" className="hidden" onChange={e => { handleFile(e.target.files[0], addType); e.target.value = '' }} />
         </div>
       </div>
 

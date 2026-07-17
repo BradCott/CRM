@@ -397,13 +397,15 @@ export async function uploadPropertyPhoto(propId, file) {
   return req('POST', `/management/${propId}/photo`, fd)
 }
 
-// Lease abstraction
-export const getPropertyLease    = (propId) => req('GET',    `/management/${propId}/lease`)
-export const deletePropertyLease = (propId) => req('DELETE', `/management/${propId}/lease`)
-export const leaseFileUrl        = (propId) => `${BASE}/management/${propId}/lease/file`
-export async function uploadPropertyLease(propId, file) {
+// Lease abstraction (base lease + amendments/exhibits)
+export const getPropertyLease     = (propId)        => req('GET',    `/management/${propId}/lease`)
+export const deletePropertyLease  = (propId)        => req('DELETE', `/management/${propId}/lease`)
+export const deleteLeaseDocument  = (propId, docId) => req('DELETE', `/management/${propId}/lease/documents/${docId}`)
+export const leaseDocumentUrl     = (propId, docId) => `${BASE}/management/${propId}/lease/documents/${docId}/file`
+export async function uploadPropertyLease(propId, file, docType) {
   const fd = new FormData()
   fd.append('file', file)
+  if (docType) fd.append('doc_type', docType)
   return req('POST', `/management/${propId}/lease/upload`, fd)
 }
 

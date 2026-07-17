@@ -551,6 +551,17 @@ const migrations = [
   // Tenant reimbursement tracking on taxes (insurance already has it).
   `ALTER TABLE property_taxes ADD COLUMN reimbursed_status TEXT NOT NULL DEFAULT 'unreimbursed'`,
   `ALTER TABLE property_taxes ADD COLUMN reimbursed_date   TEXT`,
+  // Individual lease documents (base lease + amendments/exhibits). The combined
+  // abstract in property_leases is regenerated across all of a property's docs.
+  `CREATE TABLE IF NOT EXISTS lease_documents (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    file_name   TEXT,
+    file_path   TEXT,
+    doc_type    TEXT DEFAULT 'Lease',
+    uploaded_at TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_lease_docs ON lease_documents(property_id)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────
