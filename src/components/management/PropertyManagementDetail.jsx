@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import DriveDocsButton from '../properties/DriveDocsButton'
 import TenantNotifyButton from '../properties/TenantNotifyButton'
+import LeaseSection from './LeaseSection'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft, ClipboardList, Shield, Receipt, Wrench, Users,
   Plus, Pencil, Trash2, CheckCircle2, Loader2,
-  Upload, AlertCircle, ChevronDown, ChevronUp, FileUp,
+  Upload, AlertCircle, ChevronDown, ChevronUp, FileUp, FileText,
 } from 'lucide-react'
 import {
   getProperty,
@@ -1136,6 +1137,7 @@ function ContactsSection({ propertyId }) {
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const TABS = [
+  { id: 'lease',       label: 'Lease',       icon: FileText },
   { id: 'tasks',       label: 'Tasks',       icon: ClipboardList },
   { id: 'insurance',   label: 'Insurance',   icon: Shield },
   { id: 'taxes',       label: 'Taxes',       icon: Receipt },
@@ -1212,6 +1214,7 @@ export default function PropertyManagementDetail() {
 
       {/* Tab content */}
       <div className="flex-1 overflow-y-auto p-6">
+        {tab === 'lease'       && <LeaseSection       propertyId={propertyId} />}
         {tab === 'tasks'       && <TasksSection       propertyId={propertyId} />}
         {tab === 'insurance'   && <InsuranceSection   propertyId={propertyId} />}
         {tab === 'taxes'       && <TaxesSection       propertyId={propertyId} />}

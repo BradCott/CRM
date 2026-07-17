@@ -1,10 +1,13 @@
 import { Router }   from 'express'
 import multer        from 'multer'
-import db            from '../db.js'
+import { join }      from 'node:path'
+import { mkdirSync, writeFileSync, createReadStream, existsSync, unlink } from 'node:fs'
+import db, { DATA_DIR } from '../db.js'
 import { PDFDocument } from 'pdf-lib'
 
 const router  = Router()
 const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
+const LEASE_DIR = join(DATA_DIR, 'leases')
 
 async function callClaude(buffer, mediaType, prompt) {
   const apiKey = process.env.ANTHROPIC_API_KEY
@@ -37,6 +40,75 @@ async function callClaude(buffer, mediaType, prompt) {
     throw new Error(`Anthropic API error ${response.status}: ${text}`)
   }
   return response.json()
+}
+
+const LEASE_MODEL = process.env.LEASE_MODEL || process.env.ASSISTANT_MODEL || 'claude-sonnet-5'
+
+// Standard commercial-lease responsibility categories we want the matrix to cover.
+const LEASE_CATEGORIES = [
+  'Roof', 'Structure / Foundation', 'Exterior Walls', 'HVAC', 'Parking Lot / Paving',
+  'Landscaping', 'Utilities', 'Real Estate Taxes', 'Building Insurance', 'Liability Insurance',
+  'Common Area Maintenance (CAM)', 'Interior Maintenance', 'Plumbing', 'Electrical', 'Signage',
+  'Snow / Trash Removal', 'General Repairs', 'ADA / Code Compliance',
+]
+
+// Read a lease PDF and return a structured abstract (summary + a tenant/landlord
+// responsibility matrix). Uses a stronger model + larger budget than the quick
+// insurance extractor. Returns a parsed object.
+async function abstractLease(buffer, mediaType) {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set')
+  const isDoc = mediaType === 'application/pdf'
+
+  const prompt = `You are a commercial real estate lease analyst. Read the attached lease and produce a faithful abstract. Return ONLY valid JSON (no markdown, no commentary) with exactly this shape:
+{
+  "summary": {
+    "tenant": string, "landlord": string, "guarantor": string|null,
+    "premises": string, "permitted_use": string,
+    "lease_type": string,            // e.g. "NNN", "Modified Gross", "Gross"
+    "commencement_date": string|null,"expiration_date": string|null,
+    "term": string,                  // e.g. "10 years"
+    "base_rent": string,             // include $ and period
+    "rent_escalations": string,
+    "security_deposit": string|null,
+    "renewal_options": string|null
+  },
+  "responsibilities": [
+    { "category": string, "party": "Tenant"|"Landlord"|"Shared"|"Unclear", "detail": string }
+  ],
+  "key_dates": [ { "label": string, "date": string } ],  // renewal-notice deadlines, option windows, etc.
+  "notes": string                    // anything important that doesn't fit above
+}
+
+For "responsibilities", cover at least these categories where the lease addresses them: ${LEASE_CATEGORIES.join(', ')}. Add any other notable responsibilities the lease assigns. Set "party" to who bears the cost/obligation; use "Shared" for split items and "Unclear" if the lease is silent or ambiguous. Keep "detail" to a short quote or paraphrase of the governing clause. Do not invent terms that aren't in the document.`
+
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method:  'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({
+      model:      LEASE_MODEL,
+      max_tokens: 4096,
+      thinking:   { type: 'disabled' },
+      messages: [{
+        role: 'user',
+        content: [
+          isDoc
+            ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: buffer.toString('base64') } }
+            : { type: 'image',    source: { type: 'base64', media_type: mediaType,          data: buffer.toString('base64') } },
+          { type: 'text', text: prompt },
+        ],
+      }],
+    }),
+  })
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`Anthropic API error ${response.status}: ${text}`)
+  }
+  const data = await response.json()
+  const text = (data?.content || []).filter(b => b.type === 'text').map(b => b.text).join('')
+  const m = text.match(/\{[\s\S]*\}/)
+  if (!m) throw new Error('The AI did not return a readable lease abstract. Try re-uploading.')
+  return JSON.parse(m[0])
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -635,6 +707,73 @@ router.put('/contacts/:id', (req, res) => {
 router.delete('/contacts/:id', (req, res) => {
   db.prepare('DELETE FROM property_contacts WHERE id = ?').run(req.params.id)
   res.status(204).end()
+})
+
+// ── Lease abstraction ─────────────────────────────────────────────────────────
+
+// GET the stored lease abstract for a property (null if none yet).
+router.get('/:propertyId/lease', (req, res) => {
+  const row = db.prepare(`SELECT property_id, file_name, abstract, model, created_at, updated_at, file_path FROM property_leases WHERE property_id = ?`).get(req.params.propertyId)
+  if (!row) return res.json({ lease: null })
+  let abstract = null
+  try { abstract = row.abstract ? JSON.parse(row.abstract) : null } catch (_) {}
+  res.json({ lease: { property_id: row.property_id, file_name: row.file_name, abstract, model: row.model, created_at: row.created_at, updated_at: row.updated_at, has_file: !!(row.file_path && existsSync(row.file_path)) } })
+})
+
+// Upload a lease PDF → AI-abstract it → store the abstract + the source file.
+router.post('/:propertyId/lease/upload', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(req.params.propertyId)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+
+  const mediaType = req.file.mimetype || 'application/pdf'
+  let abstract
+  try {
+    abstract = await abstractLease(req.file.buffer, mediaType)
+  } catch (e) {
+    console.error('[lease] abstract failed:', e.message)
+    return res.status(502).json({ error: `Couldn't abstract the lease: ${e.message}` })
+  }
+
+  // Persist the source file on the data volume.
+  let filePath = null
+  try {
+    const dir = join(LEASE_DIR, String(prop.id))
+    mkdirSync(dir, { recursive: true })
+    const safe = (req.file.originalname || 'lease.pdf').replace(/[^\w.\-]+/g, '_')
+    filePath = join(dir, safe)
+    writeFileSync(filePath, req.file.buffer)
+  } catch (e) {
+    console.warn('[lease] could not save file (abstract still saved):', e.message)
+  }
+
+  db.prepare(`
+    INSERT INTO property_leases (property_id, file_name, file_path, abstract, model, updated_at)
+    VALUES (?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(property_id) DO UPDATE SET
+      file_name = excluded.file_name, file_path = excluded.file_path,
+      abstract = excluded.abstract, model = excluded.model, updated_at = datetime('now')
+  `).run(prop.id, req.file.originalname || 'lease.pdf', filePath, JSON.stringify(abstract), LEASE_MODEL)
+
+  const row = db.prepare(`SELECT property_id, file_name, model, created_at, updated_at, file_path FROM property_leases WHERE property_id = ?`).get(prop.id)
+  res.json({ lease: { property_id: row.property_id, file_name: row.file_name, abstract, model: row.model, created_at: row.created_at, updated_at: row.updated_at, has_file: !!(row.file_path && existsSync(row.file_path)) } })
+})
+
+// Stream the stored lease PDF.
+router.get('/:propertyId/lease/file', (req, res) => {
+  const row = db.prepare(`SELECT file_name, file_path FROM property_leases WHERE property_id = ?`).get(req.params.propertyId)
+  if (!row || !row.file_path || !existsSync(row.file_path)) return res.status(404).json({ error: 'No lease file on record' })
+  res.setHeader('Content-Type', 'application/pdf')
+  res.setHeader('Content-Disposition', `inline; filename="${(row.file_name || 'lease.pdf').replace(/"/g, '')}"`)
+  createReadStream(row.file_path).pipe(res)
+})
+
+// Remove the lease abstract + file.
+router.delete('/:propertyId/lease', (req, res) => {
+  const row = db.prepare(`SELECT file_path FROM property_leases WHERE property_id = ?`).get(req.params.propertyId)
+  if (row?.file_path) { try { unlink(row.file_path, () => {}) } catch (_) {} }
+  db.prepare(`DELETE FROM property_leases WHERE property_id = ?`).run(req.params.propertyId)
+  res.json({ ok: true })
 })
 
 export default router

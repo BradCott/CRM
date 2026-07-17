@@ -527,6 +527,18 @@ const migrations = [
   // address, cleared once a mail campaign goes out to that property.
   `ALTER TABLE properties ADD COLUMN remail_ready INTEGER DEFAULT 0`,
   `CREATE INDEX IF NOT EXISTS idx_prop_remail ON properties(remail_ready)`,
+  // AI lease abstract — one current lease per property. `abstract` is the JSON
+  // (summary + tenant/landlord responsibility matrix); the source PDF lives on
+  // the data volume at file_path.
+  `CREATE TABLE IF NOT EXISTS property_leases (
+    property_id INTEGER PRIMARY KEY REFERENCES properties(id) ON DELETE CASCADE,
+    file_name   TEXT,
+    file_path   TEXT,
+    abstract    TEXT,
+    model       TEXT,
+    created_at  TEXT DEFAULT (datetime('now')),
+    updated_at  TEXT
+  )`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────
