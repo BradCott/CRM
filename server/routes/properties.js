@@ -5,6 +5,7 @@ import { requireRole } from '../middleware/auth.js'
 import { seedDefaultTasks } from './management.js'
 import { normalizeAddr, tokenSearch } from '../utils/normalize.js'
 import { searchDriveForProperty, searchDriveDocs, fetchDriveFile } from '../services/driveSearch.js'
+import { sendMail } from '../services/mailer.js'
 
 const router = Router()
 
@@ -656,9 +657,6 @@ router.post('/:id/tenant-notify/send', async (req, res) => {
   const recipients = Array.isArray(to) ? to.filter(Boolean) : (to ? [to] : [])
   if (!recipients.length)   return res.status(400).json({ error: 'At least one recipient is required' })
   if (!subject || !body)    return res.status(400).json({ error: 'subject and body are required' })
-  if (!(process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS)) {
-    return res.status(400).json({ error: 'Email is not configured on the server (SMTP settings missing). Ask an admin to set SMTP_HOST/USER/PASS.' })
-  }
 
   const prop = db.prepare('SELECT id, notes FROM properties WHERE id = ?').get(req.params.id)
   if (!prop) return res.status(404).json({ error: 'Property not found' })
@@ -675,16 +673,9 @@ router.post('/:id/tenant-notify/send', async (req, res) => {
   }
 
   try {
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT) || 587,
-      secure: process.env.SMTP_SECURE === 'true',
-      auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-    })
-    // Tenant notices go out from the management mailbox (override via env).
-    const fromAddr = process.env.TENANT_NOTIFY_FROM || 'Knox Capital <management@knoxcre.com>'
-    await transporter.sendMail({
-      from:    fromAddr,
-      replyTo: process.env.TENANT_NOTIFY_REPLY_TO || 'management@knoxcre.com',
+    await sendMail({
+      from:    process.env.TENANT_NOTIFY_FROM || process.env.EMAIL_FROM,
+      replyTo: process.env.TENANT_NOTIFY_REPLY_TO,
       to:      recipients.join(', '),
       cc:      cc || undefined,
       subject,

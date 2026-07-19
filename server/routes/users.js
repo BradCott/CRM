@@ -5,7 +5,7 @@
  */
 import { Router }     from 'express'
 import { randomUUID } from 'node:crypto'
-import nodemailer     from 'nodemailer'
+import { sendMail }   from '../services/mailer.js'
 import db             from '../db.js'
 
 const router = Router()
@@ -101,37 +101,26 @@ router.post('/invite', async (req, res) => {
     : 'http://localhost:5173'
   const signupUrl = `${baseUrl}/signup/${token}`
 
-  // Try to send email if SMTP is configured
+  // Send the invitation via the connected Google account (Gmail API).
   let emailSent = false
-  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
-    try {
-      const transporter = nodemailer.createTransport({
-        host:   process.env.SMTP_HOST,
-        port:   Number(process.env.SMTP_PORT) || 587,
-        secure: process.env.SMTP_SECURE === 'true',
-        auth:   { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-      })
-
-      const inviter = db.prepare('SELECT name, email FROM users WHERE id = ?').get(req.user.sub)
-      await transporter.sendMail({
-        from:    process.env.SMTP_FROM || process.env.SMTP_USER,
-        to:      normalizedEmail,
-        subject: 'You have been invited to Knox CRM',
-        html: `
-          <p>Hi,</p>
-          <p>${inviter?.name || 'An admin'} has invited you to join Knox CRM with the role of <strong>${role.replace('_', ' ')}</strong>.</p>
-          <p><a href="${signupUrl}" style="background:#2563eb;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;display:inline-block;">Accept Invitation</a></p>
-          <p>Or copy this link: ${signupUrl}</p>
-          <p>This invitation expires in 30 days.</p>
-        `,
-      })
-      emailSent = true
-      console.log(`[auth] Invitation email sent to ${normalizedEmail}`)
-    } catch (err) {
-      console.error('[auth] Failed to send invitation email:', err.message)
-    }
-  } else {
-    console.log(`[auth] SMTP not configured. Invitation link for ${normalizedEmail}:\n  ${signupUrl}`)
+  try {
+    const inviter = db.prepare('SELECT name, email FROM users WHERE id = ?').get(req.user.sub)
+    await sendMail({
+      from:    process.env.EMAIL_FROM,
+      to:      normalizedEmail,
+      subject: 'You have been invited to Knox CRM',
+      html: `
+        <p>Hi,</p>
+        <p>${inviter?.name || 'An admin'} has invited you to join Knox CRM with the role of <strong>${role.replace('_', ' ')}</strong>.</p>
+        <p><a href="${signupUrl}" style="background:#2563eb;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;display:inline-block;">Accept Invitation</a></p>
+        <p>Or copy this link: ${signupUrl}</p>
+        <p>This invitation expires in 30 days.</p>
+      `,
+    })
+    emailSent = true
+    console.log(`[auth] Invitation email sent to ${normalizedEmail}`)
+  } catch (err) {
+    console.error('[auth] Failed to send invitation email:', err.message)
   }
 
   res.status(201).json({ ok: true, signupUrl, emailSent })
