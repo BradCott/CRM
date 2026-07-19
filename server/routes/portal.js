@@ -20,6 +20,8 @@ const CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET
 
 function portalRedirectUri() {
   if (process.env.PORTAL_GOOGLE_REDIRECT_URI) return process.env.PORTAL_GOOGLE_REDIRECT_URI
+  // Derive from the working CRM login redirect so the portal uses the same host.
+  if (process.env.GOOGLE_REDIRECT_URI) return process.env.GOOGLE_REDIRECT_URI.replace('/api/auth/google/callback', '/api/portal/auth/google/callback')
   if (process.env.RAILWAY_PUBLIC_DOMAIN) return `https://${process.env.RAILWAY_PUBLIC_DOMAIN}/api/portal/auth/google/callback`
   return 'http://localhost:3001/api/portal/auth/google/callback'
 }
