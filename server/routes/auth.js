@@ -102,6 +102,7 @@ router.get('/google/signup', (req, res) => {
 const DRIVE_SCOPES = [
   'https://www.googleapis.com/auth/drive.readonly',
   'https://www.googleapis.com/auth/gmail.readonly',   // log emails to contacts + flag mailer replies
+  'https://www.googleapis.com/auth/gmail.send',        // send app email (invites, notices) — Railway blocks SMTP
   'https://www.googleapis.com/auth/userinfo.email',
 ]
 

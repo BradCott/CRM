@@ -6,6 +6,7 @@ import crypto from 'node:crypto'
 import { join } from 'node:path'
 import { mkdirSync, writeFileSync, createReadStream, existsSync, unlink } from 'node:fs'
 import db, { DATA_DIR } from '../db.js'
+import { sendMail } from '../services/mailer.js'
 import { normalizeName, nameSimilarity, autoLinkInvestors } from '../services/investorMatch.js'
 import { tokenSearch } from '../utils/normalize.js'
 
@@ -1001,23 +1002,15 @@ router.post('/:id/portal-invite', async (req, res) => {
   const link = `${baseUrl}/portal/accept?token=${token}`
 
   let emailed = false, email_error = null
-  if (process.env.SMTP_HOST && process.env.SMTP_USER && process.env.SMTP_PASS) {
-    try {
-      const transporter = nodemailer.createTransport({
-        host: process.env.SMTP_HOST, port: Number(process.env.SMTP_PORT) || 587,
-        secure: process.env.SMTP_SECURE === 'true',
-        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS },
-        connectionTimeout: 10000, greetingTimeout: 10000, socketTimeout: 15000, // never hang the request
-      })
-      await transporter.sendMail({
-        from: process.env.PORTAL_FROM || process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: email,
-        subject: 'Your Knox Capital investor portal access',
-        text: `Hello${inv.name ? ' ' + inv.name : ''},\n\nYou've been invited to the Knox Capital investor portal — view your investments, capital account, and distributions in one place.\n\nGet started: ${link}\n\nYou can sign in with Google (using this email) or set a password.\n\n— Knox Capital`,
-      })
-      emailed = true
-    } catch (e) { email_error = e.message; console.warn('[portal-invite] email failed:', e.message) }
-  }
+  try {
+    await sendMail({
+      to: email,
+      from: process.env.PORTAL_FROM || process.env.EMAIL_FROM,
+      subject: 'Your Knox Capital investor portal access',
+      text: `Hello${inv.name ? ' ' + inv.name : ''},\n\nYou've been invited to the Knox Capital investor portal — view your investments, capital account, and distributions in one place.\n\nGet started: ${link}\n\nYou can sign in with Google (using this email) or set a password.\n\n— Knox Capital`,
+    })
+    emailed = true
+  } catch (e) { email_error = e.message; console.warn('[portal-invite] email failed:', e.message) }
 
   res.json({ ok: true, email, emailed, email_error, link })
 })
