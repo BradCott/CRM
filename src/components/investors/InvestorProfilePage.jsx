@@ -543,7 +543,9 @@ export default function InvestorProfilePage() {
               if (!email) return
               try {
                 const r = await invitePortal(investor.id, email.trim())
-                window.alert(`Portal invite ${r.emailed ? 'emailed to' : 'created for'} ${r.email}.${r.emailed ? '' : `\n\nEmail isn't configured, so share this link with them:\n${r.link}`}`)
+                const tail = r.emailed ? '' :
+                  `\n\n${r.email_error ? '⚠ Email error: ' + r.email_error : "Email isn't configured"}\n\nShare this link with them:\n${r.link}`
+                window.alert(`Portal invite ${r.emailed ? 'emailed to' : 'created for'} ${r.email}.${tail}`)
               } catch (e) { window.alert(e.message) }
             }}
             className="ml-auto inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50"
