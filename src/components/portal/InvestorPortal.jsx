@@ -3,7 +3,7 @@
 // that proves the isolated session. Investment views come in Phase 2.
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Building2, Loader2, LogOut, AlertCircle, Lock, FileText, Download, Upload, Trash2 } from 'lucide-react'
+import { Building2, Loader2, LogOut, AlertCircle, Lock, FileText, Download, Upload, Trash2, LayoutGrid, List as ListIcon, X, ChevronRight } from 'lucide-react'
 import {
   portalMe, portalPortfolio, portalPasswordLogin, portalInviteInfo, portalAccept, portalLogout, portalGoogleStartUrl,
   portalDocuments, portalDocUrl, uploadPortalDoc, deletePortalDoc,
@@ -250,6 +250,8 @@ function PortalHome({ me }) {
   const [out, setOut]         = useState(false)
   const [pf, setPf]           = useState(null)
   const [loading, setLoading] = useState(true)
+  const [view, setView]       = useState(null)     // 'cards' | 'list' (null = auto by count)
+  const [selected, setSelected] = useState(null)   // clicked holding → detail
 
   useEffect(() => { portalPortfolio().then(setPf).catch(() => {}).finally(() => setLoading(false)) }, [])
   async function logout() { setOut(true); try { await portalLogout() } finally { window.location.href = '/portal' } }
@@ -291,13 +293,30 @@ function PortalHome({ me }) {
 
             {/* Holdings */}
             <div>
-              <h2 className="text-sm font-semibold text-slate-700 mb-2">Your Investments</h2>
+              <div className="flex items-center justify-between mb-2">
+                <h2 className="text-sm font-semibold text-slate-700">Your Investments</h2>
+                {holdings.length > 0 && (
+                  <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5">
+                    {[['cards', LayoutGrid, 'Cards'], ['list', ListIcon, 'List']].map(([v, Icon, label]) => {
+                      const active = (view ?? (holdings.length <= 2 ? 'cards' : 'list')) === v
+                      return (
+                        <button key={v} onClick={() => setView(v)} title={label}
+                          className={`p-1.5 rounded-md ${active ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
+                          <Icon className="w-4 h-4" />
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+
               {holdings.length === 0 ? (
                 <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">No investments are on file yet. If this looks wrong, contact Knox Capital.</div>
-              ) : (
+              ) : (view ?? (holdings.length <= 2 ? 'cards' : 'list')) === 'cards' ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   {holdings.map(h => (
-                    <div key={h.id} className="rounded-2xl border border-slate-200 bg-white p-5">
+                    <button key={h.id} onClick={() => setSelected(h)}
+                      className="text-left rounded-2xl border border-slate-200 bg-white p-5 hover:border-slate-300 hover:shadow-sm transition-all">
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
                           <p className="text-sm font-semibold text-slate-900 truncate">{h.property.address}</p>
@@ -313,8 +332,40 @@ function PortalHome({ me }) {
                         <div><p className="text-[11px] text-slate-400">Distributions</p><p className="font-medium text-emerald-700 tabular-nums">{fmt$(h.distributions_received)}</p></div>
                         <div><p className="text-[11px] text-slate-400">Pref Owed</p><p className="font-medium text-amber-700 tabular-nums">{fmt$(h.net_preferred_return_owed)}</p></div>
                       </div>
-                    </div>
+                    </button>
                   ))}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-slate-50 border-b border-slate-100">
+                        <tr>
+                          <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Property</th>
+                          <th className="text-right px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Ownership</th>
+                          <th className="text-right px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Invested</th>
+                          <th className="text-right px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Distributions</th>
+                          <th className="text-right px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Pref Owed</th>
+                          <th className="px-2 py-2" />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {holdings.map(h => (
+                          <tr key={h.id} onClick={() => setSelected(h)} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60 cursor-pointer">
+                            <td className="px-4 py-2.5">
+                              <p className="font-medium text-slate-800">{h.property.address}</p>
+                              <p className="text-xs text-slate-400">{[h.property.city, h.property.state].filter(Boolean).join(', ')}{h.property.tenant_brand ? ` · ${h.property.tenant_brand}` : ''}</p>
+                            </td>
+                            <td className="px-4 py-2.5 text-right text-slate-600">{h.ownership_percentage != null ? fmtPct(h.ownership_percentage) : '—'}</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums text-slate-800">{fmt$(h.contribution)}</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums text-emerald-700">{fmt$(h.distributions_received)}</td>
+                            <td className="px-4 py-2.5 text-right tabular-nums text-amber-700">{fmt$(h.net_preferred_return_owed)}</td>
+                            <td className="px-2 py-2.5 text-slate-300"><ChevronRight className="w-4 h-4" /></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               )}
             </div>
@@ -354,6 +405,43 @@ function PortalHome({ me }) {
           </>
         )}
       </main>
+
+      {selected && <HoldingDetail h={selected} onClose={() => setSelected(null)} />}
+    </div>
+  )
+}
+
+// Detail overlay for a single investment (more info to come).
+function HoldingDetail({ h, onClose }) {
+  const rows = [
+    ['Ownership', h.ownership_percentage != null ? fmtPct(h.ownership_percentage) : '—'],
+    ['Amount Invested', fmt$(h.contribution)],
+    ['Preferred Return Rate', h.preferred_return_rate != null ? fmtPct(h.preferred_return_rate) : '—'],
+    ['Distributions Received', fmt$(h.distributions_received)],
+    ['Preferred Return Owed', fmt$(h.net_preferred_return_owed)],
+  ]
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+        <div className="flex items-start justify-between gap-3 px-5 py-4 border-b border-slate-100">
+          <div className="min-w-0">
+            <p className="text-base font-bold text-slate-900 truncate">{h.property.address}</p>
+            <p className="text-xs text-slate-400">{[h.property.city, h.property.state].filter(Boolean).join(', ')}{h.property.tenant_brand ? ` · ${h.property.tenant_brand}` : ''}</p>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 shrink-0"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="px-5 py-4">
+          <dl className="divide-y divide-slate-100">
+            {rows.map(([label, val]) => (
+              <div key={label} className="flex items-center justify-between py-2.5">
+                <dt className="text-sm text-slate-500">{label}</dt>
+                <dd className="text-sm font-medium text-slate-800 tabular-nums">{val}</dd>
+              </div>
+            ))}
+          </dl>
+          <p className="text-[11px] text-slate-400 mt-3">More property details and documents will appear here soon.</p>
+        </div>
+      </div>
     </div>
   )
 }
