@@ -87,8 +87,91 @@ async function abstractLease(docs) {
 
 For "responsibilities", cover at least these categories where the lease addresses them: ${LEASE_CATEGORIES.join(', ')}. Add any other notable responsibilities the lease assigns. Set "party" to who bears the cost/obligation; use "Shared" for split items and "Unclear" if the lease is silent or ambiguous. Keep "detail" to a short quote or paraphrase of the governing clause. Do not invent terms that aren't in the document.`
 
-  // Anthropic caps PDFs at 100 pages — trim oversized docs so the call succeeds
-  // (and can't hang) instead of erroring on a huge file.
+  // If everything fits in one request, send it together — best quality, since the
+  // AI sees the base lease and any amendments at once. Otherwise split oversized
+  // PDFs into page-range chunks, abstract each, and merge — so no content is
+  // dropped and the request never exceeds Anthropic's 32MB / 100-page limits.
+  const totalRaw = docs.reduce((s, d) => s + (d.buffer?.length || 0), 0)
+  if (totalRaw <= MAX_REQ_RAW) {
+    return await callLeaseAI(docs, prompt)
+  }
+
+  console.log(`[lease] ${(totalRaw / 1048576).toFixed(1)}MB across ${docs.length} doc(s) — chunking`)
+  const parts = []
+  for (const d of docs) {
+    if (d.mediaType === 'application/pdf') {
+      const { chunks, total } = await splitPdfForApi(d.buffer, MAX_REQ_RAW)
+      for (const c of chunks) {
+        const label = `${d.name || 'Lease'} — pages ${c.start}-${c.end} of ${total}`
+        console.log(`[lease] chunk ${label} (${(c.buffer.length / 1048576).toFixed(1)}MB)`)
+        parts.push(await callLeaseAI([{ ...d, buffer: c.buffer, name: label }], prompt))
+      }
+    } else {
+      parts.push(await callLeaseAI([d], prompt))
+    }
+  }
+  return mergeAbstracts(parts)
+}
+
+// Stay comfortably under Anthropic's 32MB request cap (base64 inflates ~33%).
+const MAX_REQ_RAW = 18 * 1024 * 1024
+
+// Split a PDF into page-range chunks that each stay under the byte budget and
+// under the 100-page-per-request cap. Returns { chunks:[{buffer,start,end}], total }.
+async function splitPdfForApi(buffer, maxRaw) {
+  const src = await PDFDocument.load(buffer)
+  const total = src.getPageCount()
+  const avgPerPage = Math.max(1, buffer.length / total)
+  const per = Math.max(1, Math.min(100, Math.floor(maxRaw / avgPerPage)))
+  const chunks = []
+  for (let start = 0; start < total; start += per) {
+    const end = Math.min(start + per, total)
+    const t = await PDFDocument.create()
+    const idxs = []
+    for (let i = start; i < end; i++) idxs.push(i)
+    const pgs = await t.copyPages(src, idxs)
+    pgs.forEach(p => t.addPage(p))
+    chunks.push({ buffer: Buffer.from(await t.save()), start: start + 1, end })
+  }
+  return { chunks, total }
+}
+
+// Merge per-chunk abstracts into one: first non-empty value wins for each summary
+// field; responsibilities and key dates are concatenated then de-duplicated.
+function mergeAbstracts(parts) {
+  const clean = parts.filter(Boolean)
+  if (clean.length <= 1) return clean[0] || null
+  const isVal = v => v != null && v !== '' && String(v).toLowerCase() !== 'null'
+  const summary = {}
+  const keys = new Set()
+  clean.forEach(p => Object.keys(p?.summary || {}).forEach(k => keys.add(k)))
+  for (const k of keys) {
+    summary[k] = null
+    for (const p of clean) { if (isVal(p?.summary?.[k])) { summary[k] = p.summary[k]; break } }
+  }
+  const dedupe = (rows, keyFn) => {
+    const seen = new Set(), out = []
+    for (const r of rows) { const k = keyFn(r); if (k && !seen.has(k)) { seen.add(k); out.push(r) } }
+    return out
+  }
+  const responsibilities = dedupe(
+    clean.flatMap(p => p?.responsibilities || []),
+    r => `${r?.category}|${r?.detail}`.toLowerCase().slice(0, 140),
+  )
+  const key_dates = dedupe(
+    clean.flatMap(p => p?.key_dates || []),
+    d => `${d?.label}|${d?.date}`.toLowerCase(),
+  )
+  const notes = clean.map(p => p?.notes).filter(isVal).join('\n\n')
+  return { summary, responsibilities, key_dates, notes }
+}
+
+// One Anthropic call for a set of docs → parsed abstract JSON. Trims any PDF to
+// 100 pages and enforces a hard timeout so the call can't hang.
+async function callLeaseAI(docs, prompt) {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set')
+
   const prepared = []
   for (const d of docs) {
     let buffer = d.buffer
@@ -100,14 +183,12 @@ For "responsibilities", cover at least these categories where the lease addresse
           const pgs = await t.copyPages(src, [...Array(100).keys()])
           pgs.forEach(p => t.addPage(p))
           buffer = Buffer.from(await t.save())
-          console.log(`[lease] trimmed ${d.name} from ${src.getPageCount()} to 100 pages`)
         }
       } catch (e) { console.warn('[lease] page-trim failed:', e.message) }
     }
     prepared.push({ ...d, buffer })
   }
 
-  // Hard timeout so a stalled request can't leave the lease stuck "processing".
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 180000)
   let response
