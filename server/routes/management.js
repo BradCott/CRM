@@ -1037,21 +1037,16 @@ router.get('/insurance/:id/reimbursement/prepare', (req, res) => {
   }
   const documents = db.prepare(`SELECT id, doc_type, file_name FROM insurance_documents WHERE insurance_id=? ORDER BY created_at DESC`).all(ins.id)
 
-  const amt = ins.premium != null ? '$' + Math.round(ins.premium).toLocaleString() : 'the insurance premium'
   const loc = [ins.address, ins.city, ins.state].filter(Boolean).join(', ')
-  const draft = {
+  let premium_items = []
+  try { premium_items = ins.premium_breakdown ? JSON.parse(ins.premium_breakdown) : [] } catch { premium_items = [] }
+
+  res.json({
+    property: { id: ins.property_id, address: ins.address }, loc,
+    tenant_brand: ins.tenant_brand, premium: ins.premium, premium_items,
+    contacts, documents,
     subject: `Insurance reimbursement request — ${ins.tenant_brand ? ins.tenant_brand + ' at ' : ''}${ins.address}`,
-    body:
-`Hello,
-
-Per your lease, we've paid the property insurance premium for ${loc} and are requesting reimbursement of ${amt}.
-
-Attached are the insurance policy, the invoice, and our proof of payment for your records. Please remit reimbursement at your earliest convenience, and let us know if you need anything further.
-
-Thank you,
-Knox Capital`,
-  }
-  res.json({ property: { id: ins.property_id, address: ins.address }, tenant_brand: ins.tenant_brand, premium: ins.premium, contacts, documents, draft })
+  })
 })
 
 router.post('/insurance/:id/reimbursement/send', async (req, res) => {

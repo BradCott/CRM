@@ -3,6 +3,18 @@
 import { useState, useEffect, useCallback } from 'react'
 import { FileText, Download, Trash2, Loader2, Mail, X, Check, AlertCircle, Send } from 'lucide-react'
 import DropZone from '../ui/DropZone'
+
+const parseAmt = (s) => { const n = parseFloat(String(s ?? '').replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n }
+const money = (n) => (n == null ? 'the insurance premium' : '$' + Math.round(n).toLocaleString())
+const reimbBody = (amountStr, loc) =>
+`Hello,
+
+Per your lease, we've paid the property insurance premium for ${loc || 'the property'} and are requesting reimbursement of ${amountStr}.
+
+Attached are the insurance policy, the invoice, and our proof of payment for your records. Please remit reimbursement at your earliest convenience, and let us know if you need anything further.
+
+Thank you,
+Knox Capital`
 import {
   getInsuranceDocuments, uploadInsuranceDoc, insuranceDocUrl, deleteInsuranceDoc,
   prepareInsReimbursement, sendInsReimbursement,
@@ -77,7 +89,12 @@ function ReimbursementModal({ insId, onClose, onSent }) {
   const [cc, setCc]           = useState('')
   const [subject, setSubject] = useState('')
   const [body, setBody]       = useState('')
-  const [selected, setSel]    = useState(() => new Set())
+  const [bodyEdited, setBodyEdited] = useState(false)
+  const [selected, setSel]    = useState(() => new Set())   // attached doc ids
+  const [docs, setDocs]       = useState([])
+  const [items, setItems]     = useState([])                // premium breakdown [{label, amount, value, selected}]
+  const [uploadType, setUploadType]     = useState('Invoice')
+  const [uploadingDoc, setUploadingDoc] = useState(false)
   const [sending, setSending] = useState(false)
   const [error, setError]     = useState(null)
   const [sent, setSent]       = useState(null)
@@ -86,16 +103,41 @@ function ReimbursementModal({ insId, onClose, onSent }) {
     prepareInsReimbursement(insId)
       .then(d => {
         setData(d)
-        setSubject(d.draft?.subject || '')
-        setBody(d.draft?.body || '')
+        setSubject(d.subject || '')
         setTo(d.contacts?.[0]?.email || '')
+        setDocs(d.documents || [])
         setSel(new Set((d.documents || []).map(x => x.id)))
+        const its = (d.premium_items || []).map(i => ({ label: i.label, amount: i.amount, value: parseAmt(i.amount), selected: true }))
+        setItems(its)
+        const init = its.length ? its.reduce((s, i) => s + i.value, 0) : (d.premium ?? null)
+        setBody(reimbBody(money(init), d.loc))
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [insId])
 
-  const toggle = (id) => setSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const hasBreakdown   = items.length > 0
+  const selectedAmount = hasBreakdown ? items.filter(i => i.selected).reduce((s, i) => s + i.value, 0) : (data?.premium ?? null)
+
+  // Keep the amount in the message in sync with the breakdown, unless edited.
+  useEffect(() => {
+    if (!data || bodyEdited) return
+    setBody(reimbBody(money(selectedAmount), data.loc))
+  }, [selectedAmount, data, bodyEdited])
+
+  const toggleDoc  = (id)  => setSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const toggleItem = (idx) => setItems(prev => prev.map((it, i) => i === idx ? { ...it, selected: !it.selected } : it))
+
+  async function onUploadDoc(file) {
+    if (!file) return
+    setUploadingDoc(true)
+    try {
+      await uploadInsuranceDoc(insId, file, uploadType)
+      const fresh = await getInsuranceDocuments(insId)
+      setDocs(fresh)
+      setSel(new Set(fresh.map(d => d.id)))
+    } catch (e) { alert(e.message) } finally { setUploadingDoc(false) }
+  }
 
   async function send() {
     setSending(true); setError(null)
@@ -147,26 +189,53 @@ function ReimbursementModal({ insId, onClose, onSent }) {
                 <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Subject</label>
                 <input value={subject} onChange={e => setSubject(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
+              {/* Reimbursement amount — exclude charges the tenant doesn't cover */}
+              {hasBreakdown && (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">Reimbursement amount</label>
+                  <div className="rounded-xl border border-slate-200 divide-y divide-slate-100">
+                    {items.map((it, i) => (
+                      <label key={i} className="flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 cursor-pointer">
+                        <input type="checkbox" checked={it.selected} onChange={() => toggleItem(i)} className="w-4 h-4 accent-blue-600 shrink-0" />
+                        <span className="text-sm text-slate-700 flex-1 truncate">{it.label || '—'}</span>
+                        <span className="text-sm text-slate-500 tabular-nums shrink-0">{it.amount}</span>
+                      </label>
+                    ))}
+                    <div className="flex items-center justify-between px-3 py-2 bg-slate-50">
+                      <span className="text-sm font-semibold text-slate-700">Requesting</span>
+                      <span className="text-sm font-semibold text-blue-700 tabular-nums">{money(selectedAmount)}</span>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">Uncheck charges the tenant doesn't reimburse (e.g. liability — property only). The amount in the message updates automatically.</p>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Message</label>
-                <textarea value={body} onChange={e => setBody(e.target.value)} rows={9} className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl resize-y focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                <textarea value={body} onChange={e => { setBody(e.target.value); setBodyEdited(true) }} rows={9} className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl resize-y focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
+
               <div>
                 <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">Attachments</label>
-                {data.documents?.length ? (
-                  <div className="rounded-xl border border-slate-200 divide-y divide-slate-100">
-                    {data.documents.map(d => (
+                {docs.length > 0 && (
+                  <div className="rounded-xl border border-slate-200 divide-y divide-slate-100 mb-2">
+                    {docs.map(d => (
                       <label key={d.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 cursor-pointer">
-                        <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggle(d.id)} className="w-4 h-4 accent-blue-600 shrink-0" />
+                        <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggleDoc(d.id)} className="w-4 h-4 accent-blue-600 shrink-0" />
                         <FileText className="w-4 h-4 text-slate-400 shrink-0" />
                         <span className="text-sm text-slate-700 truncate flex-1">{d.file_name}</span>
                         <span className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded-full shrink-0 ${TINT[d.doc_type] || TINT.Other}`}>{d.doc_type}</span>
                       </label>
                     ))}
                   </div>
-                ) : (
-                  <p className="text-xs text-amber-600">No documents attached to this policy yet. Add the policy, invoice, and proof of payment above, then reopen this.</p>
                 )}
+                <div className="flex items-center gap-2">
+                  <select value={uploadType} onChange={e => setUploadType(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white shrink-0">
+                    {DOC_TYPES.map(t => <option key={t}>{t}</option>)}
+                  </select>
+                  <DropZone onFile={onUploadDoc} busy={uploadingDoc} label={`Drop ${uploadType.toLowerCase()} or click`} className="flex-1" />
+                </div>
+                <p className="text-[11px] text-slate-400 mt-1">Missing the policy or invoice? Drop it here — it attaches to the email and saves on the record.</p>
               </div>
               {error && <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /> {error}</div>}
             </>
