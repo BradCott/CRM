@@ -604,7 +604,7 @@ router.get('/:id/tenant-notify/prepare', async (req, res) => {
   let contacts = []
   if (prop.tenant_brand_id) {
     contacts = db.prepare(`
-      SELECT id, name, email, title, territory_states
+      SELECT id, name, email, title, tenant_roles, territory_states, territory_regions
       FROM people
       WHERE role = 'tenant_contact' AND email IS NOT NULL AND email <> ''
         AND tenant_brand_id IN (SELECT id FROM tenant_brands WHERE name = (SELECT name FROM tenant_brands WHERE id = ?))

@@ -5,6 +5,7 @@
 import { useState } from 'react'
 import { Mail, X, Loader2, Check, Paperclip, AlertCircle, FileText, Send } from 'lucide-react'
 import { prepareTenantNotify, sendTenantNotify } from '../../api/client'
+import { ContactPicker } from '../management/InsuranceReimbursement'
 import Button from '../ui/Button'
 
 const DOC_ORDER = ['Deed', 'Tenant Notice Letter', 'Assignment of Lease', 'W-9']
@@ -115,19 +116,7 @@ export default function TenantNotifyButton({ propertyId, className = '' }) {
                     <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">To</label>
                     <input value={to} onChange={e => setTo(e.target.value)} placeholder="tenant@example.com"
                       className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                    {data.contacts?.length > 0 && (
-                      <div className="flex flex-wrap gap-1.5 mt-1.5">
-                        {data.contacts.map(c => (
-                          <button key={c.id} onClick={() => setTo(c.email)}
-                            className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 hover:bg-blue-100 hover:text-blue-700">
-                            {c.name}{c.title ? ` · ${c.title}` : ''}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {!data.contacts?.length && (
-                      <p className="text-xs text-amber-600 mt-1">No tenant contact on file for this brand — enter an email above.</p>
-                    )}
+                    <ContactPicker contacts={data.contacts} to={to} setTo={setTo} />
                   </div>
 
                   <div>

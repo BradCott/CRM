@@ -4,6 +4,39 @@ import { useState, useEffect, useCallback } from 'react'
 import { FileText, Download, Trash2, Loader2, Mail, X, Check, AlertCircle, Send, Sparkles } from 'lucide-react'
 import DropZone from '../ui/DropZone'
 
+const parseArr = (s) => { try { const a = JSON.parse(s); return Array.isArray(a) ? a : [] } catch { return [] } }
+
+// A richer tenant-contact chooser: shows each contact's specialties (roles) and
+// territory so you can pick the right person. Reused by the reimbursement +
+// tenant-notify flows.
+export function ContactPicker({ contacts, to, setTo }) {
+  if (!contacts?.length) return <p className="text-xs text-amber-600 mt-1">No tenant contact on file for this brand — enter an email above.</p>
+  return (
+    <div className="space-y-1 mt-1.5 max-h-52 overflow-y-auto">
+      {contacts.map(c => {
+        const roles = parseArr(c.tenant_roles), states = parseArr(c.territory_states), regions = parseArr(c.territory_regions)
+        const active = to === c.email
+        return (
+          <button key={c.id} type="button" onClick={() => setTo(c.email)}
+            className={`w-full text-left rounded-lg border px-3 py-2 transition-colors ${active ? 'border-blue-400 bg-blue-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-sm font-medium text-slate-800 truncate">{c.name}{c.title ? ` · ${c.title}` : ''}</span>
+              <span className="text-xs text-slate-400 truncate shrink-0">{c.email}</span>
+            </div>
+            {(roles.length > 0 || states.length > 0 || regions.length > 0) && (
+              <div className="flex flex-wrap gap-1 mt-1">
+                {roles.map((r, i) => <span key={'r' + i} className="text-[10px] font-medium bg-violet-50 text-violet-700 px-1.5 py-0.5 rounded-full">{r}</span>)}
+                {states.length > 0 && <span className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">{states.join(', ')}</span>}
+                {regions.map((rg, i) => <span key={'g' + i} className="text-[10px] bg-slate-100 text-slate-500 px-1.5 py-0.5 rounded-full">{rg}</span>)}
+              </div>
+            )}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 const parseAmt = (s) => { const n = parseFloat(String(s ?? '').replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n }
 const money = (n) => (n == null ? 'the insurance premium' : '$' + Math.round(n).toLocaleString())
 const reimbBody = (amountStr, loc) =>
@@ -184,14 +217,7 @@ function ReimbursementModal({ insId, onClose, onSent }) {
               <div>
                 <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">To</label>
                 <input value={to} onChange={e => setTo(e.target.value)} placeholder="tenant@example.com" className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
-                {data.contacts?.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mt-1.5">
-                    {data.contacts.map(c => (
-                      <button key={c.id} onClick={() => setTo(c.email)} className="text-xs px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 hover:bg-blue-100 hover:text-blue-700">{c.name}{c.title ? ` · ${c.title}` : ''}</button>
-                    ))}
-                  </div>
-                )}
-                {!data.contacts?.length && <p className="text-xs text-amber-600 mt-1">No tenant contact on file for this brand — enter an email above.</p>}
+                <ContactPicker contacts={data.contacts} to={to} setTo={setTo} />
               </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Cc <span className="normal-case text-slate-400">(optional)</span></label>

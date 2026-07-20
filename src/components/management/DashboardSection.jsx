@@ -4,9 +4,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Camera, Pencil, Phone, User, ClipboardList, Shield, Receipt, HandCoins,
-  AlertTriangle, Loader2, Check, X, Building2, DollarSign, ExternalLink,
+  AlertTriangle, Loader2, Check, X, Building2, DollarSign, ExternalLink, Plus, Trash2, PhoneCall,
 } from 'lucide-react'
-import { getPropertyDash, updatePropertyDash, uploadPropertyPhoto, propertyPhotoUrl } from '../../api/client'
+import { getPropertyDash, updatePropertyDash, uploadPropertyPhoto, propertyPhotoUrl, getCallNotes, addCallNote, deleteCallNote } from '../../api/client'
+
+const fmtDateTime = (d) => d ? new Date(String(d).includes('T') ? d : d.replace(' ', 'T') + 'Z').toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''
 
 const fmt$ = (n) => (n == null || n === '') ? '—' : '$' + Math.round(Number(n)).toLocaleString()
 const fmtDate = (d) => d ? new Date(String(d).length === 10 ? d + 'T12:00:00' : d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
@@ -32,6 +34,52 @@ function Card({ title, icon: Icon, children, tint = 'text-slate-400' }) {
       </div>
       <div className="p-4">{children}</div>
     </div>
+  )
+}
+
+function ManagerCallLog({ propertyId, storeManager }) {
+  const [notes, setNotes] = useState([])
+  const [text, setText]   = useState('')
+  const [saving, setSaving] = useState(false)
+
+  const load = useCallback(async () => { try { setNotes(await getCallNotes(propertyId)) } catch (_) {} }, [propertyId])
+  useEffect(() => { load() }, [load])
+
+  async function add() {
+    if (!text.trim()) return
+    setSaving(true)
+    try { await addCallNote(propertyId, text.trim()); setText(''); await load() } catch (e) { alert(e.message) } finally { setSaving(false) }
+  }
+  async function del(id) {
+    if (!window.confirm('Delete this note?')) return
+    try { await deleteCallNote(id); await load() } catch (e) { alert(e.message) }
+  }
+
+  return (
+    <Card title="Store Manager Call Log" icon={PhoneCall}>
+      <div className="flex gap-2 mb-3">
+        <textarea value={text} onChange={e => setText(e.target.value)} rows={2}
+          placeholder={`Log a call${storeManager ? ' with ' + storeManager : ''} — what was discussed…`}
+          className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500" />
+        <button onClick={add} disabled={saving || !text.trim()}
+          className="shrink-0 self-end inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50">
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Log call
+        </button>
+      </div>
+      {notes.length ? (
+        <ul className="space-y-2 max-h-72 overflow-y-auto">
+          {notes.map(n => (
+            <li key={n.id} className="group rounded-lg border border-slate-100 px-3 py-2">
+              <div className="flex items-center justify-between gap-2 mb-0.5">
+                <span className="text-[11px] text-slate-400">{fmtDateTime(n.created_at)}{n.author ? ` · ${n.author}` : ''}</span>
+                <button onClick={() => del(n.id)} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+              </div>
+              <p className="text-sm text-slate-700 whitespace-pre-line">{n.note}</p>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="text-sm text-slate-400">No call notes yet. Log your first call above — each entry is time-stamped.</p>}
+    </Card>
   )
 }
 
@@ -263,6 +311,9 @@ export default function DashboardSection({ propertyId }) {
           </div>
         ) : <p className="text-sm text-slate-400">No vendors or contacts yet — add them in the Contacts &amp; Maintenance tabs.</p>}
       </Card>
+
+      {/* Store manager call log */}
+      <ManagerCallLog propertyId={propertyId} storeManager={p.store_manager} />
     </div>
   )
 }

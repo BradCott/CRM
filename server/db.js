@@ -611,6 +611,15 @@ const migrations = [
     created_at          TEXT DEFAULT (datetime('now'))
   )`,
   `CREATE INDEX IF NOT EXISTS idx_investor_docs ON investor_documents(investor_id)`,
+  // Time/date-stamped call notes with the store manager (per property).
+  `CREATE TABLE IF NOT EXISTS property_call_notes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    note        TEXT NOT NULL,
+    author      TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_call_notes ON property_call_notes(property_id)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

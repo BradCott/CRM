@@ -849,6 +849,22 @@ router.delete('/:propertyId/lease', (req, res) => {
   res.json({ ok: true })
 })
 
+// ── Store-manager call notes ──────────────────────────────────────────────────
+router.get('/:propertyId/call-notes', (req, res) => {
+  res.json(db.prepare('SELECT id, note, author, created_at FROM property_call_notes WHERE property_id = ? ORDER BY created_at DESC, id DESC').all(req.params.propertyId))
+})
+router.post('/:propertyId/call-notes', (req, res) => {
+  const note = String(req.body?.note || '').trim()
+  if (!note) return res.status(400).json({ error: 'note is required' })
+  const r = db.prepare('INSERT INTO property_call_notes (property_id, note, author) VALUES (?, ?, ?)')
+    .run(req.params.propertyId, note, req.user?.name || null)
+  res.status(201).json(db.prepare('SELECT id, note, author, created_at FROM property_call_notes WHERE id = ?').get(r.lastInsertRowid))
+})
+router.delete('/call-notes/:id', (req, res) => {
+  db.prepare('DELETE FROM property_call_notes WHERE id = ?').run(req.params.id)
+  res.json({ ok: true })
+})
+
 // ── Property dashboard ────────────────────────────────────────────────────────
 
 function daysUntilDate(d) {
@@ -1072,7 +1088,7 @@ router.get('/insurance/:id/reimbursement/prepare', (req, res) => {
     // Match tenant contacts under ANY brand record sharing this brand's name
     // (handles duplicate/renamed brand rows), then any with an email.
     contacts = db.prepare(`
-      SELECT id, name, email, title, territory_states
+      SELECT id, name, email, title, tenant_roles, territory_states, territory_regions
       FROM people
       WHERE role='tenant_contact' AND email IS NOT NULL AND email<>''
         AND tenant_brand_id IN (SELECT id FROM tenant_brands WHERE name = (SELECT name FROM tenant_brands WHERE id = ?))
