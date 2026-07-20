@@ -512,6 +512,13 @@ export default function LedgerPage() {
           >
             <ArrowLeft className="w-4 h-4" /> Accounting
           </button>
+          <span className="text-slate-300">·</span>
+          <button
+            onClick={() => navigate(`/management/${propertyId}`)}
+            className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" /> Management
+          </button>
         </div>
 
         <div className="flex items-start justify-between mb-4">

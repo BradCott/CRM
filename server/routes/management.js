@@ -4,6 +4,7 @@ import { join }      from 'node:path'
 import { mkdirSync, writeFileSync, readFileSync, createReadStream, existsSync, unlink } from 'node:fs'
 import db, { DATA_DIR } from '../db.js'
 import { PDFDocument } from 'pdf-lib'
+import { sendMail } from '../services/mailer.js'
 
 const router  = Router()
 const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
@@ -976,6 +977,114 @@ router.get('/:propertyId/photo', (req, res) => {
   if (!row?.photo_path || !existsSync(row.photo_path)) return res.status(404).end()
   res.setHeader('Cache-Control', 'no-cache')
   createReadStream(row.photo_path).pipe(res)
+})
+
+// ── Insurance documents + tenant reimbursement ────────────────────────────────
+const INS_DOCS_DIR = join(DATA_DIR, 'insurance-docs')
+
+router.get('/insurance/:id/documents', (req, res) => {
+  res.json(db.prepare(`SELECT id, doc_type, file_name, mime, created_at FROM insurance_documents WHERE insurance_id = ? ORDER BY created_at DESC`).all(req.params.id))
+})
+
+router.post('/insurance/:id/documents', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  const ins = db.prepare('SELECT id FROM property_insurance WHERE id = ?').get(req.params.id)
+  if (!ins) return res.status(404).json({ error: 'Insurance record not found' })
+  const dir = join(INS_DOCS_DIR, String(ins.id))
+  try { mkdirSync(dir, { recursive: true }) } catch (_) {}
+  const safe  = (req.file.originalname || 'document').replace(/[^\w.\-]+/g, '_')
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const filePath = join(dir, `${stamp}-${safe}`)
+  try { writeFileSync(filePath, req.file.buffer) } catch (e) { return res.status(500).json({ error: e.message }) }
+  db.prepare(`INSERT INTO insurance_documents (insurance_id, doc_type, file_name, file_path, mime) VALUES (?, ?, ?, ?, ?)`)
+    .run(ins.id, String(req.body?.doc_type || 'Other').slice(0, 40), req.file.originalname || safe, filePath, req.file.mimetype || null)
+  res.json({ ok: true })
+})
+
+router.get('/insurance/:id/documents/:docId/file', (req, res) => {
+  const d = db.prepare(`SELECT file_name, file_path, mime FROM insurance_documents WHERE id = ? AND insurance_id = ?`).get(req.params.docId, req.params.id)
+  if (!d || !d.file_path || !existsSync(d.file_path)) return res.status(404).json({ error: 'Document not found' })
+  res.setHeader('Content-Type', d.mime || 'application/octet-stream')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Content-Disposition', `inline; filename="${(d.file_name || 'document').replace(/"/g, '')}"`)
+  createReadStream(d.file_path).pipe(res)
+})
+
+router.delete('/insurance/:id/documents/:docId', (req, res) => {
+  const d = db.prepare(`SELECT file_path FROM insurance_documents WHERE id = ? AND insurance_id = ?`).get(req.params.docId, req.params.id)
+  if (!d) return res.status(404).json({ error: 'Document not found' })
+  if (d.file_path) { try { unlink(d.file_path, () => {}) } catch (_) {} }
+  db.prepare(`DELETE FROM insurance_documents WHERE id = ?`).run(req.params.docId)
+  res.json({ ok: true })
+})
+
+// Prepare the tenant reimbursement email: recipient(s), attachable docs, draft.
+router.get('/insurance/:id/reimbursement/prepare', (req, res) => {
+  const ins = db.prepare(`
+    SELECT i.*, p.id AS property_id, p.address, p.city, p.state, p.tenant_brand_id, tb.name AS tenant_brand
+    FROM property_insurance i
+    JOIN properties p ON p.id = i.property_id
+    LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
+    WHERE i.id = ?
+  `).get(req.params.id)
+  if (!ins) return res.status(404).json({ error: 'Insurance record not found' })
+
+  let contacts = []
+  if (ins.tenant_brand_id) {
+    contacts = db.prepare(`SELECT id, name, email, title, territory_states FROM people WHERE role='tenant_contact' AND tenant_brand_id=? AND email IS NOT NULL AND email<>'' ORDER BY name`).all(ins.tenant_brand_id)
+    const st = (ins.state || '').toUpperCase()
+    contacts.sort((a, b) => ((a.territory_states || '').includes(`"${st}"`) ? 0 : 1) - ((b.territory_states || '').includes(`"${st}"`) ? 0 : 1))
+  }
+  const documents = db.prepare(`SELECT id, doc_type, file_name FROM insurance_documents WHERE insurance_id=? ORDER BY created_at DESC`).all(ins.id)
+
+  const amt = ins.premium != null ? '$' + Math.round(ins.premium).toLocaleString() : 'the insurance premium'
+  const loc = [ins.address, ins.city, ins.state].filter(Boolean).join(', ')
+  const draft = {
+    subject: `Insurance reimbursement request — ${ins.tenant_brand ? ins.tenant_brand + ' at ' : ''}${ins.address}`,
+    body:
+`Hello,
+
+Per your lease, we've paid the property insurance premium for ${loc} and are requesting reimbursement of ${amt}.
+
+Attached are the insurance policy, the invoice, and our proof of payment for your records. Please remit reimbursement at your earliest convenience, and let us know if you need anything further.
+
+Thank you,
+Knox Capital`,
+  }
+  res.json({ property: { id: ins.property_id, address: ins.address }, tenant_brand: ins.tenant_brand, premium: ins.premium, contacts, documents, draft })
+})
+
+router.post('/insurance/:id/reimbursement/send', async (req, res) => {
+  const { to, cc, subject, body, documentIds } = req.body || {}
+  const recipients = Array.isArray(to) ? to.filter(Boolean) : (to ? [to] : [])
+  if (!recipients.length) return res.status(400).json({ error: 'At least one recipient is required' })
+  if (!subject || !body)  return res.status(400).json({ error: 'subject and body are required' })
+  const ins = db.prepare('SELECT id, property_id FROM property_insurance WHERE id = ?').get(req.params.id)
+  if (!ins) return res.status(404).json({ error: 'Insurance record not found' })
+
+  const attachments = []
+  for (const docId of (Array.isArray(documentIds) ? documentIds : [])) {
+    const d = db.prepare(`SELECT file_name, file_path, mime FROM insurance_documents WHERE id = ? AND insurance_id = ?`).get(docId, ins.id)
+    if (d?.file_path && existsSync(d.file_path)) attachments.push({ filename: d.file_name, content: readFileSync(d.file_path), contentType: d.mime })
+  }
+
+  try {
+    await sendMail({
+      to: recipients.join(', '), cc: cc || undefined,
+      from: process.env.INSURANCE_FROM || process.env.EMAIL_FROM,
+      subject, text: body, attachments,
+    })
+  } catch (e) {
+    console.error('[insurance-reimbursement] send failed:', e.message)
+    return res.status(502).json({ error: `Send failed: ${e.message}` })
+  }
+
+  // Log a note on the property.
+  const stamp = new Date().toISOString().slice(0, 10)
+  db.prepare(`UPDATE properties SET notes = TRIM(COALESCE(notes,'') || CHAR(10) || ?) WHERE id = ?`)
+    .run(`[${stamp}] Insurance reimbursement request emailed to ${recipients.join(', ')} (${attachments.length} attachment${attachments.length === 1 ? '' : 's'}).`, ins.property_id)
+
+  res.json({ ok: true, sent_to: recipients, attachments: attachments.length })
 })
 
 export default router

@@ -3,6 +3,7 @@ import DriveDocsButton from '../properties/DriveDocsButton'
 import TenantNotifyButton from '../properties/TenantNotifyButton'
 import LeaseSection from './LeaseSection'
 import DashboardSection from './DashboardSection'
+import InsuranceReimbursement from './InsuranceReimbursement'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft, ClipboardList, Shield, Receipt, Wrench, Users,
@@ -12,7 +13,7 @@ import {
 import {
   getProperty,
   getPropertyTasks,      createTask,        updateTask,        completeTask,    deleteTask,
-  getPropertyInsurance,  createInsurance,   updateInsurance,   deleteInsurance, uploadInsurancePdf, markInsurancePaid,
+  getPropertyInsurance,  createInsurance,   updateInsurance,   deleteInsurance, uploadInsurancePdf, uploadInsuranceDoc, markInsurancePaid,
   getPropertyTaxes,      createTax,         updateTax,         deleteTax,
   getPropertyMaintenance, createMaintenance, updateMaintenance, deleteMaintenance,
   getPropertyContacts,   createContact,     updateContact,     deleteContact,
@@ -370,6 +371,7 @@ function InsuranceSection({ propertyId }) {
   const [uploading, setUploading]         = useState(false)
   const [parseError, setParseError]       = useState(null)
   const [extractedData, setExtractedData] = useState(null)
+  const [parsedFile, setParsedFile]       = useState(null)   // the uploaded PDF, kept to auto-attach as the policy doc
   const fileInputRef                      = useRef(null)
 
   const load = useCallback(async () => {
@@ -406,6 +408,7 @@ function InsuranceSection({ propertyId }) {
     try {
       const data = await uploadInsurancePdf(propertyId, file)
       setExtractedData(data)
+      setParsedFile(file)   // keep it so we can attach it as the Policy document on save
     } catch (err) {
       setParseError(err.message)
     } finally {
@@ -446,8 +449,14 @@ function InsuranceSection({ propertyId }) {
 
     setSaving(true)
     try {
-      await createInsurance(propertyId, payload)
+      const created = await createInsurance(propertyId, payload)
+      // Attach the parsed PDF as the policy document so it's ready for the
+      // tenant reimbursement email.
+      if (created?.id && parsedFile) {
+        try { await uploadInsuranceDoc(created.id, parsedFile, 'Policy') } catch (_) {}
+      }
       setExtractedData(null)
+      setParsedFile(null)
       await load()
     } catch (err) {
       alert('Error saving: ' + err.message)
@@ -703,6 +712,8 @@ function InsuranceSection({ propertyId }) {
                       </div>
 
                     </div>
+
+                    <InsuranceReimbursement policy={p} />
                   </div>
                 )
               })}

@@ -260,6 +260,18 @@ const migrations = [
   `ALTER TABLE property_insurance ADD COLUMN reimbursed_date   TEXT`,
   // Line-item breakdown of the premium (JSON array of { label, amount })
   `ALTER TABLE property_insurance ADD COLUMN premium_breakdown TEXT`,
+  // Documents attached to an insurance record — policy, invoice, proof of
+  // payment, other — used for the tenant reimbursement email.
+  `CREATE TABLE IF NOT EXISTS insurance_documents (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    insurance_id INTEGER NOT NULL REFERENCES property_insurance(id) ON DELETE CASCADE,
+    doc_type     TEXT DEFAULT 'Other',
+    file_name    TEXT,
+    file_path    TEXT,
+    mime         TEXT,
+    created_at   TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_ins_docs ON insurance_documents(insurance_id)`,
   // Task priority
   `ALTER TABLE property_tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`,
   // Deal timestamps (for activity feed).

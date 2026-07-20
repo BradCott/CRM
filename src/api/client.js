@@ -386,6 +386,16 @@ export async function uploadInsurancePdf(propId, file) {
   fd.append('file', file)
   return req('POST', `/management/${propId}/insurance/upload`, fd)
 }
+// Insurance documents + tenant reimbursement
+export const getInsuranceDocuments = (insId)        => req('GET',    `/management/insurance/${insId}/documents`)
+export const insuranceDocUrl       = (insId, docId) => `${BASE}/management/insurance/${insId}/documents/${docId}/file`
+export const deleteInsuranceDoc    = (insId, docId) => req('DELETE', `/management/insurance/${insId}/documents/${docId}`)
+export const prepareInsReimbursement = (insId)      => req('GET',    `/management/insurance/${insId}/reimbursement/prepare`)
+export const sendInsReimbursement    = (insId, d)   => req('POST',   `/management/insurance/${insId}/reimbursement/send`, d)
+export async function uploadInsuranceDoc(insId, file, docType) {
+  const fd = new FormData(); fd.append('file', file); if (docType) fd.append('doc_type', docType)
+  return req('POST', `/management/insurance/${insId}/documents`, fd)
+}
 
 // Investor portal (separate auth surface)
 export const portalMe            = ()               => req('GET',  '/portal/me')
