@@ -515,6 +515,8 @@ const migrations = [
     ('Accounting', 3),
     ('CAM', 4),
     ('Estoppel', 5),
+    ('Taxes', 6),
+    ('Insurance', 7),
     ('Other', 99)`,
 
   // Manual link from a property cap-table row to a global investor profile
