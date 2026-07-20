@@ -606,7 +606,8 @@ router.get('/:id/tenant-notify/prepare', async (req, res) => {
     contacts = db.prepare(`
       SELECT id, name, email, title, territory_states
       FROM people
-      WHERE role = 'tenant_contact' AND tenant_brand_id = ? AND email IS NOT NULL AND email <> ''
+      WHERE role = 'tenant_contact' AND email IS NOT NULL AND email <> ''
+        AND tenant_brand_id IN (SELECT id FROM tenant_brands WHERE name = (SELECT name FROM tenant_brands WHERE id = ?))
       ORDER BY name
     `).all(prop.tenant_brand_id)
     const st = (prop.state || '').toUpperCase()

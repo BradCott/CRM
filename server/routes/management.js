@@ -1031,7 +1031,15 @@ router.get('/insurance/:id/reimbursement/prepare', (req, res) => {
 
   let contacts = []
   if (ins.tenant_brand_id) {
-    contacts = db.prepare(`SELECT id, name, email, title, territory_states FROM people WHERE role='tenant_contact' AND tenant_brand_id=? AND email IS NOT NULL AND email<>'' ORDER BY name`).all(ins.tenant_brand_id)
+    // Match tenant contacts under ANY brand record sharing this brand's name
+    // (handles duplicate/renamed brand rows), then any with an email.
+    contacts = db.prepare(`
+      SELECT id, name, email, title, territory_states
+      FROM people
+      WHERE role='tenant_contact' AND email IS NOT NULL AND email<>''
+        AND tenant_brand_id IN (SELECT id FROM tenant_brands WHERE name = (SELECT name FROM tenant_brands WHERE id = ?))
+      ORDER BY name
+    `).all(ins.tenant_brand_id)
     const st = (ins.state || '').toUpperCase()
     contacts.sort((a, b) => ((a.territory_states || '').includes(`"${st}"`) ? 0 : 1) - ((b.territory_states || '').includes(`"${st}"`) ? 0 : 1))
   }
