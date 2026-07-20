@@ -739,6 +739,12 @@ for (const sql of migrations) {
   try { db.exec(sql) } catch (_) { /* column already exists — ignore */ }
 }
 
+// A lease left "processing" across a restart is dead (its background job died) —
+// clear it so the tab shows an error + re-upload instead of an endless spinner.
+try {
+  db.exec(`UPDATE property_leases SET status = 'error', error = 'Interrupted — please re-upload the lease' WHERE status = 'processing'`)
+} catch (_) {}
+
 // ── Property Management ───────────────────────────────────────────────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS property_tasks (

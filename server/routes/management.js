@@ -87,27 +87,58 @@ async function abstractLease(docs) {
 
 For "responsibilities", cover at least these categories where the lease addresses them: ${LEASE_CATEGORIES.join(', ')}. Add any other notable responsibilities the lease assigns. Set "party" to who bears the cost/obligation; use "Shared" for split items and "Unclear" if the lease is silent or ambiguous. Keep "detail" to a short quote or paraphrase of the governing clause. Do not invent terms that aren't in the document.`
 
-  const response = await fetch('https://api.anthropic.com/v1/messages', {
-    method:  'POST',
-    headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({
-      model:      LEASE_MODEL,
-      max_tokens: 8000,
-      thinking:   { type: 'disabled' },
-      messages: [{
-        role: 'user',
-        content: [
-          ...docs.flatMap(d => [
-            { type: 'text', text: `--- Document: ${d.name || 'Lease'} (${d.doc_type || 'Lease'}) ---` },
-            d.mediaType === 'application/pdf'
-              ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: d.buffer.toString('base64') } }
-              : { type: 'image',    source: { type: 'base64', media_type: d.mediaType,        data: d.buffer.toString('base64') } },
-          ]),
-          { type: 'text', text: prompt },
-        ],
-      }],
-    }),
-  })
+  // Anthropic caps PDFs at 100 pages — trim oversized docs so the call succeeds
+  // (and can't hang) instead of erroring on a huge file.
+  const prepared = []
+  for (const d of docs) {
+    let buffer = d.buffer
+    if (d.mediaType === 'application/pdf') {
+      try {
+        const src = await PDFDocument.load(buffer)
+        if (src.getPageCount() > 100) {
+          const t = await PDFDocument.create()
+          const pgs = await t.copyPages(src, [...Array(100).keys()])
+          pgs.forEach(p => t.addPage(p))
+          buffer = Buffer.from(await t.save())
+          console.log(`[lease] trimmed ${d.name} from ${src.getPageCount()} to 100 pages`)
+        }
+      } catch (e) { console.warn('[lease] page-trim failed:', e.message) }
+    }
+    prepared.push({ ...d, buffer })
+  }
+
+  // Hard timeout so a stalled request can't leave the lease stuck "processing".
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 180000)
+  let response
+  try {
+    response = await fetch('https://api.anthropic.com/v1/messages', {
+      method:  'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      signal:  controller.signal,
+      body: JSON.stringify({
+        model:      LEASE_MODEL,
+        max_tokens: 8000,
+        thinking:   { type: 'disabled' },
+        messages: [{
+          role: 'user',
+          content: [
+            ...prepared.flatMap(d => [
+              { type: 'text', text: `--- Document: ${d.name || 'Lease'} (${d.doc_type || 'Lease'}) ---` },
+              d.mediaType === 'application/pdf'
+                ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: d.buffer.toString('base64') } }
+                : { type: 'image',    source: { type: 'base64', media_type: d.mediaType,        data: d.buffer.toString('base64') } },
+            ]),
+            { type: 'text', text: prompt },
+          ],
+        }],
+      }),
+    })
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? 'The lease was too large/slow to process — try a smaller PDF or split it.' : e.message)
+  } finally {
+    clearTimeout(timer)
+  }
   if (!response.ok) {
     const text = await response.text()
     throw new Error(`Anthropic API error ${response.status}: ${text}`)

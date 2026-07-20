@@ -119,8 +119,13 @@ export default function LeaseSection({ propertyId }) {
         <Loader2 className="w-10 h-10 text-blue-500 mx-auto mb-3 animate-spin" />
         <p className="text-sm font-semibold text-slate-700">Abstracting the lease with AI…</p>
         <p className="text-xs text-slate-400 mt-1">
-          {lease?.file_name ? `${lease.file_name} · ` : ''}This can take up to a minute for a long lease. You can leave this tab — it'll be ready when you come back.
+          {lease?.documents?.length ? `${lease.documents.length} document${lease.documents.length === 1 ? '' : 's'} · ` : ''}This can take up to a minute for a long lease. You can leave this tab — it'll be ready when you come back.
         </p>
+        {lease?.status === 'processing' && (
+          <button onClick={handleDelete} className="mt-4 text-xs text-slate-400 hover:text-red-600 underline">
+            Stuck for a while? Remove and start over
+          </button>
+        )}
       </div>
     )
   }
