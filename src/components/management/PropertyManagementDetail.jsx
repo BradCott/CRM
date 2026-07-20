@@ -439,6 +439,9 @@ function InsuranceSection({ propertyId }) {
       agent_phone:      d.agent_phone        || '',
       coverage_amount:  parseAmount(d.building_coverage),
       notes:            extraLines.join('\n'),
+      premium_breakdown: Array.isArray(d.premium_items) && d.premium_items.length
+        ? JSON.stringify(d.premium_items.filter(i => i && (i.label || i.amount)))
+        : null,
     }
 
     setSaving(true)
@@ -662,6 +665,21 @@ function InsuranceSection({ propertyId }) {
                       <div>
                         <SectionHead label="COVERAGE & COSTS" />
                         <Row label="Premium"          value={p.premium != null && p.premium !== '' ? fmt(p.premium) : ''} />
+                        {(() => {
+                          let items = []
+                          try { items = p.premium_breakdown ? JSON.parse(p.premium_breakdown) : [] } catch { /* ignore */ }
+                          if (!Array.isArray(items) || items.length === 0) return null
+                          return (
+                            <div className="ml-1 pl-3 border-l-2 border-slate-100 my-1 space-y-0.5">
+                              {items.map((it, i) => (
+                                <div key={i} className="flex items-center justify-between gap-2 text-xs text-slate-500">
+                                  <span className="truncate">{it.label || '—'}</span>
+                                  <span className="tabular-nums shrink-0">{it.amount || ''}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )
+                        })()}
                         <Row label="Premium Due Date" value={premiumDueDate} />
                         <Row label="Deductible"       value={p.deductible != null && p.deductible !== '' ? fmt(p.deductible) : ''} />
                         <Row label="Building Coverage"    value={buildingCov  || (p.coverage_amount != null && p.coverage_amount !== '' ? fmt(p.coverage_amount) : '')} />

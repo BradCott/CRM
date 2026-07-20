@@ -258,6 +258,8 @@ const migrations = [
   // Insurance reimbursed status
   `ALTER TABLE property_insurance ADD COLUMN reimbursed_status TEXT NOT NULL DEFAULT 'unreimbursed'`,
   `ALTER TABLE property_insurance ADD COLUMN reimbursed_date   TEXT`,
+  // Line-item breakdown of the premium (JSON array of { label, amount })
+  `ALTER TABLE property_insurance ADD COLUMN premium_breakdown TEXT`,
   // Task priority
   `ALTER TABLE property_tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`,
   // Deal timestamps (for activity feed).

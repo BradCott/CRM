@@ -407,8 +407,8 @@ router.post('/:propertyId/insurance', (req, res) => {
     INSERT INTO property_insurance
       (property_id, carrier, policy_number, premium, coverage_amount, deductible,
        effective_date, expiry_date, auto_renewal, agent_name, agent_phone, agent_email,
-       notes, paid_status, paid_date)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+       notes, paid_status, paid_date, premium_breakdown)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     pid,
     f.carrier || null, f.policy_number || null,
@@ -420,7 +420,8 @@ router.post('/:propertyId/insurance', (req, res) => {
     f.agent_name || null, f.agent_phone || null, f.agent_email || null,
     f.notes || null,
     f.paid_status || 'unpaid',
-    f.paid_date   || null
+    f.paid_date   || null,
+    f.premium_breakdown || null
   )
 
   // Auto-create renewal reminder task if expiry_date provided
@@ -459,7 +460,7 @@ router.put('/insurance/:id', (req, res) => {
     UPDATE property_insurance SET
       carrier=?, policy_number=?, premium=?, coverage_amount=?, deductible=?,
       effective_date=?, expiry_date=?, auto_renewal=?, agent_name=?, agent_phone=?, agent_email=?,
-      notes=?, paid_status=?, paid_date=?
+      notes=?, paid_status=?, paid_date=?, premium_breakdown=?
     WHERE id=?
   `).run(
     f.carrier || null, f.policy_number || null,
@@ -472,6 +473,7 @@ router.put('/insurance/:id', (req, res) => {
     f.notes       || null,
     f.paid_status || 'unpaid',
     f.paid_date   || null,
+    f.premium_breakdown !== undefined ? f.premium_breakdown : null,
     req.params.id
   )
   res.json(db.prepare('SELECT * FROM property_insurance WHERE id = ?').get(req.params.id))
@@ -545,11 +547,13 @@ router.post('/:propertyId/insurance/upload', upload.single('file'), async (req, 
   "mortgagee": "",
   "construction_type": "",
   "year_built": "",
-  "valuation_method": ""
+  "valuation_method": "",
+  "premium_items": [ { "label": "", "amount": "" } ]
 }
 
 For premium_due_date: look for a payment due date or bill due date. If not found, use the effective date.
 For mortgagee: look for any lender or mortgagee listed on the policy. If none, return "".
+For premium_items: itemize EVERYTHING that adds up to the total premium — each coverage's premium (e.g. Building/Property, General Liability, Wind/Hail, Equipment Breakdown, Terrorism/TRIA), plus any surcharges, inspection fees, policy fees, and taxes. Give each a short "label" and its "amount" (with the $ sign). The amounts should sum to the total premium. If the document only shows a single total premium with no breakdown, return an empty array [].
 Extract exact values as they appear in the document. For dollar amounts include the $ sign.`
 
   try {
