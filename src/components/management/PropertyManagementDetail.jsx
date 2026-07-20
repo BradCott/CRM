@@ -7,7 +7,7 @@ import { useParams, Link, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft, ClipboardList, Shield, Receipt, Wrench, Users,
   Plus, Pencil, Trash2, CheckCircle2, Loader2,
-  Upload, AlertCircle, ChevronDown, ChevronUp, FileUp, FileText, LayoutDashboard,
+  Upload, AlertCircle, ChevronDown, ChevronUp, FileUp, FileText, LayoutDashboard, Calculator,
 } from 'lucide-react'
 import {
   getProperty,
@@ -1212,6 +1212,14 @@ export default function PropertyManagementDetail() {
             {label}
           </button>
         ))}
+        <Link
+          to={`/accounting/${propertyId}`}
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium whitespace-nowrap transition-colors text-slate-600 hover:bg-slate-100"
+          title="Open this property's accounting ledger"
+        >
+          <Calculator className="w-3.5 h-3.5" />
+          Accounting
+        </Link>
       </div>
 
       {/* Tab content */}
