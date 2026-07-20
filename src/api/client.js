@@ -20,6 +20,7 @@ export const getTenantBrands   = ()       => req('GET',    '/tenant-brands')
 export const createTenantBrand = (data)   => req('POST',   '/tenant-brands', data)
 export const updateTenantBrand = (id, d)  => req('PUT',    `/tenant-brands/${id}`, d)
 export const deleteTenantBrand = (id)     => req('DELETE', `/tenant-brands/${id}`)
+export const mergeTenantBrands = (data)   => req('POST',   '/tenant-brands/merge', data) // { keep_id, merge_ids, name }
 export const getOperators      = ()       => req('GET',    '/operators')
 export const createOperator    = (data)   => req('POST',   '/operators', data)
 export const updateOperator    = (id, d)  => req('PUT',    `/operators/${id}`, d)
@@ -390,6 +391,7 @@ export async function uploadInsurancePdf(propId, file) {
 export const getInsuranceDocuments = (insId)        => req('GET',    `/management/insurance/${insId}/documents`)
 export const insuranceDocUrl       = (insId, docId) => `${BASE}/management/insurance/${insId}/documents/${docId}/file`
 export const deleteInsuranceDoc    = (insId, docId) => req('DELETE', `/management/insurance/${insId}/documents/${docId}`)
+export const extractInsBreakdown     = (insId)      => req('POST',   `/management/insurance/${insId}/extract-breakdown`)
 export const prepareInsReimbursement = (insId)      => req('GET',    `/management/insurance/${insId}/reimbursement/prepare`)
 export const sendInsReimbursement    = (insId, d)   => req('POST',   `/management/insurance/${insId}/reimbursement/send`, d)
 export async function uploadInsuranceDoc(insId, file, docType) {

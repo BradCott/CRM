@@ -1,6 +1,87 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ShieldCheck, UserPlus, Loader2, AlertCircle, CheckCircle, X, Copy, Check } from 'lucide-react'
+import { ShieldCheck, UserPlus, Loader2, AlertCircle, CheckCircle, X, Copy, Check, GitMerge } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
+import { getTenantBrands, mergeTenantBrands } from '../../api/client'
+
+// Merge duplicate tenant brands (e.g. "Sherwin Williams" + "Sherwin-Williams").
+function BrandMergeCard() {
+  const [brands, setBrands] = useState(null)
+  const [q, setQ]           = useState('')
+  const [sel, setSel]       = useState(() => new Set())
+  const [keepId, setKeepId] = useState(null)
+  const [name, setName]     = useState('')
+  const [merging, setMerging] = useState(false)
+
+  const load = () => getTenantBrands().then(setBrands).catch(() => setBrands([]))
+  useEffect(() => { load() }, [])
+
+  const toggle = (id) => setSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const selected = (brands || []).filter(b => sel.has(b.id))
+
+  async function doMerge() {
+    if (!keepId || !name.trim()) return
+    setMerging(true)
+    try {
+      await mergeTenantBrands({ keep_id: keepId, merge_ids: selected.map(b => b.id).filter(id => id !== keepId), name: name.trim() })
+      setSel(new Set()); setKeepId(null); await load()
+    } catch (e) { alert(e.message) } finally { setMerging(false) }
+  }
+
+  if (brands === null) return null
+  const shown = brands.filter(b => !q || b.name.toLowerCase().includes(q.toLowerCase()))
+
+  return (
+    <div className="mt-6 bg-white border border-slate-200 rounded-xl overflow-hidden">
+      <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between gap-2 flex-wrap">
+        <h2 className="text-sm font-semibold text-slate-700">Tenant Brands ({brands.length})</h2>
+        {sel.size >= 2 && !keepId && (
+          <button onClick={() => { setKeepId(selected[0]?.id ?? null); setName(selected[0]?.name ?? '') }}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700">
+            <GitMerge className="w-3.5 h-3.5" /> Merge {sel.size} selected
+          </button>
+        )}
+      </div>
+
+      {keepId ? (
+        <div className="p-5 space-y-3">
+          <p className="text-sm text-slate-600">Merging {selected.length} brands into one. Keep:</p>
+          <div className="space-y-1">
+            {selected.map(b => (
+              <label key={b.id} className={`flex items-center gap-2 px-3 py-2 rounded-lg border cursor-pointer ${keepId === b.id ? 'border-violet-300 bg-violet-50' : 'border-slate-200 hover:bg-slate-50'}`}>
+                <input type="radio" checked={keepId === b.id} onChange={() => { setKeepId(b.id); setName(b.name) }} className="accent-violet-600" />
+                <span className="text-sm text-slate-800">{b.name}</span>
+              </label>
+            ))}
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Final name</label>
+            <input value={name} onChange={e => setName(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+          </div>
+          <p className="text-xs text-slate-400">All properties &amp; tenant contacts under the others move to this brand, then the duplicates are deleted. Can't be undone.</p>
+          <div className="flex gap-2">
+            <button onClick={doMerge} disabled={merging || !name.trim()} className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50">
+              {merging ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />} Merge into "{name.trim()}"
+            </button>
+            <button onClick={() => setKeepId(null)} className="text-xs text-slate-500 hover:text-slate-700 px-3 py-1.5">Cancel</button>
+          </div>
+        </div>
+      ) : (
+        <div className="p-4">
+          <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search brands…" className="w-full mb-2 px-3 py-2 text-sm border border-slate-200 rounded-lg" />
+          <div className="max-h-72 overflow-y-auto divide-y divide-slate-50">
+            {shown.map(b => (
+              <label key={b.id} className="flex items-center gap-2.5 px-2 py-1.5 hover:bg-slate-50 cursor-pointer">
+                <input type="checkbox" checked={sel.has(b.id)} onChange={() => toggle(b.id)} className="w-4 h-4 accent-violet-600" />
+                <span className="text-sm text-slate-700">{b.name}</span>
+              </label>
+            ))}
+          </div>
+          <p className="text-[11px] text-slate-400 mt-2">Select 2+ duplicate brands (e.g. "Sherwin Williams" and "Sherwin-Williams") and merge them into one canonical name.</p>
+        </div>
+      )}
+    </div>
+  )
+}
 
 const ROLES = [
   { value: 'admin',        label: 'Admin',        desc: 'Full access + user management' },
@@ -324,6 +405,8 @@ export default function AdminPage() {
             </table>
           </div>
         )}
+
+        <BrandMergeCard />
       </div>
 
       {showInvite && (

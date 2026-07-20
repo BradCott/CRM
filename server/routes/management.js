@@ -1018,6 +1018,44 @@ router.delete('/insurance/:id/documents/:docId', (req, res) => {
   res.json({ ok: true })
 })
 
+// Extract the premium line-item breakdown from an attached document — preferring
+// the INVOICE (where the property/liability split usually lives), then policy.
+router.post('/insurance/:id/extract-breakdown', async (req, res) => {
+  const ins = db.prepare('SELECT id FROM property_insurance WHERE id = ?').get(req.params.id)
+  if (!ins) return res.status(404).json({ error: 'Insurance record not found' })
+  const doc = db.prepare(`
+    SELECT file_path, mime FROM insurance_documents
+    WHERE insurance_id = ? AND file_path IS NOT NULL
+    ORDER BY CASE doc_type WHEN 'Invoice' THEN 0 WHEN 'Policy' THEN 1 ELSE 2 END, created_at DESC
+    LIMIT 1
+  `).get(ins.id)
+  if (!doc || !existsSync(doc.file_path)) return res.status(400).json({ error: 'No insurance document to read — upload the invoice or policy first.' })
+
+  const prompt = `From this insurance invoice/policy, itemize EVERY premium component that adds up to the total premium — each coverage's premium (e.g. Property/Building, General Liability, Wind/Hail, Equipment Breakdown, Terrorism/TRIA), plus surcharges, policy/inspection fees, and taxes. Return ONLY a JSON array (no markdown): [ { "label": "", "amount": "" } ] — a short label and dollar amount (with $) for each. The amounts should sum to the total premium.`
+  let items = []
+  try {
+    let buffer = readFileSync(doc.file_path)
+    const mediaType = doc.mime || 'application/pdf'
+    if (mediaType === 'application/pdf') {
+      const srcDoc = await PDFDocument.load(buffer)
+      if (srcDoc.getPageCount() > 20) {
+        const t = await PDFDocument.create()
+        const pgs = await t.copyPages(srcDoc, [...Array(20).keys()])
+        pgs.forEach(p => t.addPage(p)); buffer = Buffer.from(await t.save())
+      }
+    }
+    const result = await callClaude(buffer, mediaType, prompt)
+    const text = (result.content?.[0]?.text || '').trim().replace(/^```json\s*/i, '').replace(/\s*```$/, '')
+    const m = text.match(/\[[\s\S]*\]/)
+    items = JSON.parse(m ? m[0] : text)
+  } catch (e) {
+    return res.status(502).json({ error: `Couldn't read the breakdown: ${e.message}` })
+  }
+  items = (Array.isArray(items) ? items : []).filter(i => i && (i.label || i.amount))
+  db.prepare('UPDATE property_insurance SET premium_breakdown = ? WHERE id = ?').run(JSON.stringify(items), ins.id)
+  res.json({ premium_items: items })
+})
+
 // Prepare the tenant reimbursement email: recipient(s), attachable docs, draft.
 router.get('/insurance/:id/reimbursement/prepare', (req, res) => {
   const ins = db.prepare(`

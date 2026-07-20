@@ -1,7 +1,7 @@
 // Insurance record: document vault (policy / invoice / proof of payment) +
 // "email tenant for reimbursement" flow with those docs attached.
 import { useState, useEffect, useCallback } from 'react'
-import { FileText, Download, Trash2, Loader2, Mail, X, Check, AlertCircle, Send } from 'lucide-react'
+import { FileText, Download, Trash2, Loader2, Mail, X, Check, AlertCircle, Send, Sparkles } from 'lucide-react'
 import DropZone from '../ui/DropZone'
 
 const parseAmt = (s) => { const n = parseFloat(String(s ?? '').replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n }
@@ -17,7 +17,7 @@ Thank you,
 Knox Capital`
 import {
   getInsuranceDocuments, uploadInsuranceDoc, insuranceDocUrl, deleteInsuranceDoc,
-  prepareInsReimbursement, sendInsReimbursement,
+  prepareInsReimbursement, sendInsReimbursement, extractInsBreakdown,
 } from '../../api/client'
 
 const DOC_TYPES = ['Policy', 'Invoice', 'Proof of Payment', 'Other']
@@ -95,6 +95,7 @@ function ReimbursementModal({ insId, onClose, onSent }) {
   const [items, setItems]     = useState([])                // premium breakdown [{label, amount, value, selected}]
   const [uploadType, setUploadType]     = useState('Invoice')
   const [uploadingDoc, setUploadingDoc] = useState(false)
+  const [extracting, setExtracting]     = useState(false)
   const [sending, setSending] = useState(false)
   const [error, setError]     = useState(null)
   const [sent, setSent]       = useState(null)
@@ -127,6 +128,14 @@ function ReimbursementModal({ insId, onClose, onSent }) {
 
   const toggleDoc  = (id)  => setSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   const toggleItem = (idx) => setItems(prev => prev.map((it, i) => i === idx ? { ...it, selected: !it.selected } : it))
+
+  async function extractBreakdown() {
+    setExtracting(true)
+    try {
+      const r = await extractInsBreakdown(insId)
+      setItems((r.premium_items || []).map(i => ({ label: i.label, amount: i.amount, value: parseAmt(i.amount), selected: true })))
+    } catch (e) { alert(e.message) } finally { setExtracting(false) }
+  }
 
   async function onUploadDoc(file) {
     if (!file) return
@@ -189,6 +198,17 @@ function ReimbursementModal({ insId, onClose, onSent }) {
                 <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Subject</label>
                 <input value={subject} onChange={e => setSubject(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
+              {/* No breakdown yet — pull the property/liability split from the invoice */}
+              {!hasBreakdown && (
+                <div className="rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2.5 flex items-center justify-between gap-2">
+                  <span className="text-xs text-slate-500">To exclude liability, pull the premium split from the invoice/policy.</span>
+                  <button onClick={extractBreakdown} disabled={extracting}
+                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-white disabled:opacity-50 shrink-0">
+                    {extracting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Extract split
+                  </button>
+                </div>
+              )}
+
               {/* Reimbursement amount — exclude charges the tenant doesn't cover */}
               {hasBreakdown && (
                 <div>
