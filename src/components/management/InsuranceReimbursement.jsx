@@ -128,6 +128,9 @@ function ReimbursementModal({ insId, onClose, onSent }) {
 
   const toggleDoc  = (id)  => setSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
   const toggleItem = (idx) => setItems(prev => prev.map((it, i) => i === idx ? { ...it, selected: !it.selected } : it))
+  const setItem    = (idx, patch) => setItems(prev => prev.map((it, i) => i === idx ? { ...it, ...patch, ...(patch.amount !== undefined ? { value: parseAmt(patch.amount) } : {}) } : it))
+  const addItem    = () => setItems(prev => [...prev, { label: '', amount: '', value: 0, selected: true }])
+  const removeItem = (idx) => setItems(prev => prev.filter((_, i) => i !== idx))
 
   async function extractBreakdown() {
     setExtracting(true)
@@ -199,36 +202,39 @@ function ReimbursementModal({ insId, onClose, onSent }) {
                 <input value={subject} onChange={e => setSubject(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
               {/* No breakdown yet — pull the property/liability split from the invoice */}
-              {!hasBreakdown && (
-                <div className="rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-2.5 flex items-center justify-between gap-2">
-                  <span className="text-xs text-slate-500">To exclude liability, pull the premium split from the invoice/policy.</span>
+              {/* Reimbursement amount — editable line items; uncheck / split out liability */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide">Reimbursement amount</label>
                   <button onClick={extractBreakdown} disabled={extracting}
-                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-white disabled:opacity-50 shrink-0">
-                    {extracting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />} Extract split
+                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-500 hover:text-slate-700 disabled:opacity-50">
+                    {extracting ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />} Extract from invoice/policy
                   </button>
                 </div>
-              )}
-
-              {/* Reimbursement amount — exclude charges the tenant doesn't cover */}
-              {hasBreakdown && (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">Reimbursement amount</label>
+                {items.length === 0 ? (
+                  <div className="rounded-xl border border-slate-200 bg-slate-50/60 px-3 py-3 text-xs text-slate-500">
+                    No line items yet — <span className="font-medium">Extract from invoice/policy</span> above, or <button onClick={addItem} className="font-medium text-blue-600 hover:underline">add them manually</button>. Then uncheck any charge the tenant doesn't reimburse (e.g. liability).
+                  </div>
+                ) : (
                   <div className="rounded-xl border border-slate-200 divide-y divide-slate-100">
                     {items.map((it, i) => (
-                      <label key={i} className="flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 cursor-pointer">
+                      <div key={i} className="flex items-center gap-2 px-2.5 py-1.5">
                         <input type="checkbox" checked={it.selected} onChange={() => toggleItem(i)} className="w-4 h-4 accent-blue-600 shrink-0" />
-                        <span className="text-sm text-slate-700 flex-1 truncate">{it.label || '—'}</span>
-                        <span className="text-sm text-slate-500 tabular-nums shrink-0">{it.amount}</span>
-                      </label>
+                        <input value={it.label} onChange={e => setItem(i, { label: e.target.value })} placeholder="Charge (e.g. Property, General Liability)"
+                          className="flex-1 min-w-0 text-sm px-2 py-1 rounded border border-transparent hover:border-slate-200 focus:border-slate-300 focus:bg-white outline-none" />
+                        <input value={it.amount} onChange={e => setItem(i, { amount: e.target.value })} placeholder="$0"
+                          className="w-24 text-sm text-right tabular-nums px-2 py-1 rounded border border-transparent hover:border-slate-200 focus:border-slate-300 focus:bg-white outline-none" />
+                        <button onClick={() => removeItem(i)} className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+                      </div>
                     ))}
                     <div className="flex items-center justify-between px-3 py-2 bg-slate-50">
-                      <span className="text-sm font-semibold text-slate-700">Requesting</span>
-                      <span className="text-sm font-semibold text-blue-700 tabular-nums">{money(selectedAmount)}</span>
+                      <button onClick={addItem} className="text-xs font-medium text-blue-600 hover:text-blue-800">+ Add line</button>
+                      <span className="text-sm font-semibold text-blue-700 tabular-nums">Requesting {money(selectedAmount)}</span>
                     </div>
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-1">Uncheck charges the tenant doesn't reimburse (e.g. liability — property only). The amount in the message updates automatically.</p>
-                </div>
-              )}
+                )}
+                <p className="text-[11px] text-slate-400 mt-1">Package invoices often lump Property + Liability into one line. Edit it (and add a "General Liability" line from the policy) to split them, then uncheck liability. The message amount updates automatically.</p>
+              </div>
 
               <div>
                 <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Message</label>
