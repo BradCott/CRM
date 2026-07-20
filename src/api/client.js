@@ -50,6 +50,9 @@ export const bulkDeletePeople = (ids) => req('POST', '/people/bulk-delete', { id
 export const setPersonDNC   = (id, v)  => req('PATCH', `/people/${id}/dnc`, { do_not_contact: v ? 1 : 0 })
 export const mergePeople    = (keepId, mergeIds) => req('POST', '/people/merge', { keep_id: keepId, merge_ids: mergeIds })
 export const getPersonDuplicates = (id) => req('GET', `/people/${id}/duplicates`)
+export const getPersonNotes = (id)       => req('GET',    `/people/${id}/notes`)
+export const addPersonNote  = (id, note) => req('POST',   `/people/${id}/notes`, { note })
+export const deletePersonNote = (noteId) => req('DELETE', `/people/notes/${noteId}`)
 
 // Properties — paginated
 export const getProperties   = (params = {}) => {

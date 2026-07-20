@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { X, Pencil, Phone, Mail, MapPin, FileText, Building2, AlertCircle, User, TrendingUp, Send, ChevronDown, ChevronUp, Trash2, PenLine, CheckCircle, Reply, CalendarOff } from 'lucide-react'
-import { getPerson, getEmails, createEmail, deleteEmail, getHandwryttenContactSends, markSendResponded } from '../../api/client'
+import { X, Pencil, Phone, Mail, MapPin, FileText, Building2, AlertCircle, User, TrendingUp, Send, ChevronDown, ChevronUp, Trash2, PenLine, CheckCircle, Reply, CalendarOff, Plus, Loader2, PhoneCall } from 'lucide-react'
+import { getPerson, getEmails, createEmail, deleteEmail, getHandwryttenContactSends, markSendResponded, getPersonNotes, addPersonNote, deletePersonNote } from '../../api/client'
 import MailPauseControl, { isPaused, pauseLabel } from '../handwrytten/MailPauseControl'
 import Button from '../ui/Button'
 import Avatar from '../ui/Avatar'
@@ -253,6 +253,9 @@ export default function PersonDetail({ personId, onClose, onEdit }) {
             <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">{data.notes}</p>
           </Section>
         )}
+
+        {/* Activity log — time/date-stamped call & follow-up notes */}
+        <ActivityLog personId={personId} />
 
         {/* Contacts within this company */}
         {data.contacts?.length > 0 && (
@@ -546,6 +549,13 @@ function fmtEmailDate(iso) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+// person_notes.created_at is stored as UTC "YYYY-MM-DD HH:MM:SS" — show date + time.
+function fmtEmailDateTime(v) {
+  if (!v) return ''
+  const d = new Date(String(v).includes('T') ? v : v.replace(' ', 'T') + 'Z')
+  return isNaN(d) ? '' : d.toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
 // sent_at is stored as UTC "YYYY-MM-DD HH:MM:SS"; responded_at is ISO.
 function daysToRespond(sent, responded) {
   if (!sent || !responded) return null
@@ -555,6 +565,73 @@ function daysToRespond(sent, responded) {
 }
 
 /* ── Sub-components ─────────────────────────────────────────── */
+
+// Running, time/date-stamped log of calls and follow-ups on this person.
+function ActivityLog({ personId }) {
+  const [notes, setNotes]   = useState([])
+  const [text, setText]     = useState('')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    let alive = true
+    getPersonNotes(personId).then(n => alive && setNotes(n)).catch(() => {})
+    return () => { alive = false }
+  }, [personId])
+
+  async function add() {
+    if (!text.trim()) return
+    setSaving(true)
+    try {
+      const created = await addPersonNote(personId, text.trim())
+      setNotes(prev => [created, ...prev])
+      setText('')
+    } catch (e) { alert(e.message) } finally { setSaving(false) }
+  }
+  async function del(id) {
+    if (!window.confirm('Delete this note?')) return
+    try { await deletePersonNote(id); setNotes(prev => prev.filter(n => n.id !== id)) }
+    catch (e) { alert(e.message) }
+  }
+
+  return (
+    <Section icon={PhoneCall} title={`Activity Log${notes.length ? ` (${notes.length})` : ''}`}>
+      <div className="flex gap-2 mb-3">
+        <textarea
+          value={text}
+          onChange={e => setText(e.target.value)}
+          onKeyDown={e => { if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') add() }}
+          rows={2}
+          placeholder="Log a call or note — e.g. Broker called re: our mailer, emailing the OM…"
+          className="flex-1 text-sm border border-slate-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500"
+        />
+        <button
+          onClick={add}
+          disabled={saving || !text.trim()}
+          className="shrink-0 self-end inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+        >
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Add note
+        </button>
+      </div>
+      {notes.length ? (
+        <ul className="space-y-2 max-h-72 overflow-y-auto">
+          {notes.map(n => (
+            <li key={n.id} className="group rounded-lg border border-slate-100 px-3 py-2">
+              <div className="flex items-center justify-between gap-2 mb-0.5">
+                <span className="text-[11px] text-slate-400">{fmtEmailDateTime(n.created_at)}{n.author ? ` · ${n.author}` : ''}</span>
+                <button onClick={() => del(n.id)} className="text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 shrink-0">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+              <p className="text-sm text-slate-700 whitespace-pre-line">{n.note}</p>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="text-sm text-slate-400 italic">No activity logged yet. Add a note above — each entry is time-stamped.</p>
+      )}
+    </Section>
+  )
+}
 
 function Section({ icon: Icon, title, children }) {
   return (

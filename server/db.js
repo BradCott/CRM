@@ -620,6 +620,15 @@ const migrations = [
     created_at  TEXT DEFAULT (datetime('now'))
   )`,
   `CREATE INDEX IF NOT EXISTS idx_call_notes ON property_call_notes(property_id)`,
+  // Time/date-stamped activity notes on a person (calls, mailer responses, etc.).
+  `CREATE TABLE IF NOT EXISTS person_notes (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    person_id   INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    note        TEXT NOT NULL,
+    author      TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_person_notes ON person_notes(person_id)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

@@ -317,4 +317,22 @@ router.post('/bulk-delete', (req, res) => {
   res.json({ deleted: ids.length })
 })
 
+// ── Time/date-stamped activity notes (calls, mailer responses, etc.) ──────────
+router.get('/:id/notes', (req, res) => {
+  res.json(db.prepare(
+    'SELECT id, note, author, created_at FROM person_notes WHERE person_id = ? ORDER BY created_at DESC, id DESC'
+  ).all(req.params.id))
+})
+router.post('/:id/notes', (req, res) => {
+  const note = String(req.body?.note || '').trim()
+  if (!note) return res.status(400).json({ error: 'note is required' })
+  const r = db.prepare('INSERT INTO person_notes (person_id, note, author) VALUES (?, ?, ?)')
+    .run(req.params.id, note, req.user?.name || null)
+  res.status(201).json(db.prepare('SELECT id, note, author, created_at FROM person_notes WHERE id = ?').get(r.lastInsertRowid))
+})
+router.delete('/notes/:noteId', (req, res) => {
+  db.prepare('DELETE FROM person_notes WHERE id = ?').run(req.params.noteId)
+  res.json({ ok: true })
+})
+
 export default router
