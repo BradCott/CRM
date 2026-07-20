@@ -83,7 +83,12 @@ export default function DashboardSection({ propertyId }) {
       {/* Hero: photo + store info + estimated sales */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Photo */}
-        <div className="relative rounded-xl border border-slate-200 bg-slate-50 overflow-hidden aspect-[4/3] group">
+        <div
+          className="relative rounded-xl border border-slate-200 bg-slate-50 overflow-hidden aspect-[4/3] group"
+          onDragOver={e => e.preventDefault()}
+          onDrop={e => { e.preventDefault(); onPhoto(e.dataTransfer.files?.[0]) }}
+          title="Drag a photo here to upload"
+        >
           {p.has_photo ? (
             <img src={`${propertyPhotoUrl(propertyId)}?v=${photoV}`} alt="Property" className="w-full h-full object-cover" />
           ) : (

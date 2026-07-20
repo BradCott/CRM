@@ -382,9 +382,13 @@ function PortalDocsCard({ investorId }) {
   const fromInv = (docs || []).filter(d => d.direction === 'from_investor')
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+    <div
+      className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden"
+      onDragOver={e => e.preventDefault()}
+      onDrop={e => { e.preventDefault(); if (!uploading) onUpload(e.dataTransfer.files?.[0]) }}
+    >
       <div className="flex items-center justify-between gap-2 px-5 py-3 border-b border-slate-100 flex-wrap">
-        <h2 className="text-sm font-semibold text-slate-700">Portal Documents</h2>
+        <h2 className="text-sm font-semibold text-slate-700">Portal Documents <span className="font-normal text-slate-400">· drop to share</span></h2>
         <div className="flex items-center gap-2">
           <select value={category} onChange={e => setCategory(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
             {DOC_CATEGORIES.map(c => <option key={c}>{c}</option>)}

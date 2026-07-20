@@ -155,8 +155,12 @@ export default function LeaseSection({ propertyId }) {
       </div>
 
       {/* Documents (base lease + amendments/exhibits) */}
-      <div className="rounded-xl border border-slate-200 overflow-hidden">
-        <div className="bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Documents ({lease.documents?.length || 0})</div>
+      <div
+        className="rounded-xl border border-slate-200 overflow-hidden"
+        onDragOver={e => e.preventDefault()}
+        onDrop={e => { e.preventDefault(); if (!uploading) handleFile(e.dataTransfer.files?.[0], addType) }}
+      >
+        <div className="bg-slate-50 px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Documents ({lease.documents?.length || 0}) <span className="normal-case font-normal text-slate-400">· drop a file to add as {addType}</span></div>
         <ul className="divide-y divide-slate-100">
           {(lease.documents || []).map(d => (
             <li key={d.id} className="flex items-center gap-2 px-4 py-2">

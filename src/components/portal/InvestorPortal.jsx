@@ -201,7 +201,10 @@ function PortalDocuments() {
   return (
     <div>
       <h2 className="text-sm font-semibold text-slate-700 mb-2">Documents</h2>
-      <div className="rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100">
+      <div className="rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100"
+        onDragOver={e => e.preventDefault()}
+        onDrop={e => { e.preventDefault(); if (!uploading) onUpload(e.dataTransfer.files?.[0]) }}
+      >
         <div className="px-4 py-3">
           <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-2">Shared with you</p>
           {shared.length ? (

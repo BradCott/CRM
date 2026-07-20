@@ -4,6 +4,7 @@ import TenantNotifyButton from '../properties/TenantNotifyButton'
 import LeaseSection from './LeaseSection'
 import DashboardSection from './DashboardSection'
 import InsuranceReimbursement from './InsuranceReimbursement'
+import DropZone from '../ui/DropZone'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft, ClipboardList, Shield, Receipt, Wrench, Users,
@@ -372,6 +373,8 @@ function InsuranceSection({ propertyId }) {
   const [parseError, setParseError]       = useState(null)
   const [extractedData, setExtractedData] = useState(null)
   const [parsedFile, setParsedFile]       = useState(null)   // the uploaded PDF, kept to auto-attach as the policy doc
+  const [paidReceiptFor, setPaidReceiptFor] = useState(null) // insurance id to prompt a proof-of-payment upload
+  const [receiptBusy, setReceiptBusy]     = useState(false)
   const fileInputRef                      = useRef(null)
 
   const load = useCallback(async () => {
@@ -399,10 +402,8 @@ function InsuranceSection({ propertyId }) {
     fileInputRef.current?.click()
   }
 
-  async function handleFileSelected(e) {
-    const file = e.target.files?.[0]
+  async function processInsuranceFile(file) {
     if (!file) return
-    e.target.value = ''
     setUploading(true)
     setParseError(null)
     try {
@@ -414,6 +415,12 @@ function InsuranceSection({ propertyId }) {
     } finally {
       setUploading(false)
     }
+  }
+
+  function handleFileSelected(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    processInsuranceFile(file)
   }
 
   async function handleSaveExtracted() {
@@ -495,6 +502,7 @@ function InsuranceSection({ propertyId }) {
     try {
       await markInsurancePaid(id, paid)
       await load()
+      if (paid) setPaidReceiptFor(id)   // prompt to attach the receipt
     } catch (err) {
       alert('Error: ' + err.message)
     }
@@ -515,7 +523,10 @@ function InsuranceSection({ propertyId }) {
           />
           <button
             onClick={handleUploadClick}
+            onDragOver={e => e.preventDefault()}
+            onDrop={e => { e.preventDefault(); processInsuranceFile(e.dataTransfer.files?.[0]) }}
             disabled={uploading}
+            title="Upload or drag-and-drop an insurance PDF"
             className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 hover:border-blue-300 transition-colors disabled:opacity-60"
           >
             {uploading
@@ -719,6 +730,27 @@ function InsuranceSection({ propertyId }) {
               })}
             </div>
           )
+      )}
+
+      {/* Proof-of-payment prompt — shown right after marking a policy paid */}
+      {paidReceiptFor && (
+        <Modal isOpen onClose={() => setPaidReceiptFor(null)} title="Upload proof of payment" size="sm">
+          <div className="p-5 space-y-3">
+            <p className="text-sm text-slate-500">Marked paid. Attach the receipt / proof of payment — it'll be ready to include in the tenant reimbursement email.</p>
+            <DropZone
+              accept=".pdf,image/*"
+              busy={receiptBusy}
+              label="Drop the receipt or click to browse"
+              onFile={async (file) => {
+                if (!file) return
+                setReceiptBusy(true)
+                try { await uploadInsuranceDoc(paidReceiptFor, file, 'Proof of Payment'); setPaidReceiptFor(null); await load() }
+                catch (e) { alert(e.message) } finally { setReceiptBusy(false) }
+              }}
+            />
+            <div className="text-right"><button onClick={() => setPaidReceiptFor(null)} className="text-xs text-slate-500 hover:text-slate-700">Skip for now</button></div>
+          </div>
+        </Modal>
       )}
 
       {/* Extraction review modal — shown after PDF parse, before saving */}
