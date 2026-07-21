@@ -70,7 +70,8 @@ function daysUntil(dateStr) {
 const TASK_TYPES    = ['inspection', 'insurance', 'tax', 'lease', 'maintenance', 'other']
 const RECURS_OPTS   = ['none', 'monthly', 'quarterly', 'annually']
 const MAINT_CATS    = ['HVAC', 'Roof', 'Plumbing', 'Electrical', 'Landscaping', 'Parking Lot', 'General', 'Other']
-const CONTACT_ROLES = ['Property Manager', 'Contractor', 'Electrician', 'Plumber', 'HVAC', 'Landscaper', 'Insurance Agent', 'Attorney', 'Accountant', 'Other']
+const CONTACT_ROLES = ['Property Manager', 'Contractor', 'Roofer', 'Electrician', 'Plumber', 'HVAC', 'Landscaper', 'Insurance Agent', 'Attorney', 'Accountant', 'Other']
+const KNOWN_ROLES = CONTACT_ROLES.filter(r => r !== 'Other')
 
 const TASK_COLORS = {
   insurance:   'bg-blue-100   text-blue-700',
@@ -1109,7 +1110,9 @@ function ContactsSection({ propertyId }) {
 
   useEffect(() => { load() }, [load])
 
-  const EMPTY = { name: '', role: 'Other', company: '', phone: '', email: '', notes: '' }
+  const EMPTY = { name: '', role: 'Property Manager', company: '', phone: '', email: '', notes: '' }
+  // A role that isn't one of the presets (incl. blank) is a custom "Other" value.
+  const isOtherRole = !KNOWN_ROLES.includes(form.role)
 
   function openAdd() { setForm(EMPTY); setModal('add') }
   function openEdit(c) { setForm({ ...EMPTY, ...c }); setModal(c) }
@@ -1176,11 +1179,23 @@ function ContactsSection({ propertyId }) {
         <form onSubmit={handleSave} className="px-6 py-5 space-y-3">
           <Input label="Name *" value={form.name || ''} onChange={set('name')} autoFocus />
           <div className="grid grid-cols-2 gap-3">
-            <Select label="Role" value={form.role || 'Other'} onChange={set('role')}>
+            <Select
+              label="Role"
+              value={isOtherRole ? 'Other' : form.role}
+              onChange={e => { const v = e.target.value; setForm(prev => ({ ...prev, role: v === 'Other' ? '' : v })) }}
+            >
               {CONTACT_ROLES.map(r => <option key={r} value={r}>{r}</option>)}
             </Select>
             <Input label="Company" value={form.company || ''} onChange={set('company')} />
           </div>
+          {isOtherRole && (
+            <Input
+              label="Specify role"
+              value={form.role || ''}
+              onChange={set('role')}
+              placeholder="e.g. Roofer, Fire &amp; Safety, Pest Control"
+            />
+          )}
           <div className="grid grid-cols-2 gap-3">
             <Input label="Phone" value={form.phone || ''} onChange={set('phone')} />
             <Input label="Email" type="email" value={form.email || ''} onChange={set('email')} />

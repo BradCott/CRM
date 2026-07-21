@@ -4,22 +4,30 @@ import { X } from 'lucide-react'
 
 export default function Modal({ isOpen, onClose, title, children, size = 'md' }) {
   const overlayRef = useRef(null)
+  // Keep the latest onClose in a ref so the setup effect can depend on `isOpen`
+  // alone. Callers usually pass an inline arrow for onClose, which changes
+  // identity on every parent re-render (e.g. each keystroke in a form field);
+  // if the effect depended on it, it would re-run and steal focus back to the
+  // first control on every character typed.
+  const onCloseRef = useRef(onClose)
+  onCloseRef.current = onClose
 
   useEffect(() => {
     if (!isOpen) return
     const prev = document.activeElement
     const el = overlayRef.current
     if (el) {
-      const focusable = el.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')
-      if (focusable.length) focusable[0].focus()
+      // Prefer the first real form field; fall back to any focusable control.
+      const first = el.querySelector('input, select, textarea') || el.querySelector('button, [href], [tabindex]:not([tabindex="-1"])')
+      first?.focus()
     }
-    const onKey = (e) => { if (e.key === 'Escape') onClose() }
+    const onKey = (e) => { if (e.key === 'Escape') onCloseRef.current?.() }
     document.addEventListener('keydown', onKey)
     return () => {
       document.removeEventListener('keydown', onKey)
       prev?.focus()
     }
-  }, [isOpen, onClose])
+  }, [isOpen])
 
   if (!isOpen) return null
 
