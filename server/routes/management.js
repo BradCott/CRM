@@ -1337,7 +1337,11 @@ router.post('/insurance/:id/reimbursement/send', async (req, res) => {
   try {
     await sendMail({
       to: recipients.join(', '), cc: cc || undefined,
-      from: process.env.INSURANCE_FROM || process.env.EMAIL_FROM,
+      // Send as the management inbox. Requires management@ to be a verified
+      // "Send mail as" alias on the connected Google account, otherwise Gmail
+      // delivers it as the account's own address. Overridable via env.
+      from: process.env.INSURANCE_FROM || process.env.EMAIL_FROM || 'Knox Capital Management <management@knoxcre.com>',
+      replyTo: process.env.INSURANCE_REPLY_TO || undefined,
       subject, text: body, attachments,
     })
   } catch (e) {
