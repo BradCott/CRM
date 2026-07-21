@@ -108,7 +108,8 @@ async function abstractLease(docs) {
     "base_rent": string,             // include $ and period
     "rent_escalations": string,
     "security_deposit": string|null,
-    "renewal_options": string|null
+    "renewal_options": string|null,  // e.g. "Two 5-year options at market rent"
+    "renewal_notice": string|null    // the WINDOW the tenant must give notice to exercise an option, e.g. "No less than 6 months and no more than 12 months prior to expiration of the then-current term"
   },
   "responsibilities": [
     { "category": string, "party": "Tenant"|"Landlord"|"Shared"|"Unclear", "detail": string }
@@ -116,6 +117,8 @@ async function abstractLease(docs) {
   "key_dates": [ { "label": string, "date": string } ],  // renewal-notice deadlines, option windows, etc.
   "notes": string                    // anything important that doesn't fit above
 }
+
+RENEWAL NOTICE — this is critical and often missed. Lease renewal/extension clauses almost always specify a NOTICE WINDOW: how far before the current term expires the tenant must deliver written notice to exercise its option (commonly "no later than 6 months prior to expiration", sometimes a range like "not less than 9 nor more than 12 months prior"). Search the "Option to Renew / Extend", "Extension", and "Term" sections carefully. Put the exact window in "renewal_notice" (quote or closely paraphrase the clause, including whether it's before expiration of the initial term or the then-current term). If the lease grants an option but you cannot find any notice window, set "renewal_notice" to "Option granted; no notice window stated". If there are no options at all, set it to null. Additionally, when the expiration date is known, compute the actual deadline and add it to "key_dates" (e.g. label "Renewal notice deadline (option 1)", date = expiration minus the notice period).
 
 For "responsibilities", cover at least these categories where the lease addresses them: ${LEASE_CATEGORIES.join(', ')}. Add any other notable responsibilities the lease assigns. Set "party" to who bears the cost/obligation; use "Shared" for split items and "Unclear" if the lease is silent or ambiguous. Keep "detail" to a short quote or paraphrase of the governing clause. Do not invent terms that aren't in the document.`
 

@@ -27,6 +27,7 @@ const SUMMARY_FIELDS = [
   ['commencement_date', 'Commencement'], ['expiration_date', 'Expiration'], ['term', 'Term'],
   ['base_rent', 'Base Rent'], ['rent_escalations', 'Escalations'],
   ['security_deposit', 'Security Deposit'], ['renewal_options', 'Renewal Options'],
+  ['renewal_notice', 'Renewal Notice Window'],
 ]
 
 function UploadZone({ onFile, uploading, error, dragging, setDragging, inputRef, hasExisting }) {
