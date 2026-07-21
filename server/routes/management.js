@@ -11,6 +11,11 @@ const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30
 const LEASE_DIR = join(DATA_DIR, 'leases')
 const PHOTO_DIR = join(DATA_DIR, 'property-photos')
 
+// Title of the auto-created follow-up task that tracks whether a tenant has
+// reimbursed us for an insurance premium. Kept in one place so the send,
+// mark-reimbursed, and dashboard code all match on it.
+const REIMB_CHECK_TITLE = 'Check insurance reimbursement status'
+
 async function callClaude(buffer, mediaType, prompt) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set')
@@ -657,6 +662,40 @@ router.patch('/insurance/:id/paid', (req, res) => {
   res.json(db.prepare('SELECT * FROM property_insurance WHERE id = ?').get(req.params.id))
 })
 
+// PATCH /insurance/:id/reimbursed — resolve a reimbursement follow-up.
+//   { status: 'reimbursed' }  → mark paid back, close the follow-up task
+//   { status: 'limbo' }       → still waiting; re-check in 30 days (recurring)
+router.patch('/insurance/:id/reimbursed', (req, res) => {
+  const status = req.body?.status
+  if (status !== 'reimbursed' && status !== 'limbo') {
+    return res.status(400).json({ error: "status must be 'reimbursed' or 'limbo'" })
+  }
+  const policy = db.prepare('SELECT id, property_id, carrier FROM property_insurance WHERE id = ?').get(req.params.id)
+  if (!policy) return res.status(404).json({ error: 'Policy not found' })
+  const stamp = today()
+
+  if (status === 'reimbursed') {
+    db.prepare(`UPDATE property_insurance SET reimbursed_status = 'reimbursed', reimbursed_date = ? WHERE id = ?`).run(stamp, policy.id)
+    // Close any open follow-up task for this policy.
+    db.prepare(`UPDATE property_tasks SET completed_at = datetime('now') WHERE insurance_id = ? AND completed_at IS NULL AND title = ?`).run(policy.id, REIMB_CHECK_TITLE)
+    db.prepare(`UPDATE properties SET notes = TRIM(COALESCE(notes,'') || CHAR(10) || ?) WHERE id = ?`)
+      .run(`[${stamp}] Tenant reimbursed the ${policy.carrier || 'insurance'} premium.`, policy.property_id)
+  } else {
+    // Still in limbo: keep it unreimbursed and push the next check out 30 days.
+    db.prepare(`UPDATE property_insurance SET reimbursed_status = 'unreimbursed', reimbursed_date = NULL WHERE id = ?`).run(policy.id)
+    const next = addDays(stamp, 30)
+    const note = `Still awaiting reimbursement as of ${stamp}. Next check ${next}.`
+    const open = db.prepare(`SELECT id FROM property_tasks WHERE insurance_id = ? AND completed_at IS NULL AND title = ?`).get(policy.id, REIMB_CHECK_TITLE)
+    if (open) {
+      db.prepare(`UPDATE property_tasks SET due_date = ?, notes = ? WHERE id = ?`).run(next, note, open.id)
+    } else {
+      db.prepare(`INSERT INTO property_tasks (property_id, insurance_id, title, task_type, due_date, priority, notes) VALUES (?, ?, ?, 'insurance', ?, 'high', ?)`)
+        .run(policy.property_id, policy.id, REIMB_CHECK_TITLE, next, note)
+    }
+  }
+  res.json(db.prepare('SELECT * FROM property_insurance WHERE id = ?').get(policy.id))
+})
+
 router.delete('/insurance/:id', (req, res) => {
   db.prepare('DELETE FROM property_insurance WHERE id = ?').run(req.params.id)
   res.status(204).end()
@@ -1062,8 +1101,13 @@ router.get('/:propertyId/dash', (req, res) => {
 
   // Awaiting-reimbursement: things we've paid that the tenant still owes us back.
   const awaiting = []
-  if (insurance && insurance.paid_status === 'paid' && insurance.reimbursed_status !== 'reimbursed') {
-    awaiting.push({ type: 'Insurance', label: `${insurance.carrier || 'Insurance'} premium`, amount: insurance.premium })
+  if (insurance && insurance.reimbursed_status !== 'reimbursed') {
+    const chk = db.prepare(`SELECT due_date FROM property_tasks WHERE insurance_id = ? AND completed_at IS NULL AND title = ? ORDER BY due_date DESC LIMIT 1`).get(insurance.id, REIMB_CHECK_TITLE)
+    // Show it once we've either marked the premium paid or actually emailed a
+    // reimbursement request (which leaves an open follow-up task).
+    if (insurance.paid_status === 'paid' || chk) {
+      awaiting.push({ type: 'Insurance', insurance_id: insurance.id, label: `${insurance.carrier || 'Insurance'} premium`, amount: insurance.premium, next_check: chk?.due_date || null })
+    }
   }
   for (const t of taxes) {
     if (t.paid && t.reimbursed_status !== 'reimbursed') {
@@ -1306,7 +1350,16 @@ router.post('/insurance/:id/reimbursement/send', async (req, res) => {
   db.prepare(`UPDATE properties SET notes = TRIM(COALESCE(notes,'') || CHAR(10) || ?) WHERE id = ?`)
     .run(`[${stamp}] Insurance reimbursement request emailed to ${recipients.join(', ')} (${attachments.length} attachment${attachments.length === 1 ? '' : 's'}).`, ins.property_id)
 
-  res.json({ ok: true, sent_to: recipients, attachments: attachments.length })
+  // Auto-create a follow-up: check back in 45 days on whether the tenant paid us
+  // back. Surfaces as a task/play on the property. Skip if one is already open.
+  const openCheck = db.prepare(`SELECT id FROM property_tasks WHERE insurance_id = ? AND completed_at IS NULL AND title = ?`).get(ins.id, REIMB_CHECK_TITLE)
+  if (!openCheck) {
+    const due = addDays(today(), 45)
+    db.prepare(`INSERT INTO property_tasks (property_id, insurance_id, title, task_type, due_date, priority, notes) VALUES (?, ?, ?, 'insurance', ?, 'high', ?)`)
+      .run(ins.property_id, ins.id, REIMB_CHECK_TITLE, due, `Reimbursement request emailed ${stamp} to ${recipients.join(', ')}. Confirm the tenant has paid us back, then mark it reimbursed or still in limbo.`)
+  }
+
+  res.json({ ok: true, sent_to: recipients, attachments: attachments.length, follow_up_on: addDays(today(), 45) })
 })
 
 export default router

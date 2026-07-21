@@ -274,6 +274,8 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS idx_ins_docs ON insurance_documents(insurance_id)`,
   // Task priority
   `ALTER TABLE property_tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`,
+  // Link a follow-up task to the specific insurance policy it tracks (reimbursement checks).
+  `ALTER TABLE property_tasks ADD COLUMN insurance_id INTEGER`,
   // Deal timestamps (for activity feed).
   // SQLite rejects expression defaults (datetime('now')) in ALTER TABLE ADD COLUMN,
   // so use no default — existing rows get NULL, new rows need explicit value.

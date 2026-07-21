@@ -6,7 +6,7 @@ import {
   Camera, Pencil, Phone, User, ClipboardList, Shield, Receipt, HandCoins,
   AlertTriangle, Loader2, Check, X, Building2, DollarSign, ExternalLink, Plus, Trash2, PhoneCall,
 } from 'lucide-react'
-import { getPropertyDash, updatePropertyDash, uploadPropertyPhoto, propertyPhotoUrl, getCallNotes, addCallNote, deleteCallNote } from '../../api/client'
+import { getPropertyDash, updatePropertyDash, uploadPropertyPhoto, propertyPhotoUrl, getCallNotes, addCallNote, deleteCallNote, markInsuranceReimbursed } from '../../api/client'
 
 const fmtDateTime = (d) => d ? new Date(String(d).includes('T') ? d : d.replace(' ', 'T') + 'Z').toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''
 
@@ -117,6 +117,13 @@ export default function DashboardSection({ propertyId }) {
     setUploadingPhoto(true)
     try { await uploadPropertyPhoto(propertyId, file); setPhotoV(v => v + 1); await load() }
     catch (e) { alert(e.message) } finally { setUploadingPhoto(false) }
+  }
+  const [reimbBusy, setReimbBusy] = useState(null)   // insurance_id currently updating
+  async function setReimb(insuranceId, status) {
+    if (status === 'limbo' && !window.confirm("Keep this open and check back in 30 days?")) return
+    setReimbBusy(insuranceId)
+    try { await markInsuranceReimbursed(insuranceId, status); await load() }
+    catch (e) { alert(e.message) } finally { setReimbBusy(null) }
   }
 
   if (loading) return <div className="flex items-center justify-center py-16"><Loader2 className="w-6 h-6 text-slate-400 animate-spin" /></div>
@@ -241,10 +248,33 @@ export default function DashboardSection({ propertyId }) {
           {awaiting_reimbursement.length ? (
             <div className="space-y-1.5 text-sm">
               <p className="text-lg font-bold text-amber-700 tabular-nums">{fmt$(owedTotal)} owed by tenant</p>
-              <ul className="space-y-0.5">
+              <ul className="space-y-2">
                 {awaiting_reimbursement.map((r, i) => (
-                  <li key={i} className="flex items-center justify-between text-slate-600">
-                    <span>{r.label}</span><span className="tabular-nums">{fmt$(r.amount)}</span>
+                  <li key={i} className="text-slate-600">
+                    <div className="flex items-center justify-between">
+                      <span>{r.label}</span><span className="tabular-nums">{fmt$(r.amount)}</span>
+                    </div>
+                    {r.insurance_id && (
+                      <div className="flex items-center flex-wrap gap-1.5 mt-1">
+                        <button
+                          onClick={() => setReimb(r.insurance_id, 'reimbursed')}
+                          disabled={reimbBusy === r.insurance_id}
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+                        >
+                          {reimbBusy === r.insurance_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Mark reimbursed
+                        </button>
+                        <button
+                          onClick={() => setReimb(r.insurance_id, 'limbo')}
+                          disabled={reimbBusy === r.insurance_id}
+                          className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
+                        >
+                          Still in limbo
+                        </button>
+                        {r.next_check && (
+                          <span className="text-[11px] text-slate-400">next check {fmtDate(r.next_check)}</span>
+                        )}
+                      </div>
+                    )}
                   </li>
                 ))}
               </ul>

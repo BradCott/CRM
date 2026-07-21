@@ -430,6 +430,7 @@ export const invitePortal        = (investorId, email) => req('POST', `/investor
 
 // Property dashboard
 export const getPropertyDash     = (propId)      => req('GET',   `/management/${propId}/dash`)
+export const markInsuranceReimbursed = (insId, status) => req('PATCH', `/management/insurance/${insId}/reimbursed`, { status })
 export const getCallNotes        = (propId)      => req('GET',   `/management/${propId}/call-notes`)
 export const addCallNote         = (propId, note) => req('POST',  `/management/${propId}/call-notes`, { note })
 export const deleteCallNote      = (id)          => req('DELETE', `/management/call-notes/${id}`)
