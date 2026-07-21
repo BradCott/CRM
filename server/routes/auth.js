@@ -257,6 +257,20 @@ router.get('/google/status', (_req, res) => {
   })
 })
 
+// ── Outbound email sender (app-wide "From" address) ───────────────────────────
+const EMAIL_FROM_DEFAULT = 'Knox Capital Management <management@knoxcre.com>'
+router.get('/email-settings', requireAuth, (_req, res) => {
+  const row = db.prepare(`SELECT value FROM app_settings WHERE key = 'email_from'`).get()
+  res.json({ from: row?.value || EMAIL_FROM_DEFAULT })
+})
+router.put('/email-settings', requireAuth, (req, res) => {
+  const from = String(req.body?.from || '').trim()
+  if (!from) return res.status(400).json({ error: 'A sender address is required' })
+  db.prepare(`INSERT INTO app_settings (key, value) VALUES ('email_from', ?)
+              ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(from)
+  res.json({ from })
+})
+
 router.delete('/google', (_req, res) => {
   try {
     const row = db.prepare(`SELECT access_token FROM oauth_tokens WHERE provider = 'google'`).get()

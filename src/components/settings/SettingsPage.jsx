@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle, Download, Database } from 'lucide-react'
-import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, syncGmailNow, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl } from '../../api/client'
+import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle, Download, Database, Mail } from 'lucide-react'
+import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, syncGmailNow, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl, getEmailFrom, setEmailFrom } from '../../api/client'
 import Button from '../ui/Button'
+
+// Preset "From" addresses for outbound app email. Sending as management@
+// requires it to be a verified "Send mail as" alias on the connected account.
+const FROM_PRESETS = [
+  { label: 'Management', value: 'Knox Capital Management <management@knoxcre.com>', hint: 'management@knoxcre.com' },
+  { label: 'Brad',       value: 'Brad Cott <brad@knoxcre.com>',                     hint: 'brad@knoxcre.com' },
+]
 
 export default function SettingsPage() {
   const [status, setStatus]   = useState(null)
@@ -13,6 +20,25 @@ export default function SettingsPage() {
   const [folderInput, setFolderInput] = useState('')
   const [pinning, setPinning]   = useState(false)
   const [gmailSyncing, setGmailSyncing] = useState(false)
+  const [senderFrom, setSenderFrom] = useState('')
+  const [emailSaving, setEmailSaving] = useState(false)
+  const [emailNote, setEmailNote]   = useState('')
+
+  useEffect(() => { getEmailFrom().then(r => setSenderFrom(r.from)).catch(() => {}) }, [])
+
+  async function chooseFrom(value) {
+    if (value === senderFrom) return
+    setEmailSaving(true); setEmailNote('')
+    try {
+      const r = await setEmailFrom(value)
+      setSenderFrom(r.from)
+      setEmailNote(`Saved — outbound email now sends from ${r.from}.`)
+    } catch (e) {
+      setEmailNote(`Error: ${e.message}`)
+    } finally {
+      setEmailSaving(false)
+    }
+  }
 
   async function handleGmailSync() {
     setGmailSyncing(true)
@@ -265,6 +291,46 @@ export default function SettingsPage() {
                 </Button>
               </div>
             )}
+          </Card>
+
+          {/* Outbound email sender */}
+          <Card title="Outbound Email" subtitle="Which address the CRM sends from — reimbursement requests, tenant notices, portal invites, and reminders.">
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-2">
+                {FROM_PRESETS.map(p => {
+                  const active = senderFrom === p.value
+                  return (
+                    <button
+                      key={p.value}
+                      onClick={() => chooseFrom(p.value)}
+                      disabled={emailSaving}
+                      className={`text-left p-3 rounded-xl border transition-colors disabled:opacity-60 ${
+                        active ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-300' : 'border-slate-200 hover:border-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold text-slate-800">{p.label}</span>
+                        {active && <CheckCircle className="w-4 h-4 text-blue-600" />}
+                      </div>
+                      <p className="text-xs text-slate-500 mt-0.5">{p.hint}</p>
+                    </button>
+                  )
+                })}
+              </div>
+              {senderFrom && !FROM_PRESETS.some(p => p.value === senderFrom) && (
+                <p className="text-xs text-slate-500">Custom sender: <span className="font-mono">{senderFrom}</span></p>
+              )}
+              {emailNote && (
+                <p className={`text-xs ${emailNote.startsWith('Error') ? 'text-red-600' : 'text-emerald-600'}`}>{emailNote}</p>
+              )}
+              <div className="flex items-start gap-2 p-3 bg-slate-50 rounded-xl border border-slate-100">
+                <Mail className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
+                <p className="text-[11px] text-slate-500 leading-relaxed">
+                  All email goes out through the one connected Google account{status?.email ? <> (<strong>{status.email}</strong>)</> : ''}, so <strong>Brad and Cole both send from the address chosen here</strong> — nothing to set up per person.
+                  Sending as <strong>management@</strong> only works if it's a verified “Send mail as” alias on that account.
+                </p>
+              </div>
+            </div>
           </Card>
 
           {/* Data & Backup */}

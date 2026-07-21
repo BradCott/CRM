@@ -6,6 +6,19 @@ import crypto from 'node:crypto'
 import db from '../db.js'
 import { getAuthedClient } from './googleClient.js'
 
+// Default "From" for all app email. Order: explicit per-send `from` →
+// app_settings 'email_from' (set in Settings UI) → env → management inbox.
+// Sending as anything other than the connected account's own address requires
+// that address to be a verified "Send mail as" alias on the account.
+export const DEFAULT_EMAIL_FROM = 'Knox Capital Management <management@knoxcre.com>'
+export function getDefaultFrom() {
+  try {
+    const row = db.prepare(`SELECT value FROM app_settings WHERE key = 'email_from'`).get()
+    if (row?.value) return row.value
+  } catch (_) { /* table may not exist yet */ }
+  return process.env.EMAIL_FROM || DEFAULT_EMAIL_FROM
+}
+
 const enc = (v) => /[^\x00-\x7F]/.test(v) ? `=?UTF-8?B?${Buffer.from(v).toString('base64')}?=` : v
 const b64 = (buf) => buf.toString('base64').replace(/(.{76})/g, '$1\r\n')
 const urlB64 = (s) => Buffer.from(s).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
@@ -54,7 +67,7 @@ export async function sendMail({ to, cc, replyTo, subject, text, html, from, att
 
   const auth  = getAuthedClient(tokenRow)
   const gmail = google.gmail({ version: 'v1', auth })
-  const raw   = buildRaw({ from: from || process.env.EMAIL_FROM || null, to, cc, replyTo, subject, text, html, attachments: attachments || [] })
+  const raw   = buildRaw({ from: from || getDefaultFrom(), to, cc, replyTo, subject, text, html, attachments: attachments || [] })
   try {
     await gmail.users.messages.send({ userId: 'me', requestBody: { raw } })
   } catch (e) {

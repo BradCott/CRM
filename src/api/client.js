@@ -180,6 +180,8 @@ export const exportExcelUrl   = '/api/admin/export-excel'
 
 export const getGoogleStatus  = ()     => req('GET',    '/auth/google/status')
 export const disconnectGoogle = ()     => req('DELETE', '/auth/google')
+export const getEmailFrom     = ()     => req('GET',    '/auth/email-settings')
+export const setEmailFrom     = (from) => req('PUT',    '/auth/email-settings', { from })
 export const diagnoseDrive    = ()       => req('GET',  '/loi-import/diagnose')
 export const runDriveWatcher  = (reset)  => req('POST', `/loi-import/run${reset ? '?reset=1' : ''}`)
 export const setLoiFolder     = (folder) => req('POST', '/loi-import/set-folder', { folder })
