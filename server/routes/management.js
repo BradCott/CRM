@@ -44,6 +44,33 @@ async function callClaude(buffer, mediaType, prompt) {
   return response.json()
 }
 
+// Like callClaude but sends several documents together so the model can
+// cross-reference them (e.g. reconcile an invoice's fees against a binder's
+// coverage split). `docs` is [{ buffer, mediaType, label }].
+async function callClaudeMulti(docs, prompt, maxTokens = 1500) {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set')
+  const content = []
+  for (const d of docs) {
+    const b64 = d.buffer.toString('base64')
+    content.push({ type: 'text', text: `--- ${d.label || 'Document'} ---` })
+    content.push(d.mediaType === 'application/pdf'
+      ? { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: b64 } }
+      : { type: 'image',    source: { type: 'base64', media_type: d.mediaType,        data: b64 } })
+  }
+  content.push({ type: 'text', text: prompt })
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method:  'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', max_tokens: maxTokens, messages: [{ role: 'user', content }] }),
+  })
+  if (!response.ok) {
+    const text = await response.text()
+    throw new Error(`Anthropic API error ${response.status}: ${text}`)
+  }
+  return response.json()
+}
+
 const LEASE_MODEL = process.env.LEASE_MODEL || process.env.ASSISTANT_MODEL || 'claude-sonnet-5'
 
 // Standard commercial-lease responsibility categories we want the matrix to cover.
@@ -1151,28 +1178,54 @@ router.delete('/insurance/:id/documents/:docId', (req, res) => {
 router.post('/insurance/:id/extract-breakdown', async (req, res) => {
   const ins = db.prepare('SELECT id FROM property_insurance WHERE id = ?').get(req.params.id)
   if (!ins) return res.status(404).json({ error: 'Insurance record not found' })
-  const doc = db.prepare(`
-    SELECT file_path, mime FROM insurance_documents
+  // Read BOTH the invoice (grand total + fees/taxes) and the policy/binder
+  // (coverage-level split), since neither alone has the full picture: the
+  // invoice usually lumps coverages into one "PROP/GL" line, and the binder
+  // typically shows $0 fees. Send them together so the model can reconcile.
+  const allDocs = db.prepare(`
+    SELECT file_path, mime, doc_type FROM insurance_documents
     WHERE insurance_id = ? AND file_path IS NOT NULL
-    ORDER BY CASE doc_type WHEN 'Invoice' THEN 0 WHEN 'Policy' THEN 1 ELSE 2 END, created_at DESC
-    LIMIT 1
-  `).get(ins.id)
-  if (!doc || !existsSync(doc.file_path)) return res.status(400).json({ error: 'No insurance document to read — upload the invoice or policy first.' })
+    ORDER BY CASE doc_type WHEN 'Invoice' THEN 0 WHEN 'Binder' THEN 1 WHEN 'Policy' THEN 2 ELSE 3 END, created_at DESC
+  `).all(ins.id).filter(d => existsSync(d.file_path))
+  if (!allDocs.length) return res.status(400).json({ error: 'No insurance document to read — upload the invoice or policy first.' })
 
-  const prompt = `From this insurance invoice/policy, itemize EVERY premium component that adds up to the total premium — each coverage's premium (e.g. Property/Building, General Liability, Wind/Hail, Equipment Breakdown, Terrorism/TRIA), plus surcharges, policy/inspection fees, and taxes. Return ONLY a JSON array (no markdown): [ { "label": "", "amount": "" } ] — a short label and dollar amount (with $) for each. The amounts should sum to the total premium.`
+  // De-dupe by file, then pick a diverse set: the best invoice + the best
+  // non-invoice (binder/policy), then fill up to 3 total.
+  const seen = new Set(), uniq = []
+  for (const d of allDocs) { if (!seen.has(d.file_path)) { seen.add(d.file_path); uniq.push(d) } }
+  const invoices = uniq.filter(d => d.doc_type === 'Invoice')
+  const others   = uniq.filter(d => d.doc_type !== 'Invoice')
+  const selected = []
+  if (invoices[0]) selected.push(invoices[0])
+  if (others[0])   selected.push(others[0])
+  for (const d of uniq) { if (selected.length >= 3) break; if (!selected.includes(d)) selected.push(d) }
+
+  const prompt = `You are reconciling insurance documents for ONE policy to itemize the FULL amount the insured owes. You may be given an INVOICE and a POLICY/BINDER.
+Rules:
+- The INVOICE carries the grand total and the fees & taxes (policy fee, surplus lines tax, stamping fee, inspection fee, surcharges). It often LUMPS several coverages into a single premium line (e.g. "PROP/GL", "Package").
+- The POLICY or BINDER breaks the premium into individual coverages (e.g. Commercial Property, Commercial General Liability, Wind/Hail, Equipment Breakdown, Terrorism/TRIA). When the invoice lumps coverages together, SPLIT that lumped amount using the individual coverage premiums shown in the policy/binder.
+- Output EACH individual coverage premium as its own line, PLUS EACH fee and tax from the invoice as its own line.
+- Only include Terrorism/TRIA if it was actually purchased (not declined).
+- The line amounts MUST sum to the invoice grand total (total amount due). If a policy/binder is not provided, itemize from the invoice as-is.
+Return ONLY a JSON array (no markdown): [ { "label": "", "amount": "" } ] — a short label and dollar amount (with $) for each. List coverages first (largest first), then fees and taxes.`
+
   let items = []
   try {
-    let buffer = readFileSync(doc.file_path)
-    const mediaType = doc.mime || 'application/pdf'
-    if (mediaType === 'application/pdf') {
-      const srcDoc = await PDFDocument.load(buffer)
-      if (srcDoc.getPageCount() > 20) {
-        const t = await PDFDocument.create()
-        const pgs = await t.copyPages(srcDoc, [...Array(20).keys()])
-        pgs.forEach(p => t.addPage(p)); buffer = Buffer.from(await t.save())
+    const prepared = []
+    for (const d of selected) {
+      let buffer = readFileSync(d.file_path)
+      const mediaType = d.mime || 'application/pdf'
+      if (mediaType === 'application/pdf') {
+        const srcDoc = await PDFDocument.load(buffer)
+        if (srcDoc.getPageCount() > 20) {
+          const t = await PDFDocument.create()
+          const pgs = await t.copyPages(srcDoc, [...Array(20).keys()])
+          pgs.forEach(p => t.addPage(p)); buffer = Buffer.from(await t.save())
+        }
       }
+      prepared.push({ buffer, mediaType, label: d.doc_type || 'Document' })
     }
-    const result = await callClaude(buffer, mediaType, prompt)
+    const result = await callClaudeMulti(prepared, prompt)
     const text = (result.content?.[0]?.text || '').trim().replace(/^```json\s*/i, '').replace(/\s*```$/, '')
     const m = text.match(/\[[\s\S]*\]/)
     items = JSON.parse(m ? m[0] : text)
