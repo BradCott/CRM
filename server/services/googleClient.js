@@ -30,7 +30,9 @@ export function getAuthedClient(tokenRow) {
     refresh_token: tokenRow.refresh_token,
     expiry_date:   tokenRow.expiry_date,
   })
-  // Persist refreshed access tokens automatically
+  // Persist refreshed access tokens automatically, back to whichever row this
+  // came from (e.g. 'google' for Drive/sync, 'google_send' for the send mailbox).
+  const provider = tokenRow.provider || 'google'
   auth.on('tokens', (tokens) => {
     try {
       db.prepare(`
@@ -38,8 +40,8 @@ export function getAuthedClient(tokenRow) {
         SET access_token = ?,
             expiry_date  = ?,
             updated_at   = datetime('now')
-        WHERE provider = 'google'
-      `).run(tokens.access_token ?? tokenRow.access_token, tokens.expiry_date ?? tokenRow.expiry_date)
+        WHERE provider = ?
+      `).run(tokens.access_token ?? tokenRow.access_token, tokens.expiry_date ?? tokenRow.expiry_date, provider)
     } catch (_) {}
   })
   return auth

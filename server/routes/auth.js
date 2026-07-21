@@ -118,11 +118,30 @@ router.get('/google', (_req, res) => {
   res.redirect(url)
 })
 
+// Dedicated "send mailbox" connection (e.g. management@). Kept separate from the
+// main account so app email is sent AS this mailbox and lands in ITS Sent folder,
+// without disturbing the Drive/Gmail-sync account. Only needs send + email scopes.
+const SENDER_SCOPES = [
+  'https://www.googleapis.com/auth/gmail.send',
+  'https://www.googleapis.com/auth/userinfo.email',
+]
+router.get('/google/sender', (_req, res) => {
+  const auth = getOAuth2Client()
+  const url  = auth.generateAuthUrl({
+    access_type: 'offline',
+    prompt:      'select_account consent',
+    scope:       SENDER_SCOPES,
+    state:       'sender',
+  })
+  res.redirect(url)
+})
+
 // ── Unified Google callback — handles both login and Drive ────────────────────
 
 router.get('/google/callback', async (req, res) => {
   const { code, state, error } = req.query
   const isLogin  = state === 'login'
+  const isSender = state === 'sender'
   const isSignup = typeof state === 'string' && state.startsWith('signup:')
   const inviteToken = isSignup ? state.slice('signup:'.length) : null
 
@@ -133,6 +152,7 @@ router.get('/google/callback', async (req, res) => {
       return res.redirect(clientUrl(`${base}?error=${code}`))
     }
     if (isLogin) return res.redirect(clientUrl(`/login?error=${code}`))
+    if (isSender) return res.redirect(clientUrl('/settings?sender=error'))
     return res.redirect(clientUrl('/settings?google=error'))
   }
 
@@ -146,6 +166,22 @@ router.get('/google/callback', async (req, res) => {
     const oauth2   = google.oauth2({ version: 'v2', auth })
     const userInfo = await oauth2.userinfo.get()
     const { email, name, id: googleId } = userInfo.data
+
+    if (isSender) {
+      // ── Dedicated send mailbox (management@) ──────────────────────────────────
+      db.prepare(`
+        INSERT INTO oauth_tokens (provider, access_token, refresh_token, expiry_date, email, updated_at)
+        VALUES ('google_send', ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(provider) DO UPDATE SET
+          access_token  = excluded.access_token,
+          refresh_token = COALESCE(excluded.refresh_token, refresh_token),
+          expiry_date   = excluded.expiry_date,
+          email         = excluded.email,
+          updated_at    = datetime('now')
+      `).run(tokens.access_token, tokens.refresh_token ?? null, tokens.expiry_date ?? null, email)
+      console.log(`[auth] Send mailbox connected: ${email}`)
+      return res.redirect(clientUrl('/settings?sender=connected'))
+    }
 
     if (isSignup) {
       // ── Google signup — invited user OR first admin ───────────────────────────
@@ -269,6 +305,22 @@ router.put('/email-settings', requireAuth, (req, res) => {
   db.prepare(`INSERT INTO app_settings (key, value) VALUES ('email_from', ?)
               ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(from)
   res.json({ from })
+})
+
+// Dedicated send mailbox status/disconnect (see /google/sender).
+router.get('/google/sender/status', requireAuth, (_req, res) => {
+  const row = db.prepare(`SELECT email, updated_at FROM oauth_tokens WHERE provider = 'google_send'`).get()
+  res.json(row ? { connected: true, email: row.email, connectedAt: row.updated_at } : { connected: false })
+})
+router.delete('/google/sender', requireAuth, (_req, res) => {
+  try {
+    const row = db.prepare(`SELECT access_token FROM oauth_tokens WHERE provider = 'google_send'`).get()
+    if (row?.access_token) { try { getOAuth2Client().revokeToken(row.access_token).catch(() => {}) } catch (_) {} }
+    db.prepare(`DELETE FROM oauth_tokens WHERE provider = 'google_send'`).run()
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err.message })
+  }
 })
 
 router.delete('/google', (_req, res) => {

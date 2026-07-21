@@ -62,7 +62,10 @@ function buildRaw({ from, to, cc, replyTo, subject, text, html, attachments = []
  */
 export async function sendMail({ to, cc, replyTo, subject, text, html, from, attachments }) {
   if (!to) throw new Error('No recipient')
-  const tokenRow = db.prepare(`SELECT * FROM oauth_tokens WHERE provider = 'google'`).get()
+  // Prefer the dedicated send mailbox (so sent copies land in ITS Sent folder);
+  // fall back to the main connected account.
+  const tokenRow = db.prepare(`SELECT * FROM oauth_tokens WHERE provider = 'google_send'`).get()
+                || db.prepare(`SELECT * FROM oauth_tokens WHERE provider = 'google'`).get()
   if (!tokenRow?.access_token) throw new Error('Google account not connected — connect it in Settings to send email.')
 
   const auth  = getAuthedClient(tokenRow)

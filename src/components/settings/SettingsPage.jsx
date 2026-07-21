@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle, Download, Database, Mail } from 'lucide-react'
-import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, syncGmailNow, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl, getEmailFrom, setEmailFrom } from '../../api/client'
+import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, syncGmailNow, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl, getEmailFrom, setEmailFrom, getSenderStatus, disconnectSender } from '../../api/client'
 import Button from '../ui/Button'
 
 // Preset "From" addresses for outbound app email. Sending as management@
@@ -23,8 +23,19 @@ export default function SettingsPage() {
   const [senderFrom, setSenderFrom] = useState('')
   const [emailSaving, setEmailSaving] = useState(false)
   const [emailNote, setEmailNote]   = useState('')
+  const [sender, setSender]         = useState(null)   // dedicated send mailbox status
 
-  useEffect(() => { getEmailFrom().then(r => setSenderFrom(r.from)).catch(() => {}) }, [])
+  const loadSender = () => getSenderStatus().then(setSender).catch(() => setSender({ connected: false }))
+  useEffect(() => {
+    getEmailFrom().then(r => setSenderFrom(r.from)).catch(() => {})
+    loadSender()
+  }, [])
+
+  async function handleDisconnectSender() {
+    if (!confirm('Disconnect the sending mailbox? Email will fall back to the main connected account.')) return
+    try { await disconnectSender(); await loadSender(); setEmailNote('Sending mailbox disconnected.') }
+    catch (e) { setEmailNote(`Error: ${e.message}`) }
+  }
 
   async function chooseFrom(value) {
     if (value === senderFrom) return
@@ -95,6 +106,12 @@ export default function SettingsPage() {
       window.history.replaceState({}, '', '/settings')
     } else if (params.get('google') === 'error') {
       setMsg({ type: 'error', text: 'Failed to connect Google account. Please try again.' })
+      window.history.replaceState({}, '', '/settings')
+    } else if (params.get('sender') === 'connected') {
+      setMsg({ type: 'success', text: 'Sending mailbox connected — email now sends from it.' })
+      window.history.replaceState({}, '', '/settings')
+    } else if (params.get('sender') === 'error') {
+      setMsg({ type: 'error', text: 'Failed to connect the sending mailbox. Please try again.' })
       window.history.replaceState({}, '', '/settings')
     }
     loadStatus()
@@ -323,11 +340,37 @@ export default function SettingsPage() {
               {emailNote && (
                 <p className={`text-xs ${emailNote.startsWith('Error') ? 'text-red-600' : 'text-emerald-600'}`}>{emailNote}</p>
               )}
+              {/* Dedicated sending mailbox — sent copies land in ITS Sent folder */}
+              <div className="pt-1 border-t border-slate-100">
+                <p className="text-xs font-semibold text-slate-600 mt-3 mb-1">Sending mailbox</p>
+                {sender?.connected ? (
+                  <div className="flex items-center gap-3 p-3 rounded-xl border border-emerald-200 bg-emerald-50">
+                    <CheckCircle className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold text-slate-800">Sending as {sender.email}</p>
+                      <p className="text-[11px] text-slate-500">Sent copies are saved in this mailbox's own Sent folder.</p>
+                    </div>
+                    <button onClick={handleDisconnectSender} className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-red-600 transition-colors shrink-0">
+                      <LogOut className="w-3.5 h-3.5" /> Disconnect
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <p className="text-[11px] text-slate-500 leading-relaxed">
+                      Connect the <strong>management@</strong> mailbox directly so sent email is saved in <strong>its</strong> Sent folder — not the main account's. Sign in as management@ on the next screen.
+                    </p>
+                    <Button onClick={() => { window.location.href = '/api/auth/google/sender' }} variant="primary">
+                      <GoogleIcon /> Connect sending mailbox
+                    </Button>
+                  </div>
+                )}
+              </div>
+
               <div className="flex items-start gap-2 p-3 bg-slate-50 rounded-xl border border-slate-100">
                 <Mail className="w-4 h-4 text-slate-400 mt-0.5 shrink-0" />
                 <p className="text-[11px] text-slate-500 leading-relaxed">
-                  All email goes out through the one connected Google account{status?.email ? <> (<strong>{status.email}</strong>)</> : ''}, so <strong>Brad and Cole both send from the address chosen here</strong> — nothing to set up per person.
-                  Sending as <strong>management@</strong> only works if it's a verified “Send mail as” alias on that account.
+                  All email goes out through {sender?.connected ? <>the sending mailbox above</> : <>the one connected Google account{status?.email ? <> (<strong>{status.email}</strong>)</> : ''}</>}, so <strong>Brad and Cole both send from the same place</strong> — nothing to set up per person.
+                  {!sender?.connected && <> Sending as <strong>management@</strong> without connecting it requires it to be a verified “Send mail as” alias on that account.</>}
                 </p>
               </div>
             </div>
