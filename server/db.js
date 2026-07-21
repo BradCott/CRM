@@ -756,6 +756,39 @@ try {
   db.exec(`UPDATE property_leases SET status = 'error', error = 'Interrupted — please re-upload the lease' WHERE status = 'processing'`)
 } catch (_) {}
 
+// property_contacts.role originally had a CHECK enum, so newer roles (Roofer) or
+// custom "Other" values throw on insert. Roles are free-form now — rebuild the
+// table without the constraint. Idempotent: only runs while the CHECK is present.
+try {
+  const ddl = db.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='property_contacts'`).get()
+  if (ddl?.sql && /CHECK\s*\(\s*role/i.test(ddl.sql)) {
+    db.exec(`
+      BEGIN;
+      CREATE TABLE property_contacts_new (
+        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+        property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+        name        TEXT NOT NULL,
+        role        TEXT DEFAULT 'Other',
+        company     TEXT,
+        phone       TEXT,
+        email       TEXT,
+        notes       TEXT,
+        created_at  TEXT DEFAULT (datetime('now'))
+      );
+      INSERT INTO property_contacts_new (id, property_id, name, role, company, phone, email, notes, created_at)
+        SELECT id, property_id, name, role, company, phone, email, notes, created_at FROM property_contacts;
+      DROP TABLE property_contacts;
+      ALTER TABLE property_contacts_new RENAME TO property_contacts;
+      CREATE INDEX IF NOT EXISTS idx_contacts_property ON property_contacts(property_id);
+      COMMIT;
+    `)
+    console.log('[db] dropped role CHECK constraint on property_contacts')
+  }
+} catch (e) {
+  try { db.exec('ROLLBACK') } catch (_) {}
+  console.warn('[db] property_contacts rebuild failed:', e.message)
+}
+
 // ── Property Management ───────────────────────────────────────────────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS property_tasks (
@@ -830,8 +863,7 @@ db.exec(`
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
     name        TEXT NOT NULL,
-    role        TEXT DEFAULT 'Other'
-                CHECK(role IN ('Property Manager','Contractor','Electrician','Plumber','HVAC','Landscaper','Insurance Agent','Attorney','Accountant','Other')),
+    role        TEXT DEFAULT 'Other',   -- free-form: presets + custom "Other" values
     company     TEXT,
     phone       TEXT,
     email       TEXT,
