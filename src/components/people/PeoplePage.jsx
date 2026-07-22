@@ -4,7 +4,7 @@ import {
   Users, UserPlus, MoreHorizontal, Pencil, Trash2, Loader2,
   AlertCircle, ChevronLeft, ChevronRight, Settings2, Download, GitMerge,
 } from 'lucide-react'
-import { getPeople, bulkDeletePeople, exportPeopleUrl } from '../../api/client'
+import { getPeople, bulkDeletePeople, exportPeopleUrl, mergePeople } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import TopBar from '../layout/TopBar'
 import Button from '../ui/Button'
@@ -204,6 +204,10 @@ export default function PeoplePage() {
   const [selected, setSelected]         = useState(() => new Set())
   const [bulkDeleting, setBulkDeleting] = useState(false)
   const [selectingAll, setSelectingAll] = useState(false)
+  const [mergeOpen, setMergeOpen]       = useState(false)
+  const [keepId, setKeepId]             = useState(null)
+  const [merging, setMerging]           = useState(false)
+  const [mergeErr, setMergeErr]         = useState(null)
 
   const [activeCols, setActiveCols]         = useState(() => loadSavedCols(STORAGE_KEY, DEFAULT_COLS, COLUMN_DEFS))
   const [panelCols, setPanelCols]           = useState(() => buildPanelCols(loadSavedCols(STORAGE_KEY, DEFAULT_COLS, COLUMN_DEFS), ALL_COLUMN_KEYS))
@@ -316,6 +320,34 @@ export default function PeoplePage() {
       await load(search, roleFilter, dncFilter, ownerTypeFilter, goPage)
     } finally {
       setBulkDeleting(false)
+    }
+  }
+
+  // ── Merge selected into one ──────────────────────────────────────────────────
+  // Records the user has selected AND that are on the current page (so we can show
+  // their names). Merging still applies to every selected id.
+  const selectedPeople = rows.filter(r => selected.has(r.id))
+  const offPageCount = selected.size - selectedPeople.length
+
+  const openMerge = () => {
+    setMergeErr(null)
+    setKeepId(selectedPeople[0]?.id ?? [...selected][0] ?? null)
+    setMergeOpen(true)
+  }
+  const handleMerge = async () => {
+    const keep = keepId
+    const mergeIds = [...selected].filter(id => id !== keep)
+    if (!keep || mergeIds.length === 0) return
+    setMerging(true); setMergeErr(null)
+    try {
+      await mergePeople(keep, mergeIds)
+      setMergeOpen(false)
+      clearSelection()
+      await load(search, roleFilter, dncFilter, ownerTypeFilter, page)
+    } catch (e) {
+      setMergeErr(e.message)
+    } finally {
+      setMerging(false)
     }
   }
 
@@ -467,15 +499,25 @@ export default function PeoplePage() {
                     </button>
                   )}
                 </div>
-                <button
-                  onClick={handleBulkDelete}
-                  disabled={bulkDeleting}
-                  className="flex items-center gap-1.5 text-sm font-medium text-white bg-red-600 px-3 py-1.5 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
-                >
-                  {bulkDeleting
-                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Deleting…</>
-                    : <><Trash2 className="w-3.5 h-3.5" /> Delete {selected.size}</>}
-                </button>
+                <div className="flex items-center gap-2">
+                  {selected.size >= 2 && (
+                    <button
+                      onClick={openMerge}
+                      className="flex items-center gap-1.5 text-sm font-medium text-blue-700 bg-white border border-blue-300 px-3 py-1.5 rounded-lg hover:bg-blue-100 transition-colors"
+                    >
+                      <GitMerge className="w-3.5 h-3.5" /> Merge {selected.size}
+                    </button>
+                  )}
+                  <button
+                    onClick={handleBulkDelete}
+                    disabled={bulkDeleting}
+                    className="flex items-center gap-1.5 text-sm font-medium text-white bg-red-600 px-3 py-1.5 rounded-lg hover:bg-red-700 transition-colors disabled:opacity-50"
+                  >
+                    {bulkDeleting
+                      ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Deleting…</>
+                      : <><Trash2 className="w-3.5 h-3.5" /> Delete {selected.size}</>}
+                  </button>
+                </div>
               </div>
             )}
             <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
@@ -570,6 +612,49 @@ export default function PeoplePage() {
           onMerged={() => { setDupeFor(null); load(search, roleFilter, dncFilter, ownerTypeFilter, page) }}
         />
       )}
+
+      <Modal isOpen={mergeOpen} onClose={() => !merging && setMergeOpen(false)} title="Merge records" size="md">
+        <div className="px-6 py-5 space-y-4">
+          <p className="text-sm text-slate-600">
+            Choose the record to <strong>keep</strong>. The others are merged into it — their properties, deals, emails, and mail history all move over, then the duplicates are deleted. This can't be undone.
+          </p>
+          <div className="space-y-1.5 max-h-72 overflow-y-auto">
+            {selectedPeople.map(p => (
+              <label
+                key={p.id}
+                className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                  keepId === p.id ? 'border-blue-400 bg-blue-50 ring-1 ring-blue-300' : 'border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <input type="radio" name="keep" checked={keepId === p.id} onChange={() => setKeepId(p.id)} className="mt-1 accent-blue-600" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-slate-800 truncate">{p.name}</p>
+                  <p className="text-xs text-slate-500 truncate">
+                    {[ROLE_LABELS[p.role] || p.role, p.company_name, p.email, [p.city, p.state].filter(Boolean).join(', ')].filter(Boolean).join(' · ') || '—'}
+                  </p>
+                </div>
+                {keepId === p.id && <span className="text-[10px] font-bold uppercase tracking-wide text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full shrink-0">Keep</span>}
+              </label>
+            ))}
+          </div>
+          {offPageCount > 0 && (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+              {offPageCount} more selected {offPageCount === 1 ? 'record is' : 'records are'} on another page and will also be merged in. To review them first, cancel and narrow your view so all selected records are visible.
+            </p>
+          )}
+          {mergeErr && (
+            <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /> {mergeErr}
+            </div>
+          )}
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" variant="secondary" onClick={() => setMergeOpen(false)} disabled={merging}>Cancel</Button>
+            <Button type="button" onClick={handleMerge} disabled={merging || !keepId || selected.size < 2}>
+              {merging ? <><Loader2 className="w-4 h-4 animate-spin" /> Merging…</> : <><GitMerge className="w-4 h-4" /> Merge into selected</>}
+            </Button>
+          </div>
+        </div>
+      </Modal>
     </div>
   )
 }
