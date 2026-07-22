@@ -1158,6 +1158,11 @@ export default function BulkSendModal({ onClose, onDone }) {
                   {dripResult.removed_dnc} do-not-contact or duplicate recipient{dripResult.removed_dnc !== 1 ? 's were' : ' was'} skipped.
                 </p>
               )}
+              {dripResult.skipped_addresses > 0 && (
+                <p className="text-xs text-amber-600 mt-1">
+                  {dripResult.skipped_addresses} address{dripResult.skipped_addresses !== 1 ? 'es were' : ' was'} skipped as a duplicate or already mailed in the last 4 months.
+                </p>
+              )}
               <p className="text-xs text-slate-400 mt-4">
                 Track progress, pause, resume, or cancel from the Campaigns page.
               </p>
@@ -1177,7 +1182,8 @@ export default function BulkSendModal({ onClose, onDone }) {
                 <h3 className="text-lg font-bold text-slate-900">Campaign Complete</h3>
                 <p className="text-sm text-slate-500 mt-1">
                   {sendResult.sent} letter{sendResult.sent !== 1 ? 's' : ''} sent successfully
-                  {sendResult.failed > 0 && `, ${sendResult.failed} failed`}.
+                  {sendResult.failed > 0 && `, ${sendResult.failed} failed`}
+                  {sendResult.skipped > 0 && `, ${sendResult.skipped} skipped`}.
                 </p>
                 {sendCopyToSelf && (
                   <p className="text-xs text-blue-600 mt-1">📬 A proof copy is also on its way to your Knox address.</p>
@@ -1211,6 +1217,27 @@ export default function BulkSendModal({ onClose, onDone }) {
                         const rec = recipients.find(p => p.contact_id === r.contact_id)
                         return (
                           <p key={i} className="text-xs text-red-600">
+                            {rec?.name || `Contact #${r.contact_id}`}: {r.error}
+                          </p>
+                        )
+                      })
+                    }
+                  </div>
+                </div>
+              )}
+
+              {sendResult.skipped > 0 && (
+                <div className="rounded-xl border border-amber-100 bg-amber-50 p-4 mt-3">
+                  <p className="text-xs font-semibold text-amber-700 mb-2">
+                    Skipped to avoid duplicate mail ({sendResult.skipped}):
+                  </p>
+                  <div className="space-y-1 max-h-32 overflow-y-auto">
+                    {sendResult.results
+                      .filter(r => r.status === 'skipped')
+                      .map((r, i) => {
+                        const rec = recipients.find(p => p.contact_id === r.contact_id)
+                        return (
+                          <p key={i} className="text-xs text-amber-700">
                             {rec?.name || `Contact #${r.contact_id}`}: {r.error}
                           </p>
                         )

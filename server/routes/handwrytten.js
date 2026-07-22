@@ -1,8 +1,22 @@
 import express from 'express'
 import * as XLSX from 'xlsx'
 import db from '../db.js'
+import { addressKey, REMAIL_BLACKOUT_MONTHS } from '../utils/addressKey.js'
 
 const router  = express.Router()
+
+// True if this normalized address was already mailed a letter within the
+// blackout window. Excludes a specific campaign so re-sends within the same run
+// aren't blocked by their own rows.
+const recentlyMailedStmt = db.prepare(
+  `SELECT 1 FROM handwrytten_sends
+   WHERE address_key = ? AND status = 'sent'
+     AND sent_at >= datetime('now','-${REMAIL_BLACKOUT_MONTHS} months')
+   LIMIT 1`
+)
+function addressMailedRecently(key) {
+  return !!(key && recentlyMailedStmt.get(key))
+}
 const HW_BASE = 'https://api.handwrytten.com/v2'
 const HW_KEY  = process.env.HANDWRYTTEN_API_KEY   // Authorization header value — no Bearer prefix
 
@@ -387,9 +401,11 @@ router.post('/send-bulk', async (req, res) => {
 
   const campaignId = campaignResult.lastInsertRowid
 
-  let sentCount   = 0
-  let failedCount = 0
-  const results   = []
+  let sentCount    = 0
+  let failedCount  = 0
+  let skippedCount = 0
+  const results    = []
+  const seenKeys   = new Set()   // addresses already handled in THIS campaign
 
   for (const { contact_id, property_id } of recipients) {
     const person = db.prepare(`SELECT * FROM people WHERE id = ?`).get(contact_id)
@@ -410,6 +426,20 @@ router.post('/send-bulk', async (req, res) => {
       failedCount++
       continue
     }
+
+    // Address de-duplication — never send two letters to one mailbox.
+    const addrKey = addressKey(person)
+    if (addrKey && seenKeys.has(addrKey)) {
+      results.push({ contact_id, status: 'skipped', error: 'Duplicate address in this campaign' })
+      skippedCount++
+      continue
+    }
+    if (addressMailedRecently(addrKey)) {
+      results.push({ contact_id, status: 'skipped', error: `Already mailed to this address in the last ${REMAIL_BLACKOUT_MONTHS} months` })
+      skippedCount++
+      continue
+    }
+    if (addrKey) seenKeys.add(addrKey)
 
     // Resolve property
     let property = null
@@ -435,8 +465,8 @@ router.post('/send-bulk', async (req, res) => {
     // Insert pending record
     const insertRes = db.prepare(`
       INSERT INTO handwrytten_sends
-        (contact_id, property_id, campaign_id, message, card_id, font, sent_by_user_id, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+        (contact_id, property_id, campaign_id, message, card_id, font, sent_by_user_id, status, address_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
     `).run(
       contact_id,
       property_id || property?.id || null,
@@ -445,6 +475,7 @@ router.post('/send-bulk', async (req, res) => {
       card_id || null,
       font || null,
       userId || null,
+      addrKey,
     )
     const sendId = insertRes.lastInsertRowid
 
@@ -501,9 +532,9 @@ router.post('/send-bulk', async (req, res) => {
 
   db.prepare(`
     UPDATE handwrytten_campaigns
-    SET sent_count = ?, failed_count = ?, status = ?
+    SET sent_count = ?, failed_count = ?, skipped_count = ?, status = ?
     WHERE id = ?
-  `).run(sentCount, failedCount, finalStatus, campaignId)
+  `).run(sentCount, failedCount, skippedCount, finalStatus, campaignId)
 
   // Mailed these — drop them off the "ready to re-mail" queue.
   const mailedPropIds = recipients.map(r => r.property_id).filter(Boolean)
@@ -516,6 +547,7 @@ router.post('/send-bulk', async (req, res) => {
     total:        recipients.length,
     sent:         sentCount,
     failed:       failedCount,
+    skipped:      skippedCount,
     status:       finalStatus,
     results,
   })
@@ -772,21 +804,30 @@ router.post('/drips', (req, res) => {
   const batchN = Math.max(1, parseInt(batch_size, 10) || 50)
   const intervalN = Math.max(1, parseInt(interval_days, 10) || 1)
 
-  // Filter out DNC contacts and de-dupe by contact_id (one letter per person).
+  // Filter out DNC/paused contacts, de-dupe by contact_id, then de-dupe by
+  // mailing address and drop any address mailed within the blackout window.
   const seen = new Set()
+  const seenKeys = new Set()
   const clean = []
+  let skipped = 0
   for (const r of recipients) {
     const cid = Number(r.contact_id)
     if (!cid || seen.has(cid)) continue
-    const person = db.prepare(`SELECT do_not_contact, mail_pause_until FROM people WHERE id = ?`).get(cid)
+    const person = db.prepare(`SELECT address, zip, do_not_contact, mail_pause_until FROM people WHERE id = ?`).get(cid)
     const today = new Date().toISOString().slice(0, 10)
     if (!person || person.do_not_contact || (person.mail_pause_until && person.mail_pause_until >= today)) continue
     seen.add(cid)
+    const addrKey = addressKey(person)
+    if (addrKey) {
+      if (seenKeys.has(addrKey))         { skipped++; continue }  // dup address in this drip
+      if (addressMailedRecently(addrKey)){ skipped++; continue }  // mailed in last N months
+      seenKeys.add(addrKey)
+    }
     clean.push({ contact_id: cid, property_id: r.property_id || null })
   }
 
   if (clean.length === 0) {
-    return res.status(400).json({ error: 'No eligible recipients after removing DNC and duplicates.' })
+    return res.status(400).json({ error: 'No eligible recipients after removing DNC, duplicate addresses, and recently-mailed addresses.' })
   }
 
   const create = db.transaction(() => {
@@ -821,11 +862,12 @@ router.post('/drips', (req, res) => {
   processDueDrips().catch(err => console.error('[drip] initial tick error:', err.message))
 
   res.json({
-    drip_id:       dripId,
-    total:         clean.length,
-    removed_dnc:   recipients.length - clean.length,
-    batch_size:    batchN,
-    interval_days: intervalN,
+    drip_id:            dripId,
+    total:              clean.length,
+    removed_dnc:        recipients.length - clean.length,
+    skipped_addresses:  skipped,   // duplicate or mailed within the blackout window
+    batch_size:         batchN,
+    interval_days:      intervalN,
   })
 })
 

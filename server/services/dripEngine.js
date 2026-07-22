@@ -4,10 +4,21 @@
 // routes/handwrytten.js so behavior (card, font, signature, sender) matches.
 
 import db from '../db.js'
+import { addressKey, REMAIL_BLACKOUT_MONTHS } from '../utils/addressKey.js'
 
 const HW_BASE = 'https://api.handwrytten.com/v2'
 const HW_KEY  = process.env.HANDWRYTTEN_API_KEY
 const SIG_SUFFIX = ' <sig:1427BC offset=1>'
+
+// Was this address already mailed within the blackout window? A drip runs over
+// weeks, so re-check at send time — another campaign may have mailed it since it
+// was queued. `exceptSendId` excludes the drip's own just-created pending row.
+const dripRecentStmt = db.prepare(
+  `SELECT 1 FROM handwrytten_sends
+   WHERE address_key = ? AND status = 'sent' AND id <> ?
+     AND sent_at >= datetime('now','-${REMAIL_BLACKOUT_MONTHS} months')
+   LIMIT 1`
+)
 
 async function hwPost(path, params = {}) {
   const res = await fetch(`${HW_BASE}${path}`, {
@@ -73,6 +84,14 @@ async function sendQueued(drip, qrow) {
     return 'skipped'
   }
 
+  // Skip if this address was mailed within the blackout window since being queued.
+  const addrKey = addressKey(person)
+  if (addrKey && dripRecentStmt.get(addrKey, 0)) {
+    db.prepare(`UPDATE handwrytten_drip_queue SET status='skipped', error_message=?, processed_at=datetime('now') WHERE id=?`)
+      .run(`Already mailed to this address in the last ${REMAIL_BLACKOUT_MONTHS} months`, qrow.id)
+    return 'skipped'
+  }
+
   let property = null
   if (qrow.property_id) {
     property = db.prepare(`
@@ -85,10 +104,10 @@ async function sendQueued(drip, qrow) {
 
   const insertRes = db.prepare(`
     INSERT INTO handwrytten_sends
-      (contact_id, property_id, message, card_id, font, sent_by_user_id, status)
-    VALUES (?, ?, ?, ?, ?, ?, 'pending')
+      (contact_id, property_id, message, card_id, font, sent_by_user_id, status, address_key)
+    VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
   `).run(qrow.contact_id, qrow.property_id || null, resolvedMessage,
-         drip.card_id || null, drip.font || null, drip.created_by_user_id || null)
+         drip.card_id || null, drip.font || null, drip.created_by_user_id || null, addrKey)
   const sendId = insertRes.lastInsertRowid
 
   const toFirstName = person.first_name || (person.name || '').split(' ')[0] || ''

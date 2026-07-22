@@ -2,6 +2,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkdirSync, existsSync, statSync } from 'node:fs'
+import { addressKey } from './utils/addressKey.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = join(__dirname, '..', 'data')
@@ -541,6 +542,12 @@ const migrations = [
   // appear in the campaigns table like a one-shot bulk send.
   `ALTER TABLE handwrytten_campaigns ADD COLUMN drip_id INTEGER`,
   `CREATE INDEX IF NOT EXISTS idx_hw_campaigns_drip ON handwrytten_campaigns(drip_id)`,
+  // Address de-duplication: store the normalized mailing-address key at send time
+  // so we can (a) avoid two letters to one address in a campaign and (b) skip any
+  // address mailed within the blackout window (4 months).
+  `ALTER TABLE handwrytten_sends ADD COLUMN address_key TEXT`,
+  `CREATE INDEX IF NOT EXISTS idx_hw_sends_addr ON handwrytten_sends(address_key, sent_at)`,
+  `ALTER TABLE handwrytten_campaigns ADD COLUMN skipped_count INTEGER DEFAULT 0`,
   // "Ready to re-mail" queue — set when the update-only importer corrects an
   // address, cleared once a mail campaign goes out to that property.
   `ALTER TABLE properties ADD COLUMN remail_ready INTEGER DEFAULT 0`,
@@ -788,6 +795,23 @@ try {
   try { db.exec('ROLLBACK') } catch (_) {}
   console.warn('[db] property_contacts rebuild failed:', e.message)
 }
+
+// Backfill address_key on recent sends (last 5 months) so the 4-month re-mail
+// guard works against history that predates the column. Bounded + one-time:
+// after the first run there are no recent rows left with a null key.
+try {
+  const recent = db.prepare(`
+    SELECT s.id, p.address, p.zip
+    FROM handwrytten_sends s JOIN people p ON p.id = s.contact_id
+    WHERE s.address_key IS NULL AND s.sent_at >= datetime('now','-5 months')
+  `).all()
+  if (recent.length) {
+    const upd = db.prepare(`UPDATE handwrytten_sends SET address_key = ? WHERE id = ?`)
+    const run = db.transaction(() => { for (const r of recent) { const k = addressKey(r); if (k) upd.run(k, r.id) } })
+    run()
+    console.log(`[db] backfilled address_key on ${recent.length} recent send(s)`)
+  }
+} catch (e) { console.warn('[db] address_key backfill failed:', e.message) }
 
 // ── Property Management ───────────────────────────────────────────────────────
 db.exec(`
