@@ -9,6 +9,7 @@ import db, { DATA_DIR } from '../db.js'
 import { sendMail } from '../services/mailer.js'
 import { normalizeName, nameSimilarity, autoLinkInvestors } from '../services/investorMatch.js'
 import { tokenSearch } from '../utils/normalize.js'
+import { calcPrefReturn } from '../utils/prefReturn.js'
 
 const router  = Router()
 const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
@@ -558,15 +559,6 @@ router.post('/bulk-import', upload.single('file'), (req, res) => {
 
 // ── Preferred return helpers ──────────────────────────────────────────────────
 
-/** Compute accrued preferred return for a link row (days since created_at). */
-function calcPrefReturn(link) {
-  const rate         = Number(link.preferred_return_rate) || 0
-  const contribution = Number(link.contribution) || 0
-  const createdAt    = link.created_at
-  if (!rate || !createdAt) return 0
-  const days = (Date.now() - new Date(createdAt.replace(' ', 'T') + 'Z').getTime()) / 86_400_000
-  return contribution * (rate / 100) * (days / 365)
-}
 
 // ── List investors with computed stats ────────────────────────────────────────
 
@@ -701,7 +693,7 @@ router.get('/:id', (req, res) => {
     SELECT
       ipl.id, ipl.investor_id, ipl.property_id,
       ipl.contribution, ipl.ownership_percentage, ipl.preferred_return_rate,
-      ipl.created_at,
+      ipl.created_at, p.close_date,
       p.address AS property_address, p.city AS property_city, p.state AS property_state,
       p.listing_status,
       COALESCE((
@@ -1065,7 +1057,7 @@ router.get('/:id/links', (req, res) => {
   const links = db.prepare(`
     SELECT
       ipl.*, p.address AS property_address, p.city AS property_city,
-      p.state AS property_state, p.listing_status
+      p.state AS property_state, p.listing_status, p.close_date
     FROM investor_property_links ipl
     JOIN properties p ON p.id = ipl.property_id
     WHERE ipl.investor_id = ?

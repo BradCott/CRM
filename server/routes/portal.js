@@ -10,6 +10,7 @@ import { mkdirSync, writeFileSync, createReadStream, existsSync, unlink } from '
 import { google } from 'googleapis'
 import db, { DATA_DIR } from '../db.js'
 import { issuePortalJWT, requirePortalAuth, PORTAL_COOKIE } from '../middleware/auth.js'
+import { calcPrefReturn } from '../utils/prefReturn.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
@@ -162,14 +163,6 @@ router.get('/me', requirePortalAuth, (req, res) => {
   })
 })
 
-// Simple-interest preferred-return accrual (mirrors investors.js calcPrefReturn).
-function calcPref(link) {
-  const rate = Number(link.preferred_return_rate) || 0
-  const contribution = Number(link.contribution) || 0
-  if (!rate || !link.created_at) return 0
-  const days = (Date.now() - new Date(link.created_at.replace(' ', 'T') + 'Z').getTime()) / 86_400_000
-  return contribution * (rate / 100) * (days / 365)
-}
 
 // The investor's whole portfolio in one call — summary + holdings + distributions.
 // EVERY query is scoped to req.portal.investorId; no other investor's data is
@@ -180,7 +173,7 @@ router.get('/portfolio', requirePortalAuth, (req, res) => {
 
   const links = db.prepare(`
     SELECT ipl.id, ipl.property_id, ipl.contribution, ipl.ownership_percentage, ipl.preferred_return_rate, ipl.created_at,
-           p.address, p.city, p.state, tb.name AS tenant_brand
+           p.address, p.city, p.state, p.close_date, tb.name AS tenant_brand
     FROM investor_property_links ipl
     JOIN properties p ON p.id = ipl.property_id
     LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
@@ -195,7 +188,7 @@ router.get('/portfolio', requirePortalAuth, (req, res) => {
 
   const holdings = links.map(l => {
     const received = distByProp[l.property_id] || 0
-    const accrued  = calcPref(l)
+    const accrued  = calcPrefReturn(l)
     return {
       id: l.id,
       property: { address: l.address, city: l.city, state: l.state, tenant_brand: l.tenant_brand },
