@@ -192,7 +192,10 @@ router.patch('/profile', requirePortalAuth, (req, res) => {
 router.post('/email/change', requirePortalAuth, async (req, res) => {
   const email = String(req.body?.email || '').trim().toLowerCase()
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Please enter a valid email address.' })
-  if (email === String(req.portal.email || '').toLowerCase()) return res.status(400).json({ error: "That's already your email." })
+  // Compare against the CURRENT login email from the DB, not the session token —
+  // the token still holds whatever email was set when the investor last signed in.
+  const self = db.prepare(`SELECT email FROM investor_users WHERE id = ?`).get(req.portal.investorUserId)
+  if (email === String(self?.email || '').toLowerCase()) return res.status(400).json({ error: "That's already your email." })
   // Must be free (not another login, and not another pending change).
   const clash = db.prepare(`SELECT 1 FROM investor_users WHERE (LOWER(email) = ? OR LOWER(pending_email) = ?) AND id <> ?`).get(email, email, req.portal.investorUserId)
   if (clash) return res.status(409).json({ error: 'That email is already in use.' })
@@ -297,6 +300,21 @@ router.get('/portfolio', requirePortalAuth, (req, res) => {
     property: r.address ? { address: r.address, city: r.city, state: r.state } : null,
   }))
 
+  // Actual equity contributions logged in accounting — real dates, and only for
+  // properties where the accounting has been recorded. NOT the cap-table upload.
+  const contributions = db.prepare(`
+    SELECT t.id, t.date, t.amount, t.description,
+           p.address, p.city, p.state, tb.name AS tenant_brand
+    FROM accounting_transactions t
+    JOIN properties p ON p.id = t.property_id
+    LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
+    WHERE t.investor_id = ? AND t.category = 'Equity Contribution' AND t.amount > 0
+    ORDER BY t.date DESC, t.id DESC
+  `).all(invId).map(r => ({
+    id: r.id, date: r.date, amount: r.amount, description: r.description,
+    property: { address: r.address, city: r.city, state: r.state, tenant_brand: r.tenant_brand },
+  }))
+
   const total_funded      = holdings.reduce((s, h) => s + h.contribution, 0)
   const return_of_capital = holdings.reduce((s, h) => s + h.return_of_capital, 0)
   const summary = {
@@ -310,7 +328,7 @@ router.get('/portfolio', requirePortalAuth, (req, res) => {
     net_preferred_return_owed: holdings.reduce((s, h) => s + h.net_preferred_return_owed, 0),
   }
 
-  res.json({ summary, holdings, distributions })
+  res.json({ summary, holdings, distributions, contributions })
 })
 
 // ── Document vault (investor-scoped) ──────────────────────────────────────────

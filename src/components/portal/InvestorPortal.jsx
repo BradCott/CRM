@@ -412,7 +412,7 @@ function InvestmentsSection({ pf, onSelect }) {
 function TransactionsSection({ pf }) {
   const [tab, setTab] = useState('distributions')
   const distributions = pf.distributions || []
-  const holdings = pf.holdings || []
+  const contributions = pf.contributions || []
   const s = pf.summary || {}
 
   return (
@@ -477,8 +477,10 @@ function TransactionsSection({ pf }) {
           )}
         </>
       ) : (
-        holdings.length === 0 ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">No contributions on file.</div>
+        contributions.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">
+            No contributions have been recorded in accounting yet. They'll appear here — with their actual dates — as each investment's accounting is entered.
+          </div>
         ) : (
           <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
             <div className="overflow-x-auto">
@@ -487,15 +489,17 @@ function TransactionsSection({ pf }) {
                   <tr>
                     <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Offering</th>
                     <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Date</th>
+                    <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Memo</th>
                     <th className="text-right px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {holdings.map(h => (
-                    <tr key={h.id} className="border-b border-slate-50 last:border-0">
-                      <td className="px-4 py-2.5 text-slate-700">{h.property.tenant_brand || h.property.address}</td>
-                      <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{fmtDate(h.funded_date)}</td>
-                      <td className="px-4 py-2.5 text-right font-medium text-slate-800 tabular-nums">{money(h.contribution)}</td>
+                  {contributions.map(c => (
+                    <tr key={c.id} className="border-b border-slate-50 last:border-0">
+                      <td className="px-4 py-2.5 text-slate-700">{c.property.tenant_brand || c.property.address}</td>
+                      <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{fmtDate(c.date)}</td>
+                      <td className="px-4 py-2.5 text-slate-500 max-w-[240px] truncate">{c.description || '—'}</td>
+                      <td className="px-4 py-2.5 text-right font-medium text-slate-800 tabular-nums">{money(c.amount)}</td>
                     </tr>
                   ))}
                 </tbody>
