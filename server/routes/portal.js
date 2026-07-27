@@ -181,21 +181,30 @@ router.get('/portfolio', requirePortalAuth, (req, res) => {
     ORDER BY ipl.created_at DESC
   `).all(invId)
 
-  const distByProp = {}
-  for (const d of db.prepare(`SELECT property_id, COALESCE(SUM(amount),0) AS s FROM investor_distributions WHERE investor_id = ? GROUP BY property_id`).all(invId)) {
-    distByProp[d.property_id] = d.s
+  // Distributions per property, split so we can show Return of Capital (Principal)
+  // separately from total distributions.
+  const distByProp = {}   // total distributions
+  const rocByProp  = {}   // Return of Capital = 'Principal' distributions
+  for (const d of db.prepare(`SELECT property_id, distribution_type AS type, COALESCE(SUM(amount),0) AS s FROM investor_distributions WHERE investor_id = ? GROUP BY property_id, distribution_type`).all(invId)) {
+    distByProp[d.property_id] = (distByProp[d.property_id] || 0) + d.s
+    if (d.type === 'Principal') rocByProp[d.property_id] = (rocByProp[d.property_id] || 0) + d.s
   }
 
   const holdings = links.map(l => {
+    const funded   = Number(l.contribution) || 0
     const received = distByProp[l.property_id] || 0
+    const roc      = rocByProp[l.property_id] || 0
     const accrued  = calcPrefReturn(l)
     return {
       id: l.id,
       property: { address: l.address, city: l.city, state: l.state, tenant_brand: l.tenant_brand },
-      contribution: l.contribution,
+      contribution: funded,
+      funded_date: l.close_date || l.created_at,
       ownership_percentage: l.ownership_percentage,
       preferred_return_rate: l.preferred_return_rate,
       distributions_received: received,
+      return_of_capital: roc,
+      balance: Math.max(0, funded - roc),          // capital still outstanding
       accrued_preferred_return: accrued,
       net_preferred_return_owed: Math.max(0, accrued - received),
     }
@@ -213,11 +222,16 @@ router.get('/portfolio', requirePortalAuth, (req, res) => {
     property: r.address ? { address: r.address, city: r.city, state: r.state } : null,
   }))
 
+  const total_funded      = holdings.reduce((s, h) => s + h.contribution, 0)
+  const return_of_capital = holdings.reduce((s, h) => s + h.return_of_capital, 0)
   const summary = {
     investor: inv?.name || req.portal.name,
-    total_invested:      links.reduce((s, l) => s + (Number(l.contribution) || 0), 0),
+    total_invested:      total_funded,      // alias kept for older clients
+    total_funded,
     num_properties:      links.length,
     total_distributions: distributions.reduce((s, d) => s + (Number(d.amount) || 0), 0),
+    return_of_capital,
+    balance:             Math.max(0, total_funded - return_of_capital),
     net_preferred_return_owed: holdings.reduce((s, h) => s + h.net_preferred_return_owed, 0),
   }
 

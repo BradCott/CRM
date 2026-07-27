@@ -3,15 +3,20 @@
 // that proves the isolated session. Investment views come in Phase 2.
 import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Building2, Loader2, LogOut, AlertCircle, Lock, FileText, Download, Upload, Trash2, LayoutGrid, List as ListIcon, X, ChevronRight } from 'lucide-react'
+import { Building2, Loader2, LogOut, AlertCircle, Lock, FileText, Download, Upload, Trash2, X, ChevronRight, PieChart, Wallet, TrendingUp, ArrowLeftRight, User, Mail, Menu, HandCoins, Landmark, CircleDollarSign } from 'lucide-react'
 import {
   portalMe, portalPortfolio, portalPasswordLogin, portalInviteInfo, portalAccept, portalLogout, portalGoogleStartUrl,
   portalDocuments, portalDocUrl, uploadPortalDoc, deletePortalDoc,
 } from '../../api/client'
 
 const fmt$ = (n) => (n == null) ? '—' : '$' + Math.round(Number(n)).toLocaleString()
+const money = (n) => (n == null || n === '') ? '—' : Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const fmtDate = (d) => d ? new Date(String(d).length === 10 ? d + 'T12:00:00' : d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'
 const fmtPct = (n) => (n == null || n === '') ? '—' : `${Number(n).toFixed(2)}%`
+const initials = (name = '') => name.trim().split(/\s+/).slice(0, 2).map(w => w[0]?.toUpperCase() || '').join('') || '•'
+
+// Allocation palette (premium teal→indigo→amber spread).
+const PALETTE = ['#059669', '#0d9488', '#0ea5e9', '#6366f1', '#f59e0b', '#8b5cf6', '#ec4899', '#64748b']
 
 const ERRORS = {
   not_invited: "That Google account isn't on the invite list. Sign in with the exact email Knox invited, or contact Knox for access.",
@@ -167,11 +172,333 @@ function PortalAccept() {
 }
 
 // ── Home (authenticated) ──────────────────────────────────────────────────────
-function Stat({ label, value, tint = 'text-slate-900' }) {
+
+// A single KPI tile.
+function Kpi({ icon: Icon, label, value, accent = 'text-slate-900', chip = 'bg-slate-100 text-slate-500' }) {
   return (
-    <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4">
-      <p className="text-xs text-slate-400">{label}</p>
-      <p className={`text-2xl font-bold tabular-nums mt-0.5 ${tint}`}>{value}</p>
+    <div className="rounded-2xl border border-slate-200 bg-white p-4">
+      <div className="flex items-center gap-2 mb-2.5">
+        <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${chip}`}><Icon className="w-4 h-4" /></div>
+        <p className="text-[10.5px] font-semibold text-slate-400 uppercase tracking-wider">{label}</p>
+      </div>
+      <p className={`text-xl font-bold tabular-nums ${accent}`}>{value}</p>
+    </div>
+  )
+}
+
+// Dependency-free SVG donut. segments: [{ value, color }].
+function Donut({ segments, size = 168, thickness = 24 }) {
+  const total = segments.reduce((s, x) => s + x.value, 0)
+  const r = (size - thickness) / 2
+  const c = 2 * Math.PI * r
+  let offset = 0
+  return (
+    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="shrink-0">
+      <g transform={`rotate(-90 ${size / 2} ${size / 2})`}>
+        {total === 0 ? (
+          <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="#e2e8f0" strokeWidth={thickness} />
+        ) : segments.map((seg, i) => {
+          const len = (seg.value / total) * c
+          const el = (
+            <circle key={i} cx={size / 2} cy={size / 2} r={r} fill="none" stroke={seg.color}
+              strokeWidth={thickness} strokeDasharray={`${len} ${c - len}`} strokeDashoffset={-offset}
+              strokeLinecap="butt" />
+          )
+          offset += len
+          return el
+        })}
+      </g>
+    </svg>
+  )
+}
+
+// Trailing-8-quarter buckets from the distributions list.
+function buildQuarters(distributions, count = 8) {
+  const now = new Date()
+  const seq = []
+  let cy = now.getUTCFullYear(), cq = Math.floor(now.getUTCMonth() / 3)
+  for (let i = 0; i < count; i++) { seq.unshift({ y: cy, q: cq }); cq--; if (cq < 0) { cq = 3; cy-- } }
+  const map = {}
+  seq.forEach(s => { map[`${s.y}-${s.q}`] = 0 })
+  for (const d of distributions) {
+    if (!d.date) continue
+    const dt = new Date(String(d.date).length <= 10 ? d.date + 'T00:00:00Z' : d.date)
+    if (isNaN(dt)) continue
+    const k = `${dt.getUTCFullYear()}-${Math.floor(dt.getUTCMonth() / 3)}`
+    if (k in map) map[k] += Number(d.amount) || 0
+  }
+  return seq.map(s => ({ label: `Q${s.q + 1} '${String(s.y).slice(2)}`, value: map[`${s.y}-${s.q}`] }))
+}
+
+function BarChart({ bars }) {
+  const max = Math.max(1, ...bars.map(b => b.value))
+  const any = bars.some(b => b.value > 0)
+  if (!any) return (
+    <div className="h-44 flex items-center justify-center text-center text-sm text-slate-400 px-6">
+      No distributions in the last two years. When you receive one, it'll appear here.
+    </div>
+  )
+  return (
+    <div className="flex items-end gap-2 h-44 px-1">
+      {bars.map((b, i) => (
+        <div key={i} className="flex-1 flex flex-col items-center min-w-0 h-full">
+          <div className="relative w-full flex-1 flex items-end justify-center">
+            <div className="w-full max-w-[26px] rounded-t bg-emerald-500 hover:bg-emerald-600 transition-colors"
+              style={{ height: b.value > 0 ? `${Math.max(3, (b.value / max) * 100)}%` : '0' }}
+              title={money(b.value)} />
+          </div>
+          <span className="text-[9px] text-slate-400 mt-1.5 truncate w-full text-center">{b.label}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// Left-nav contents, shared by the desktop rail and the mobile drawer.
+function NavContent({ section, go, onLogout, out }) {
+  const main = [
+    ['investments', 'My Investments', PieChart],
+    ['transactions', 'Transactions', ArrowLeftRight],
+    ['documents', 'Documents', FileText],
+  ]
+  const foot = [
+    ['account', 'Account', User],
+    ['contact', 'Contact Us', Mail],
+  ]
+  const Item = ([id, label, Icon]) => (
+    <button key={id} onClick={() => go(id)}
+      className={`flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+        section === id ? 'bg-slate-900 text-white' : 'text-slate-600 hover:bg-slate-100'
+      }`}>
+      <Icon className="w-4 h-4 shrink-0" /> {label}
+    </button>
+  )
+  return (
+    <div className="flex flex-col h-full">
+      <div className="px-5 py-5"><Brandmark /></div>
+      <nav className="flex-1 px-3 space-y-1">
+        {main.map(Item)}
+        <div className="h-px bg-slate-100 my-3 mx-2" />
+        {foot.map(Item)}
+      </nav>
+      <div className="p-3 border-t border-slate-100">
+        <button onClick={onLogout} disabled={out}
+          className="flex items-center gap-3 w-full px-3 py-2.5 rounded-xl text-sm font-medium text-slate-500 hover:bg-slate-100 disabled:opacity-50">
+          {out ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />} Sign out
+        </button>
+      </div>
+    </div>
+  )
+}
+
+// A property thumbnail placeholder (portal has no access to CRM photos).
+function Thumb() {
+  return (
+    <div className="w-11 h-11 rounded-lg bg-gradient-to-br from-slate-700 to-slate-900 flex items-center justify-center shrink-0">
+      <Building2 className="w-5 h-5 text-white/80" />
+    </div>
+  )
+}
+
+function InvestmentsSection({ pf, onSelect }) {
+  const s = pf.summary
+  const holdings = pf.holdings || []
+  const distributions = pf.distributions || []
+
+  const segments = holdings.map((h, i) => ({
+    label: h.property.tenant_brand || h.property.address,
+    value: Number(h.contribution) || 0,
+    color: PALETTE[i % PALETTE.length],
+  }))
+  const totalAlloc = segments.reduce((a, x) => a + x.value, 0)
+  const quarters = buildQuarters(distributions)
+
+  return (
+    <div className="space-y-6">
+      {/* KPI row */}
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3">
+        <Kpi icon={Wallet}            label="Total Funded"     value={money(s.total_funded)} chip="bg-slate-100 text-slate-600" />
+        <Kpi icon={HandCoins}         label="Distributions"    value={money(s.total_distributions)} accent="text-emerald-700" chip="bg-emerald-50 text-emerald-600" />
+        <Kpi icon={Landmark}          label="Return of Capital" value={money(s.return_of_capital)} chip="bg-sky-50 text-sky-600" />
+        <Kpi icon={CircleDollarSign}  label="Balance"          value={money(s.balance)} chip="bg-indigo-50 text-indigo-600" />
+        <Kpi icon={TrendingUp}        label="Pref Return Owed" value={money(s.net_preferred_return_owed)} accent="text-amber-700" chip="bg-amber-50 text-amber-600" />
+      </div>
+
+      {/* Portfolio + distributions */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">Portfolio Allocation</p>
+          {holdings.length === 0 ? (
+            <p className="text-sm text-slate-400 py-10 text-center">No investments yet.</p>
+          ) : (
+            <div className="flex items-center gap-5">
+              <div className="relative">
+                <Donut segments={segments} />
+                <div className="absolute inset-0 flex flex-col items-center justify-center">
+                  <p className="text-[10px] text-slate-400 uppercase tracking-wide">Funded</p>
+                  <p className="text-base font-bold text-slate-900 tabular-nums">{fmt$(totalAlloc)}</p>
+                </div>
+              </div>
+              <ul className="flex-1 space-y-2 min-w-0">
+                {segments.map((seg, i) => (
+                  <li key={i} className="flex items-center gap-2 text-sm min-w-0">
+                    <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: seg.color }} />
+                    <span className="text-slate-600 truncate flex-1">{seg.label}</span>
+                    <span className="text-slate-400 tabular-nums shrink-0">{totalAlloc ? Math.round((seg.value / totalAlloc) * 100) : 0}%</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 bg-white p-5">
+          <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">Distributions · Trailing 2 Years</p>
+          <BarChart bars={quarters} />
+        </div>
+      </div>
+
+      {/* Investment overview table */}
+      <div>
+        <p className="text-sm font-semibold text-slate-700 mb-2">Investment Overview</p>
+        {holdings.length === 0 ? (
+          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">No investments are on file yet. If this looks wrong, contact Knox Capital.</div>
+        ) : (
+          <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-slate-50 border-b border-slate-100">
+                  <tr>
+                    <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Offering</th>
+                    <th className="text-right px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Funded</th>
+                    <th className="text-right px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Distributions</th>
+                    <th className="text-right px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Return of Capital</th>
+                    <th className="text-right px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Balance</th>
+                    <th className="px-2" />
+                  </tr>
+                </thead>
+                <tbody>
+                  {holdings.map(h => (
+                    <tr key={h.id} onClick={() => onSelect(h)} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/70 cursor-pointer">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <Thumb />
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-800 truncate">{h.property.tenant_brand || h.property.address}</p>
+                            <p className="text-xs text-slate-400 truncate">{[h.property.city, h.property.state].filter(Boolean).join(', ')}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        <p className="tabular-nums text-slate-800">{money(h.contribution)}</p>
+                        <p className="text-[11px] text-slate-400">{fmtDate(h.funded_date)}</p>
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-emerald-700">{money(h.distributions_received)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-slate-600">{money(h.return_of_capital)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-800">{money(h.balance)}</td>
+                      <td className="px-2 py-3 text-slate-300"><ChevronRight className="w-4 h-4" /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function TransactionsSection({ distributions }) {
+  const total = distributions.reduce((s, d) => s + (Number(d.amount) || 0), 0)
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-sm font-semibold text-slate-700">All Transactions</p>
+        <p className="text-sm text-slate-500">Total distributed: <span className="font-semibold text-emerald-700 tabular-nums">{money(total)}</span></p>
+      </div>
+      {distributions.length === 0 ? (
+        <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">No transactions yet. Distributions will appear here as they're paid.</div>
+      ) : (
+        <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full text-sm">
+              <thead className="bg-slate-50 border-b border-slate-100">
+                <tr>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Date</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Offering</th>
+                  <th className="text-left px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Type</th>
+                  <th className="text-right px-4 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
+                </tr>
+              </thead>
+              <tbody>
+                {distributions.map(d => (
+                  <tr key={d.id} className="border-b border-slate-50 last:border-0">
+                    <td className="px-4 py-2.5 text-slate-600 whitespace-nowrap">{fmtDate(d.date)}</td>
+                    <td className="px-4 py-2.5 text-slate-700">{d.property ? `${d.property.address}${d.property.city ? `, ${d.property.city}` : ''}` : '—'}</td>
+                    <td className="px-4 py-2.5">
+                      <span className={`text-[11px] font-medium px-2 py-0.5 rounded-full ${
+                        d.type === 'Principal' ? 'bg-sky-50 text-sky-700' : d.type === 'Profit' ? 'bg-violet-50 text-violet-700' : 'bg-emerald-50 text-emerald-700'
+                      }`}>{d.type || '—'}</span>
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-medium text-emerald-700 tabular-nums">{money(d.amount)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function AccountSection({ me, onLogout, out }) {
+  const rows = [
+    ['Name', me.name || '—'],
+    ['Email', me.email || '—'],
+    ['Investor', me.investor?.name || '—'],
+  ]
+  return (
+    <div className="max-w-lg">
+      <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-slate-100">
+          <div className="w-11 h-11 rounded-full bg-slate-900 text-white flex items-center justify-center text-sm font-bold">{initials(me.name || me.email)}</div>
+          <div>
+            <p className="text-sm font-bold text-slate-900">{me.name || me.email}</p>
+            <p className="text-xs text-slate-400">Knox Capital Investor Portal</p>
+          </div>
+        </div>
+        <dl className="divide-y divide-slate-100 px-5">
+          {rows.map(([k, v]) => (
+            <div key={k} className="flex items-center justify-between py-3">
+              <dt className="text-sm text-slate-500">{k}</dt><dd className="text-sm font-medium text-slate-800">{v}</dd>
+            </div>
+          ))}
+        </dl>
+        <div className="px-5 py-4 border-t border-slate-100">
+          <button onClick={onLogout} disabled={out}
+            className="inline-flex items-center gap-2 text-sm font-medium text-slate-600 hover:text-red-600 disabled:opacity-50">
+            {out ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />} Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ContactSection() {
+  return (
+    <div className="max-w-lg">
+      <div className="rounded-2xl border border-slate-200 bg-white p-6">
+        <div className="w-11 h-11 rounded-xl bg-slate-900 flex items-center justify-center mb-4"><Mail className="w-5 h-5 text-white" /></div>
+        <p className="text-base font-bold text-slate-900">Contact Knox Capital</p>
+        <p className="text-sm text-slate-500 mt-1 mb-4">Questions about your investments, distributions, or documents? We're happy to help.</p>
+        <a href="mailto:management@knoxcre.com"
+          className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800">
+          <Mail className="w-4 h-4" /> management@knoxcre.com
+        </a>
+      </div>
     </div>
   )
 }
@@ -200,7 +527,6 @@ function PortalDocuments() {
 
   return (
     <div>
-      <h2 className="text-sm font-semibold text-slate-700 mb-2">Documents</h2>
       <div className="rounded-2xl border border-slate-200 bg-white divide-y divide-slate-100"
         onDragOver={e => e.preventDefault()}
         onDrop={e => { e.preventDefault(); if (!uploading) onUpload(e.dataTransfer.files?.[0]) }}
@@ -249,165 +575,74 @@ function PortalDocuments() {
   )
 }
 
+const SECTION_TITLES = {
+  investments: 'My Investments',
+  transactions: 'Transactions',
+  documents: 'Documents',
+  account: 'Account',
+  contact: 'Contact Us',
+}
+
 function PortalHome({ me }) {
   const [out, setOut]         = useState(false)
   const [pf, setPf]           = useState(null)
   const [loading, setLoading] = useState(true)
-  const [view, setView]       = useState(null)     // 'cards' | 'list' (null = auto by count)
-  const [selected, setSelected] = useState(null)   // clicked holding → detail
+  const [section, setSection] = useState('investments')
+  const [navOpen, setNavOpen] = useState(false)   // mobile drawer
+  const [selected, setSelected] = useState(null)  // clicked holding → detail
 
   useEffect(() => { portalPortfolio().then(setPf).catch(() => {}).finally(() => setLoading(false)) }, [])
   async function logout() { setOut(true); try { await portalLogout() } finally { window.location.href = '/portal' } }
+  const go = (id) => { setSection(id); setNavOpen(false) }
 
-  const s = pf?.summary
-  const holdings = pf?.holdings || []
-  const distributions = pf?.distributions || []
+  function Body() {
+    if (loading) return <div className="flex justify-center py-24"><Loader2 className="w-6 h-6 text-slate-400 animate-spin" /></div>
+    if (section === 'documents')    return <PortalDocuments />
+    if (section === 'account')      return <AccountSection me={me} onLogout={logout} out={out} />
+    if (section === 'contact')      return <ContactSection />
+    if (!pf?.summary) return <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">We couldn't load your portfolio right now. Please try again shortly.</div>
+    if (section === 'transactions') return <TransactionsSection distributions={pf.distributions || []} />
+    return <InvestmentsSection pf={pf} onSelect={setSelected} />
+  }
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="bg-white border-b border-slate-200">
-        <div className="max-w-5xl mx-auto px-5 py-3 flex items-center justify-between">
-          <Brandmark />
-          <button onClick={logout} disabled={out} className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800">
-            {out ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />} Sign out
-          </button>
+      {/* Desktop rail */}
+      <aside className="hidden lg:flex flex-col fixed inset-y-0 left-0 w-60 bg-white border-r border-slate-200 z-30">
+        <NavContent section={section} go={go} onLogout={logout} out={out} />
+      </aside>
+
+      {/* Mobile drawer */}
+      {navOpen && (
+        <div className="lg:hidden fixed inset-0 z-40">
+          <div className="absolute inset-0 bg-black/40" onClick={() => setNavOpen(false)} />
+          <div className="absolute inset-y-0 left-0 w-64 bg-white shadow-xl">
+            <button onClick={() => setNavOpen(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+            <NavContent section={section} go={go} onLogout={logout} out={out} />
+          </div>
         </div>
-      </header>
+      )}
 
-      <main className="max-w-5xl mx-auto px-5 py-8 space-y-6">
-        <div>
-          <h1 className="text-xl font-bold text-slate-900">Welcome{me.name ? `, ${me.name.split(' ')[0]}` : ''}</h1>
-          <p className="text-sm text-slate-500 mt-1">{me.investor?.name || me.email}</p>
-        </div>
-
-        {loading ? (
-          <div className="flex justify-center py-16"><Loader2 className="w-6 h-6 text-slate-400 animate-spin" /></div>
-        ) : !s ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">We couldn't load your portfolio right now. Please try again shortly.</div>
-        ) : (
-          <>
-            {/* Summary */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-              <Stat label="Total Invested"        value={fmt$(s.total_invested)} />
-              <Stat label="Properties"            value={s.num_properties} />
-              <Stat label="Distributions Received" value={fmt$(s.total_distributions)} tint="text-emerald-700" />
-              <Stat label="Pref Return Owed"      value={fmt$(s.net_preferred_return_owed)} tint="text-amber-700" />
+      <div className="lg:pl-60">
+        {/* Top bar */}
+        <header className="sticky top-0 z-20 bg-white/80 backdrop-blur border-b border-slate-200">
+          <div className="flex items-center justify-between px-4 lg:px-8 h-16">
+            <div className="flex items-center gap-3">
+              <button onClick={() => setNavOpen(true)} className="lg:hidden text-slate-500 hover:text-slate-800"><Menu className="w-5 h-5" /></button>
+              <h1 className="text-lg font-bold text-slate-900">{SECTION_TITLES[section]}</h1>
             </div>
+            <button onClick={() => go('account')} className="flex items-center gap-2 rounded-full pl-1 pr-3 py-1 hover:bg-slate-100 transition-colors">
+              <span className="w-8 h-8 rounded-full bg-slate-900 text-white flex items-center justify-center text-xs font-bold">{initials(me.name || me.email)}</span>
+              <span className="hidden sm:block text-sm font-medium text-slate-700 max-w-[160px] truncate">{me.name || me.email}</span>
+            </button>
+          </div>
+        </header>
 
-            {/* Holdings */}
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <h2 className="text-sm font-semibold text-slate-700">Your Investments</h2>
-                {holdings.length > 0 && (
-                  <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-0.5">
-                    {[['cards', LayoutGrid, 'Cards'], ['list', ListIcon, 'List']].map(([v, Icon, label]) => {
-                      const active = (view ?? (holdings.length <= 2 ? 'cards' : 'list')) === v
-                      return (
-                        <button key={v} onClick={() => setView(v)} title={label}
-                          className={`p-1.5 rounded-md ${active ? 'bg-white shadow-sm text-slate-800' : 'text-slate-400 hover:text-slate-600'}`}>
-                          <Icon className="w-4 h-4" />
-                        </button>
-                      )
-                    })}
-                  </div>
-                )}
-              </div>
-
-              {holdings.length === 0 ? (
-                <div className="rounded-2xl border border-slate-200 bg-white p-8 text-center text-sm text-slate-500">No investments are on file yet. If this looks wrong, contact Knox Capital.</div>
-              ) : (view ?? (holdings.length <= 2 ? 'cards' : 'list')) === 'cards' ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  {holdings.map(h => (
-                    <button key={h.id} onClick={() => setSelected(h)}
-                      className="text-left rounded-2xl border border-slate-200 bg-white p-5 hover:border-slate-300 hover:shadow-sm transition-all">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="text-sm font-semibold text-slate-900 truncate">{h.property.address}</p>
-                          <p className="text-xs text-slate-400">{[h.property.city, h.property.state].filter(Boolean).join(', ')}{h.property.tenant_brand ? ` · ${h.property.tenant_brand}` : ''}</p>
-                        </div>
-                        {h.ownership_percentage != null && (
-                          <span className="text-xs font-semibold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full shrink-0">{fmtPct(h.ownership_percentage)}</span>
-                        )}
-                      </div>
-                      <div className="grid grid-cols-2 gap-x-4 gap-y-2 mt-4 text-sm">
-                        <div><p className="text-[11px] text-slate-400">Invested</p><p className="font-medium text-slate-800 tabular-nums">{fmt$(h.contribution)}</p></div>
-                        <div><p className="text-[11px] text-slate-400">Pref Rate</p><p className="font-medium text-slate-800">{h.preferred_return_rate != null ? fmtPct(h.preferred_return_rate) : '—'}</p></div>
-                        <div><p className="text-[11px] text-slate-400">Distributions</p><p className="font-medium text-emerald-700 tabular-nums">{fmt$(h.distributions_received)}</p></div>
-                        <div><p className="text-[11px] text-slate-400">Pref Owed</p><p className="font-medium text-amber-700 tabular-nums">{fmt$(h.net_preferred_return_owed)}</p></div>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              ) : (
-                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-                  <div className="overflow-x-auto">
-                    <table className="min-w-full text-sm">
-                      <thead className="bg-slate-50 border-b border-slate-100">
-                        <tr>
-                          <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Property</th>
-                          <th className="text-right px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Ownership</th>
-                          <th className="text-right px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Invested</th>
-                          <th className="text-right px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Distributions</th>
-                          <th className="text-right px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Pref Owed</th>
-                          <th className="px-2 py-2" />
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {holdings.map(h => (
-                          <tr key={h.id} onClick={() => setSelected(h)} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/60 cursor-pointer">
-                            <td className="px-4 py-2.5">
-                              <p className="font-medium text-slate-800">{h.property.address}</p>
-                              <p className="text-xs text-slate-400">{[h.property.city, h.property.state].filter(Boolean).join(', ')}{h.property.tenant_brand ? ` · ${h.property.tenant_brand}` : ''}</p>
-                            </td>
-                            <td className="px-4 py-2.5 text-right text-slate-600">{h.ownership_percentage != null ? fmtPct(h.ownership_percentage) : '—'}</td>
-                            <td className="px-4 py-2.5 text-right tabular-nums text-slate-800">{fmt$(h.contribution)}</td>
-                            <td className="px-4 py-2.5 text-right tabular-nums text-emerald-700">{fmt$(h.distributions_received)}</td>
-                            <td className="px-4 py-2.5 text-right tabular-nums text-amber-700">{fmt$(h.net_preferred_return_owed)}</td>
-                            <td className="px-2 py-2.5 text-slate-300"><ChevronRight className="w-4 h-4" /></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {/* Distributions */}
-            {distributions.length > 0 && (
-              <div>
-                <h2 className="text-sm font-semibold text-slate-700 mb-2">Distributions</h2>
-                <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
-                  <table className="min-w-full text-sm">
-                    <thead className="bg-slate-50 border-b border-slate-100">
-                      <tr>
-                        <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Date</th>
-                        <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Property</th>
-                        <th className="text-left px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Type</th>
-                        <th className="text-right px-4 py-2 text-xs font-semibold text-slate-500 uppercase tracking-wide">Amount</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {distributions.map(d => (
-                        <tr key={d.id} className="border-b border-slate-50 last:border-0">
-                          <td className="px-4 py-2 text-slate-600 whitespace-nowrap">{fmtDate(d.date)}</td>
-                          <td className="px-4 py-2 text-slate-700">{d.property ? `${d.property.address}${d.property.city ? `, ${d.property.city}` : ''}` : '—'}</td>
-                          <td className="px-4 py-2 text-slate-500">{d.type || '—'}</td>
-                          <td className="px-4 py-2 text-right font-medium text-emerald-700 tabular-nums">{fmt$(d.amount)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            <PortalDocuments />
-
-            <p className="text-[11px] text-slate-400 text-center pt-2">Figures are for your information and may not reflect the most recent activity. Contact Knox Capital with any questions.</p>
-          </>
-        )}
-      </main>
+        <main className="max-w-6xl mx-auto px-4 lg:px-8 py-6">
+          <Body />
+          <p className="text-[11px] text-slate-400 text-center pt-8">Figures are for your information and may not reflect the most recent activity. Contact Knox Capital with any questions.</p>
+        </main>
+      </div>
 
       {selected && <HoldingDetail h={selected} onClose={() => setSelected(null)} />}
     </div>
@@ -417,11 +652,14 @@ function PortalHome({ me }) {
 // Detail overlay for a single investment (more info to come).
 function HoldingDetail({ h, onClose }) {
   const rows = [
+    ['Funded', money(h.contribution)],
+    ['Funded Date', fmtDate(h.funded_date)],
     ['Ownership', h.ownership_percentage != null ? fmtPct(h.ownership_percentage) : '—'],
-    ['Amount Invested', fmt$(h.contribution)],
     ['Preferred Return Rate', h.preferred_return_rate != null ? fmtPct(h.preferred_return_rate) : '—'],
-    ['Distributions Received', fmt$(h.distributions_received)],
-    ['Preferred Return Owed', fmt$(h.net_preferred_return_owed)],
+    ['Distributions Received', money(h.distributions_received)],
+    ['Return of Capital', money(h.return_of_capital)],
+    ['Balance', money(h.balance)],
+    ['Preferred Return Owed', money(h.net_preferred_return_owed)],
   ]
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
