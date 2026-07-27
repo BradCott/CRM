@@ -11,6 +11,7 @@ import { google } from 'googleapis'
 import db, { DATA_DIR } from '../db.js'
 import { issuePortalJWT, requirePortalAuth, PORTAL_COOKIE } from '../middleware/auth.js'
 import { calcPrefReturn } from '../utils/prefReturn.js'
+import { sendMail } from '../services/mailer.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
@@ -154,13 +155,87 @@ router.post('/logout', (req, res) => {
 
 // ── Authenticated portal data (everything below is scoped to req.portal) ──────
 
+// Absolute public base URL (for links inside emails).
+function absUrl(path) {
+  const base = process.env.RAILWAY_PUBLIC_DOMAIN
+    ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`
+    : (process.env.PORTAL_BASE_URL || 'http://localhost:5173')
+  return base + path
+}
+
 router.get('/me', requirePortalAuth, (req, res) => {
-  const inv = db.prepare(`SELECT id, name FROM investors WHERE id = ?`).get(req.portal.investorId)
+  const iu  = db.prepare(`SELECT id, email, name, pending_email FROM investor_users WHERE id = ?`).get(req.portal.investorUserId)
+  const inv = db.prepare(`SELECT id, name, phone, address, city, state, zip FROM investors WHERE id = ?`).get(req.portal.investorId)
   res.json({
-    name: req.portal.name,
-    email: req.portal.email,
+    name:  iu?.name  || req.portal.name,
+    email: iu?.email || req.portal.email,
+    pending_email: iu?.pending_email || null,
     investor: inv ? { id: inv.id, name: inv.name } : null,
+    profile: inv ? { name: inv.name, phone: inv.phone, address: inv.address, city: inv.city, state: inv.state, zip: inv.zip } : null,
   })
+})
+
+// Update the investor's own contact info (not email — that has its own flow).
+router.patch('/profile', requirePortalAuth, (req, res) => {
+  const { name, phone, address, city, state, zip } = req.body || {}
+  const inv = db.prepare(`SELECT * FROM investors WHERE id = ?`).get(req.portal.investorId)
+  if (!inv) return res.status(404).json({ error: 'Investor not found' })
+  const nextName = (name ?? inv.name)?.toString().trim() || inv.name
+  db.prepare(`UPDATE investors SET name = ?, phone = ?, address = ?, city = ?, state = ?, zip = ? WHERE id = ?`)
+    .run(nextName, phone ?? inv.phone, address ?? inv.address, city ?? inv.city, state ?? inv.state, zip ?? inv.zip, inv.id)
+  db.prepare(`UPDATE investor_users SET name = ? WHERE id = ?`).run(nextName, req.portal.investorUserId)
+  const updated = db.prepare(`SELECT name, phone, address, city, state, zip FROM investors WHERE id = ?`).get(inv.id)
+  res.json({ ok: true, profile: updated })
+})
+
+// Request an email change — sends a confirmation link to the NEW address.
+router.post('/email/change', requirePortalAuth, async (req, res) => {
+  const email = String(req.body?.email || '').trim().toLowerCase()
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ error: 'Please enter a valid email address.' })
+  if (email === String(req.portal.email || '').toLowerCase()) return res.status(400).json({ error: "That's already your email." })
+  // Must be free (not another login, and not another pending change).
+  const clash = db.prepare(`SELECT 1 FROM investor_users WHERE (LOWER(email) = ? OR LOWER(pending_email) = ?) AND id <> ?`).get(email, email, req.portal.investorUserId)
+  if (clash) return res.status(409).json({ error: 'That email is already in use.' })
+
+  const token   = crypto.randomBytes(32).toString('hex')
+  const expires = new Date(Date.now() + 24 * 3600 * 1000).toISOString()
+  db.prepare(`UPDATE investor_users SET pending_email = ?, email_change_token = ?, email_change_expires = ? WHERE id = ?`)
+    .run(email, token, expires, req.portal.investorUserId)
+
+  const link = absUrl(`/api/portal/email/verify?token=${token}`)
+  try {
+    await sendMail({
+      to: email,
+      subject: 'Confirm your new Knox Capital portal email',
+      text: `You asked to change the email on your Knox Capital investor portal to this address.\n\nConfirm it by opening this link (valid for 24 hours):\n${link}\n\nIf you didn't request this, you can ignore this email — nothing changes until it's confirmed.`,
+    })
+  } catch (e) {
+    // Roll back the pending change so the account doesn't show a confirmation the
+    // investor never received a link for.
+    db.prepare(`UPDATE investor_users SET pending_email = NULL, email_change_token = NULL, email_change_expires = NULL WHERE id = ?`).run(req.portal.investorUserId)
+    return res.status(502).json({ error: `Couldn't send the confirmation email: ${e.message}` })
+  }
+  res.json({ ok: true, pending_email: email })
+})
+
+// Confirm an email change (clicked from the emailed link). Public — the token IS
+// the proof of control of the new address.
+router.get('/email/verify', (req, res) => {
+  const token = String(req.query?.token || '')
+  const iu = token && db.prepare(`SELECT * FROM investor_users WHERE email_change_token = ?`).get(token)
+  if (!iu || !iu.pending_email || (iu.email_change_expires && iu.email_change_expires < new Date().toISOString())) {
+    return res.redirect(absUrl('/portal?email=invalid'))
+  }
+  // Re-check the address is still free.
+  const clash = db.prepare(`SELECT 1 FROM investor_users WHERE LOWER(email) = LOWER(?) AND id <> ?`).get(iu.pending_email, iu.id)
+  if (clash) {
+    db.prepare(`UPDATE investor_users SET pending_email = NULL, email_change_token = NULL, email_change_expires = NULL WHERE id = ?`).run(iu.id)
+    return res.redirect(absUrl('/portal?email=taken'))
+  }
+  db.prepare(`UPDATE investor_users SET email = ?, pending_email = NULL, email_change_token = NULL, email_change_expires = NULL WHERE id = ?`)
+    .run(iu.pending_email, iu.id)
+  db.prepare(`UPDATE investors SET email = ? WHERE id = ?`).run(iu.pending_email, iu.investor_id)
+  res.redirect(absUrl('/portal?email=confirmed'))
 })
 
 

@@ -548,6 +548,10 @@ const migrations = [
   `ALTER TABLE handwrytten_sends ADD COLUMN address_key TEXT`,
   `CREATE INDEX IF NOT EXISTS idx_hw_sends_addr ON handwrytten_sends(address_key, sent_at)`,
   `ALTER TABLE handwrytten_campaigns ADD COLUMN skipped_count INTEGER DEFAULT 0`,
+  // Investor portal: pending email change awaiting confirmation via emailed link.
+  `ALTER TABLE investor_users ADD COLUMN pending_email        TEXT`,
+  `ALTER TABLE investor_users ADD COLUMN email_change_token   TEXT`,
+  `ALTER TABLE investor_users ADD COLUMN email_change_expires TEXT`,
   // "Ready to re-mail" queue — set when the update-only importer corrects an
   // address, cleared once a mail campaign goes out to that property.
   `ALTER TABLE properties ADD COLUMN remail_ready INTEGER DEFAULT 0`,

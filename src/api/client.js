@@ -409,6 +409,8 @@ export async function uploadInsuranceDoc(insId, file, docType) {
 // Investor portal (separate auth surface)
 export const portalMe            = ()               => req('GET',  '/portal/me')
 export const portalPortfolio     = ()               => req('GET',  '/portal/portfolio')
+export const portalUpdateProfile = (data)           => req('PATCH','/portal/profile', data)
+export const portalChangeEmail   = (email)          => req('POST', '/portal/email/change', { email })
 export const portalDocuments     = ()               => req('GET',  '/portal/documents')
 export const portalDocUrl        = (id)             => `${BASE}/portal/documents/${id}/file`
 export const deletePortalDoc     = (id)             => req('DELETE', `/portal/documents/${id}`)
