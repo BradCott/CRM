@@ -21,6 +21,21 @@ const LINE_KINDS = [
 ]
 const money = n => (n == null || isNaN(n) ? '—' : (n < 0 ? `-$${Math.abs(Math.round(n)).toLocaleString()}` : `$${Math.round(n).toLocaleString()}`))
 const num = v => { const n = parseFloat(String(v).replace(/[$,\s]/g, '')); return isFinite(n) ? n : 0 }
+const FINAL_RETURN_DEFAULT = 2750
+
+// Approximate top state entity/income-tax rate applied to the gain, for a
+// starting reserve estimate only — verify with the CPA. States omitted have no
+// entity/income tax on a real-estate gain (AK, FL, NV, NH, SD, TX, WA, WY).
+const STATE_ENTITY_TAX_RATE = {
+  AL: 0.050, AZ: 0.025, AR: 0.044, CA: 0.093, CO: 0.044, CT: 0.0699, DE: 0.066,
+  DC: 0.1075, GA: 0.0539, HI: 0.110, ID: 0.058, IL: 0.0645, IN: 0.0305, IA: 0.060,
+  KS: 0.057, KY: 0.050, LA: 0.0425, ME: 0.0715, MD: 0.0575, MA: 0.050, MI: 0.0425,
+  MN: 0.0985, MS: 0.050, MO: 0.048, MT: 0.059, NE: 0.0584, NJ: 0.1075, NM: 0.059,
+  NY: 0.109, NC: 0.045, ND: 0.025, OH: 0.030, OK: 0.0475, OR: 0.099, PA: 0.0307,
+  RI: 0.0599, SC: 0.064, TN: 0.065, UT: 0.0455, VT: 0.0875, VA: 0.0575, WV: 0.0512,
+  WI: 0.0765,
+}
+const stateTaxRate = (st) => STATE_ENTITY_TAX_RATE[String(st || '').trim().toUpperCase()] || 0
 
 export default function SaleCloseoutWizard({ propertyId, property, transactions = [], initialFile, onClose, onSaved }) {
   const [step, setStep]       = useState(0)
@@ -78,6 +93,31 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
     })
     return () => { cancelled = true }
   }, [propertyId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Estimated gain & entity-level tax reserve (location-driven) ──
+  // Book basis = the recorded Building + Land value. Gain ≈ sale price − selling
+  // costs − basis. Entity tax reserve ≈ gain × the property state's rate.
+  const bookBasis = useMemo(() => transactions
+    .filter(t => t.review_status === 'recorded' && (t.description === 'Building Value' || t.description === 'Land Value'))
+    .reduce((s, t) => s + num(t.amount), 0), [transactions])
+  const taxState  = String(property?.state || '').trim().toUpperCase()
+  const taxRate   = stateTaxRate(taxState)
+  const estGain   = Math.max(0, num(salePrice) - num(sellingCosts) - bookBasis)
+  const estEntityTax = Math.round(estGain * taxRate)
+
+  // Auto-fill the reserve defaults the first time the Reserves step opens:
+  // final tax return → $2,750, entity-level taxes → estimated gain × state rate.
+  const [reservesAutofilled, setReservesAutofilled] = useState(false)
+  useEffect(() => {
+    if (step !== 2 || reservesAutofilled) return
+    setReserves(rs => rs.map(r => {
+      if (num(r.amount) > 0) return r
+      if (/final tax|accountant/i.test(r.label)) return { ...r, amount: String(FINAL_RETURN_DEFAULT) }
+      if (/entity/i.test(r.label) && estEntityTax > 0) return { ...r, amount: String(estEntityTax) }
+      return r
+    }))
+    setReservesAutofilled(true)
+  }, [step, reservesAutofilled, estEntityTax])
 
   // ── Derived money ──
   const reservesTotal = reserves.reduce((s, r) => s + num(r.amount), 0)
@@ -355,6 +395,29 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
                       </div>
                     ))}
                     <button onClick={() => setReserves(rs => [...rs, { label: '', amount: '' }])} className="text-xs font-medium text-emerald-600 hover:text-emerald-800">+ Add reserve</button>
+                  </div>
+
+                  {/* Entity-tax estimate basis */}
+                  <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-xs text-amber-800 space-y-1">
+                    {taxRate > 0 ? (
+                      <p>
+                        <span className="font-medium">Entity-level tax estimate:</span>{' '}
+                        {taxState} rate {(taxRate * 100).toFixed(2)}% × est. gain {money(estGain)}
+                        {' '}(sale {money(num(salePrice))} − costs {money(num(sellingCosts))} − basis {money(bookBasis)})
+                        {' '}= <span className="font-medium">{money(estEntityTax)}</span>.
+                      </p>
+                    ) : (
+                      <p>
+                        <span className="font-medium">{taxState || 'This state'}</span> has no entity/income tax on a
+                        real-estate gain in the table — entity-tax reserve left at $0. Set it manually if needed.
+                      </p>
+                    )}
+                    <p className="text-amber-600">Rough starting estimate — confirm the final number with your CPA, then edit above.</p>
+                    <button
+                      onClick={() => setReserves(rs => rs.map(r =>
+                        /entity/i.test(r.label) ? { ...r, amount: estEntityTax > 0 ? String(estEntityTax) : r.amount }
+                        : /final tax|accountant/i.test(r.label) ? { ...r, amount: String(FINAL_RETURN_DEFAULT) } : r))}
+                      className="text-xs font-medium text-amber-700 underline hover:text-amber-900">Re-apply estimates</button>
                   </div>
                   <label className="flex items-center gap-2 text-sm text-slate-600 pt-1">
                     <input type="checkbox" checked={includeCash} onChange={e => setIncludeCash(e.target.checked)} className="rounded border-slate-300" />
