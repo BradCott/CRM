@@ -130,7 +130,8 @@ router.get('/summary', (req, res) => {
         ELSE tx.amount END), 0) AS cash_balance,
       COALESCE(SUM(CASE WHEN tx.category = 'Equity Contribution' AND tx.amount > 0 THEN tx.amount ELSE 0 END), 0) AS equity_contributed,
       COALESCE(SUM(CASE WHEN tx.category = 'Rent'               AND tx.amount > 0 THEN tx.amount ELSE 0 END), 0) AS rent_collected,
-      COUNT(tx.id) AS tx_count
+      COUNT(tx.id) AS tx_count,
+      (SELECT COUNT(*) FROM bank_connections bc WHERE bc.property_id = p.id) AS bank_count
     FROM properties p
     LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
     LEFT JOIN accounting_transactions tx ON tx.property_id = p.id AND tx.review_status = 'recorded'

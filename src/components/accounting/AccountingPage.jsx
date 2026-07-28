@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BookOpen, Loader2, ArrowRight, TrendingUp, Home, BarChart2, Tag } from 'lucide-react'
+import { BookOpen, Loader2, ArrowRight, TrendingUp, Home, BarChart2, Tag, Banknote } from 'lucide-react'
 import { getAccountingSummary, getAccountingSettings, updateAccountingSettings } from '../../api/client'
 import CategoryManager from './CategoryManager'
+import PortfolioReconcileModal from './PortfolioReconcileModal'
 
 function fmt$(v) {
   if (!v && v !== 0) return '$0'
@@ -26,14 +27,14 @@ export default function AccountingPage() {
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState(null)
   const [showCategories, setShowCategories] = useState(false)
+  const [showReconcile, setShowReconcile] = useState(false)
   const [advanced, setAdvanced] = useState(false)
   const [savingAdvanced, setSavingAdvanced] = useState(false)
 
+  const loadSummary = () => getAccountingSummary().then(setProperties).catch(e => setError(e.message))
+
   useEffect(() => {
-    getAccountingSummary()
-      .then(setProperties)
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false))
+    loadSummary().finally(() => setLoading(false))
     getAccountingSettings().then(s => setAdvanced(!!s.advanced)).catch(() => {})
   }, [])
 
@@ -74,6 +75,14 @@ export default function AccountingPage() {
                 <span className={`absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all ${advanced ? 'left-4' : 'left-0.5'}`} />
               </span>
               Advanced (beta)
+            </button>
+            <button
+              onClick={() => setShowReconcile(true)}
+              title="Reconcile every property's book cash to its actual bank balance in one pass"
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+            >
+              <Banknote className="w-4 h-4" />
+              Reconcile Cash
             </button>
             <button
               onClick={() => setShowCategories(true)}
@@ -171,6 +180,14 @@ export default function AccountingPage() {
       </div>
 
       {showCategories && <CategoryManager onClose={() => setShowCategories(false)} />}
+
+      {showReconcile && (
+        <PortfolioReconcileModal
+          properties={properties}
+          onDone={loadSummary}
+          onClose={() => setShowReconcile(false)}
+        />
+      )}
     </div>
   )
 }
