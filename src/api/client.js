@@ -270,6 +270,8 @@ export const saleCloseout             = (propertyId, d) => req('POST', `/account
 export const estimateEntityTax        = (propertyId, d) => req('POST', `/accounting/${propertyId}/estimate-entity-tax`, d)
 export const setDepreciationYears     = (propertyId, years) => req('POST', `/accounting/${propertyId}/depreciation`, { years })
 export const reconcileCash            = (propertyId, d) => req('POST', `/accounting/${propertyId}/reconcile-cash`, d)
+export const getCloseoutStatus        = (propertyId) => req('GET',  `/accounting/${propertyId}/closeout-status`)
+export const reverseCloseout          = (propertyId) => req('POST', `/accounting/${propertyId}/reverse-closeout`)
 export async function uploadSaleSettlement(propertyId, file) {
   const fd = new FormData()
   fd.append('file', file)

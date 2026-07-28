@@ -433,7 +433,9 @@ router.post('/:propertyId/sale-closeout', (req, res) => {
       }
 
       if (b.mark_sold) {
-        db.prepare(`UPDATE properties SET listing_status = 'sold', close_date = ? WHERE id = ?`).run(date, propertyId)
+        // Record the SALE date in sold_date — never clobber close_date, which is the
+        // ACQUISITION date used for preferred-return accrual.
+        db.prepare(`UPDATE properties SET listing_status = 'sold', sold_date = ? WHERE id = ?`).run(date, propertyId)
       }
 
       const reserveLines = reserves.filter(r => num(r.amount) > 0).map(r => `  Reserve — ${r.label || 'Held'}: ${money(num(r.amount))}`)
@@ -459,6 +461,49 @@ router.post('/:propertyId/sale-closeout', (req, res) => {
     res.status(201).json({ ok: true, distributed })
   } catch (err) {
     console.error('[accounting] sale-closeout:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Sale close-out status / reversal ──────────────────────────────────────────
+// Every close-out entry is written with source='Sale' on the close-out date, so
+// the whole batch (proceeds, payoff, distributions, asset write-off) can be
+// identified and undone together. Reversing restores the property to pre-sale.
+router.get('/:propertyId/closeout-status', (req, res) => {
+  const { propertyId } = req.params
+  const je = db.prepare(
+    `SELECT id, entry_date FROM property_journal_entries WHERE property_id = ? AND entry_type = 'sale_closeout' ORDER BY id DESC LIMIT 1`
+  ).get(propertyId)
+  if (!je) return res.json({ hasCloseout: false })
+  const date = je.entry_date
+  const txCount = db.prepare(`SELECT COUNT(*) AS n FROM accounting_transactions WHERE property_id = ? AND source = 'Sale' AND date = ?`).get(propertyId, date).n
+  const distributed = db.prepare(`SELECT COALESCE(SUM(ABS(amount)),0) AS v FROM accounting_transactions WHERE property_id = ? AND source = 'Sale' AND date = ? AND category = 'Distribution'`).get(propertyId, date).v
+  const distRows = db.prepare(`SELECT COUNT(*) AS n FROM investor_distributions WHERE property_id = ? AND distribution_date = ? AND notes LIKE 'Sale close-out%'`).get(propertyId, date).n
+  res.json({ hasCloseout: true, date, tx_count: txCount, distribution_rows: distRows, distributed })
+})
+
+router.post('/:propertyId/reverse-closeout', (req, res) => {
+  const { propertyId } = req.params
+  const je = db.prepare(
+    `SELECT id, entry_date FROM property_journal_entries WHERE property_id = ? AND entry_type = 'sale_closeout' ORDER BY id DESC LIMIT 1`
+  ).get(propertyId)
+  if (!je) return res.status(404).json({ error: 'No sale close-out found for this property' })
+  const date = je.entry_date
+
+  try {
+    let result = {}
+    const run = db.transaction(() => {
+      const tx = db.prepare(`DELETE FROM accounting_transactions WHERE property_id = ? AND source = 'Sale' AND date = ?`).run(propertyId, date)
+      const di = db.prepare(`DELETE FROM investor_distributions WHERE property_id = ? AND distribution_date = ? AND notes LIKE 'Sale close-out%'`).run(propertyId, date)
+      db.prepare(`DELETE FROM property_journal_entries WHERE id = ?`).run(je.id)
+      // Un-sell: clear the sold flag and sale date (close_date/acquisition untouched).
+      db.prepare(`UPDATE properties SET listing_status = NULL, sold_date = NULL WHERE id = ?`).run(propertyId)
+      result = { transactions_deleted: tx.changes, distributions_deleted: di.changes, reversed_date: date }
+    })
+    run()
+    res.json({ ok: true, ...result })
+  } catch (err) {
+    console.error('[accounting] reverse-closeout:', err.message)
     res.status(500).json({ error: err.message })
   }
 })

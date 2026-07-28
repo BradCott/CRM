@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles, Link2, AlertTriangle, Banknote } from 'lucide-react'
-import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, applyAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries, matchTransaction, unmatchTransaction, getMatchCandidates, recordEarnestAsEquity, fetchDriveFileAsFile } from '../../api/client'
+import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles, Link2, AlertTriangle, Banknote, RotateCcw } from 'lucide-react'
+import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, applyAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries, matchTransaction, unmatchTransaction, getMatchCandidates, recordEarnestAsEquity, fetchDriveFileAsFile, getCloseoutStatus, reverseCloseout } from '../../api/client'
 import OpeningBalancesModal from './OpeningBalancesModal'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
@@ -170,6 +170,8 @@ export default function LedgerPage() {
   const [advanced, setAdvanced]             = useState(false)   // Advanced Accounting beta flag
   const [openingBalances, setOpeningBalances] = useState(null)
   const [showOpening, setShowOpening]       = useState(false)
+  const [closeoutStatus, setCloseoutStatus] = useState(null)
+  const [reversing, setReversing]           = useState(false)
 
   const reload = useCallback(() => {
     setLoading(true)
@@ -179,14 +181,16 @@ export default function LedgerPage() {
       getAccountingSettings().catch(() => ({ advanced: false })),
       getOpeningBalances(propertyId).catch(() => null),
       getPropertyInvestorsList(propertyId).catch(() => []),
+      getCloseoutStatus(propertyId).catch(() => null),
     ])
-      .then(([ledger, invs, settings, opening, roster]) => {
+      .then(([ledger, invs, settings, opening, roster, closeout]) => {
         setProperty(ledger.property)
         setTransactions(ledger.transactions)
         setInvestors(invs)
         setAdvanced(!!settings.advanced)
         setOpeningBalances(opening)
         setInvestorsList(roster)
+        setCloseoutStatus(closeout)
         // Suggest investors for any unattributed equity contributions
         if (ledger.transactions.some(t => t.category === 'Equity Contribution' && !t.investor_id)) {
           getInvestorSuggestions(propertyId).then(setInvestorSug).catch(() => {})
@@ -213,6 +217,21 @@ export default function LedgerPage() {
   }, [propertyId])
 
   useEffect(() => { reload() }, [reload])
+
+  const handleReverseCloseout = async () => {
+    const s = closeoutStatus
+    const msg = `Reverse the sale close-out dated ${s?.date}?\n\nThis deletes ${s?.tx_count ?? ''} sale entries and ${s?.distribution_rows ?? ''} investor distribution record(s), and un-marks the property as sold. Your acquisition data is untouched.\n\nYou can then re-run "We Sold It" to redo it correctly.`
+    if (!window.confirm(msg)) return
+    setReversing(true)
+    try {
+      await reverseCloseout(propertyId)
+      await reload()
+    } catch (e) {
+      setError(e.message || 'Reverse failed')
+    } finally {
+      setReversing(false)
+    }
+  }
 
   async function handleDelete(id) {
     setDeleting(id)
@@ -548,6 +567,15 @@ export default function LedgerPage() {
                 <Banknote className="w-4 h-4" /> We Sold It
               </button>
             </DropTarget>
+            {closeoutStatus?.hasCloseout && (
+              <button
+                onClick={handleReverseCloseout}
+                disabled={reversing}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-2 text-sm font-semibold text-red-600 hover:bg-red-50 transition-colors disabled:opacity-50"
+                title={`Undo the sale close-out dated ${closeoutStatus.date} (deletes its entries and un-marks the property sold, so you can redo it)`}>
+                {reversing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />} Reverse Sale
+              </button>
+            )}
             <DropTarget onFile={f => { setDriveInitialFile(f); setShowSettlement(true) }}>
               <Button variant="secondary" onClick={() => setShowSettlement(true)}>
                 <FileText className="w-4 h-4" /> Settlement Statement
