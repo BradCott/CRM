@@ -1,30 +1,48 @@
 // Portfolio-wide cash reconciliation. Lists every property with its book cash vs.
 // the actual bank balance, pulls linked-bank balances in one pass, and posts a
 // 'Cash Adjustment' per property so the whole portfolio ties to reality at once.
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { X, Loader2, Banknote, AlertTriangle, CheckCircle } from 'lucide-react'
 import Button from '../ui/Button'
-import { reconcileCash, getPlaidBalance } from '../../api/client'
+import { reconcileCash, getPlaidBalance, getAccountingReports } from '../../api/client'
+import { computeBalanceSheet } from '../../utils/accounting'
 
 const money = n => (n == null || isNaN(n) ? '—' : (n < 0 ? `-$${Math.abs(Math.round(n)).toLocaleString()}` : `$${Math.round(n).toLocaleString()}`))
 const num = v => { const n = parseFloat(String(v).replace(/[$,\s]/g, '')); return isFinite(n) ? n : NaN }
 
-export default function PortfolioReconcileModal({ properties = [], onClose, onDone }) {
+export default function PortfolioReconcileModal({ onClose, onDone }) {
+  const [properties, setProperties] = useState([])
+  const [loading, setLoading]       = useState(true)
+  const [loadError, setLoadError]   = useState(null)
   // rows keyed by property id → { target, include, pulling, pullError }
-  const [rows, setRows] = useState(() => {
-    const m = {}
-    for (const p of properties) m[p.id] = { target: '', include: false, pulling: false, pullError: null }
-    return m
-  })
+  const [rows, setRows] = useState({})
   const [pullingAll, setPullingAll] = useState(false)
   const [posting, setPosting]       = useState(false)
   const [progress, setProgress]     = useState(null) // { done, total }
   const [result, setResult]         = useState(null) // { posted, skipped, failed:[] }
   const [asOf] = useState(new Date().toISOString().slice(0, 10))
 
+  // Book cash computed the SAME way as the per-property ledger & sale wizard
+  // (computeBalanceSheet), so the adjustment we post actually moves that number.
+  useEffect(() => {
+    getAccountingReports()
+      .then(({ advanced, properties: list }) => {
+        const items = (list || []).map(p => ({
+          id: p.id, address: p.address, tenant: p.tenant, state: p.state, bank_count: p.bank_count,
+          book: computeBalanceSheet(p.transactions || [], p.investors || [], advanced ? p.opening_balances : null).totalCash,
+        }))
+        setProperties(items)
+        const m = {}
+        for (const p of items) m[p.id] = { target: '', include: false, pulling: false, pullError: null }
+        setRows(m)
+      })
+      .catch(e => setLoadError(e.message || 'Failed to load'))
+      .finally(() => setLoading(false))
+  }, [])
+
   const setRow = (id, patch) => setRows(r => ({ ...r, [id]: { ...r[id], ...patch } }))
 
-  const bookOf = p => Number(p.cash_balance) || 0
+  const bookOf = p => Number(p.book) || 0
   const adjOf  = p => { const t = num(rows[p.id]?.target); return isFinite(t) ? Math.round((t - bookOf(p)) * 100) / 100 : null }
 
   const pullOne = async (p) => {
@@ -79,7 +97,17 @@ export default function PortfolioReconcileModal({ properties = [], onClose, onDo
           <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
         </div>
 
-        {result ? (
+        {loading ? (
+          <div className="px-5 py-16 flex flex-col items-center gap-2 text-slate-400">
+            <Loader2 className="w-6 h-6 animate-spin" />
+            <p className="text-sm">Loading portfolio cash…</p>
+          </div>
+        ) : loadError ? (
+          <div className="px-5 py-16 flex flex-col items-center gap-2 text-red-500">
+            <AlertTriangle className="w-6 h-6" />
+            <p className="text-sm">{loadError}</p>
+          </div>
+        ) : result ? (
           <div className="px-5 py-8 flex flex-col items-center gap-3 text-center">
             <CheckCircle className="w-10 h-10 text-emerald-500" />
             <p className="text-lg font-semibold text-slate-900">{result.posted} propert{result.posted === 1 ? 'y' : 'ies'} reconciled</p>

@@ -183,7 +183,6 @@ export default function AccountingPage() {
 
       {showReconcile && (
         <PortfolioReconcileModal
-          properties={properties}
           onDone={loadSummary}
           onClose={() => setShowReconcile(false)}
         />

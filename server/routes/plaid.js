@@ -158,7 +158,15 @@ router.get('/:propertyId/balance', async (req, res) => {
     let total = 0
     const accounts = []
     for (const conn of conns) {
-      const { data } = await client.accountsBalanceGet({ access_token: conn.plaid_access_token })
+      // Prefer a real-time refresh, but fall back to the cached balances from the
+      // last sync if the Plaid app isn't entitled to the Balance product
+      // (accountsGet works with just Transactions/Auth; balanceGet needs Balance).
+      let data
+      try {
+        ;({ data } = await client.accountsBalanceGet({ access_token: conn.plaid_access_token }))
+      } catch (e) {
+        ;({ data } = await client.accountsGet({ access_token: conn.plaid_access_token }))
+      }
       // Restrict to the specific linked account when one was chosen at link time
       const matching = (data.accounts || []).filter(a => !conn.plaid_account_id || a.account_id === conn.plaid_account_id)
       for (const a of matching) {

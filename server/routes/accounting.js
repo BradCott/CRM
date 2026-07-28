@@ -84,7 +84,8 @@ router.put('/:propertyId/opening-balances', (req, res) => {
 router.get('/reports', (req, res) => {
   const properties = db.prepare(`
     SELECT p.id, p.address, COALESCE(p.city,'') AS city, COALESCE(p.state,'') AS state,
-           tb.name AS tenant
+           tb.name AS tenant,
+           (SELECT COUNT(*) FROM bank_connections bc WHERE bc.property_id = p.id) AS bank_count
     FROM properties p
     LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
     WHERE p.is_portfolio = 1
