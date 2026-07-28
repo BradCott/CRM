@@ -36,6 +36,8 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
   const [parsing, setParsing]           = useState(false)
   const [dragOver, setDragOver]         = useState(false)
   const [parsedNet, setParsedNet]       = useState(null)   // net proceeds from the statement, for cross-check
+  const [lineItems, setLineItems]       = useState([])     // parsed seller line items, for reconciling
+  const [showItems, setShowItems]       = useState(false)
 
   // ── Step 3: Reserves ──
   const [reserves, setReserves] = useState([
@@ -114,6 +116,7 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
       if (r.loan_payoff)   setLoanPayoff(String(Math.round(r.loan_payoff)))
       if (r.settlement_date) setSaleDate(r.settlement_date)
       setParsedNet(r.net_proceeds || null)
+      setLineItems(Array.isArray(r.line_items) ? r.line_items : [])
     } catch (e) {
       setError(`Couldn't read that statement: ${e.message}`)
     } finally {
@@ -209,13 +212,49 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
                     )}
                   </label>
 
-                  {parsedNet != null && (
-                    <div className={`flex items-center gap-2 px-3 py-2 rounded-lg text-xs ${Math.abs(parsedNet - netProceeds) < 2 ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700'}`}>
-                      {Math.abs(parsedNet - netProceeds) < 2
-                        ? <><CheckCircle className="w-3.5 h-3.5 shrink-0" /> Matches the statement's net proceeds to seller ({money(parsedNet)}).</>
-                        : <><AlertTriangle className="w-3.5 h-3.5 shrink-0" /> Statement says net proceeds {money(parsedNet)}, but sale − costs − payoff = {money(netProceeds)}. Check the figures.</>}
-                    </div>
-                  )}
+                  {parsedNet != null && (() => {
+                    const gap = Math.round(netProceeds - parsedNet)   // + = app over-counts net (costs too low)
+                    const balanced = Math.abs(gap) < 2
+                    return (
+                      <div className={`px-3 py-2.5 rounded-lg text-xs ${balanced ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-800'}`}>
+                        <div className="flex items-start gap-2">
+                          {balanced
+                            ? <><CheckCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>Matches the statement's net proceeds to seller ({money(parsedNet)}).</span></>
+                            : <><AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>Off by <strong>{money(Math.abs(gap))}</strong> — statement's net to seller is {money(parsedNet)}, but sale − costs − payoff = {money(netProceeds)}. {gap > 0 ? 'Selling costs look ~' + money(gap) + ' too low (a fee or proration the parser missed).' : 'Selling costs look ~' + money(-gap) + ' too high.'}</span></>}
+                        </div>
+                        {!balanced && (
+                          <div className="flex flex-wrap items-center gap-2 mt-2 pl-5">
+                            <button type="button"
+                              onClick={() => setSellingCosts(String(Math.round(num(salePrice) - num(loanPayoff) - parsedNet)))}
+                              className="font-medium text-white bg-amber-600 hover:bg-amber-700 px-2.5 py-1 rounded-lg">
+                              Reconcile to statement (net {money(parsedNet)})
+                            </button>
+                            {lineItems.length > 0 && (
+                              <button type="button" onClick={() => setShowItems(s => !s)} className="font-medium text-amber-700 hover:underline">
+                                {showItems ? 'Hide' : 'Show'} the statement's line items
+                              </button>
+                            )}
+                          </div>
+                        )}
+                        {showItems && lineItems.length > 0 && (
+                          <div className="mt-2 ml-5 rounded-lg border border-amber-200 bg-white/70 divide-y divide-amber-100 max-h-52 overflow-y-auto">
+                            {lineItems.map((it, i) => (
+                              <div key={i} className="flex items-center justify-between px-2.5 py-1 gap-3">
+                                <span className="text-slate-600 truncate">{it.description}
+                                  <span className="ml-1.5 text-[10px] uppercase text-slate-400">{it.kind}</span>
+                                </span>
+                                <span className="tabular-nums text-slate-700 shrink-0">{money(it.amount)}</span>
+                              </div>
+                            ))}
+                            <div className="flex items-center justify-between px-2.5 py-1 gap-3 bg-amber-50 font-semibold">
+                              <span className="text-slate-700">Seller-cost lines total</span>
+                              <span className="tabular-nums text-slate-800">{money(lineItems.filter(it => it.kind === 'selling_cost' || it.kind === 'proration').reduce((s, it) => s + (it.amount || 0), 0))}</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })()}
 
                   <p className="text-sm text-slate-500">Confirm the sale figures. Payoffs are pre-filled from the current balance sheet.</p>
                   <div className="grid grid-cols-2 gap-4">
