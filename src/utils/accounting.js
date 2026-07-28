@@ -416,27 +416,43 @@ export function recoveryYears(v) {
  * @param {object} opts { years } — recovery period in years (default 39, commercial).
  */
 export function computeDepreciation(transactions, opts = {}) {
-  const buildingTxs = transactions.filter(t => t.description === 'Building Value')
-  if (!buildingTxs.length) return null
+  // Only the ORIGINAL basis counts — a Building Value REMOVAL posted at sale
+  // (negative, source 'Sale') must not be added back in (that double-counted the
+  // basis and inflated depreciation). Acquisition basis = positive entries.
+  const acqTxs = transactions.filter(t => t.description === 'Building Value' && Number(t.amount) > 0)
+  if (!acqTxs.length) return null
 
   const years = recoveryYears(opts.years)
-  const basis = buildingTxs.reduce((s, t) => s + Math.abs(Number(t.amount)), 0)
-  const inService = buildingTxs[0].date            // YYYY-MM-DD
+  const basis = acqTxs.reduce((s, t) => s + Number(t.amount), 0)
+  const inService = acqTxs.map(t => t.date).sort()[0]  // earliest acquisition date
   const startYear  = Number(inService.slice(0, 4))
   const startMonth = Number(inService.slice(5, 7)) // 1-12
+  const annual     = basis / years
 
-  const annual    = basis / years
-  const firstYear = annual * ((12.5 - startMonth) / 12)
+  // Disposition: a Building Value removal at sale (or an explicit sold date) ends
+  // depreciation — the final year is prorated to the months actually held.
+  const disposalTx   = transactions.find(t => t.description === 'Building Value' && Number(t.amount) < 0 && t.source === 'Sale')
+  const disposedDate = opts.disposedDate || (disposalTx ? disposalTx.date : null)
+  const disposedYear = disposedDate ? Number(String(disposedDate).slice(0, 4)) : null
+
+  // Accumulated depreciation from in-service through a date (mid-month both ends:
+  // the whole months between the in-service month and the as-of month).
+  const accThrough = (dateStr) => {
+    const y = Number(String(dateStr).slice(0, 4)), m = Number(String(dateStr).slice(5, 7))
+    const months = (y - startYear) * 12 + (m - startMonth)
+    return Math.min(basis, annual * (Math.max(0, months) / 12))
+  }
 
   const currentYear = new Date().getFullYear()
+  const lastYear = disposedYear != null ? disposedYear : startYear + Math.ceil(years)
   const rows = []
   let accumulated = 0
-  for (let y = startYear; y <= startYear + Math.ceil(years) && y <= currentYear + Math.ceil(years); y++) {
-    let amount
-    if (y === startYear) amount = firstYear
-    else                 amount = Math.min(annual, basis - accumulated)
-    if (amount <= 0) break
-    accumulated += amount
+  for (let y = startYear; y <= lastYear; y++) {
+    const asOf   = disposedYear === y ? disposedDate : `${y}-12-31`
+    const accEnd = accThrough(asOf)
+    const amount = Math.max(0, accEnd - accumulated)
+    if (amount <= 0 && y > startYear) { if (basis - accumulated <= 0) break; else continue }
+    accumulated = accEnd
     rows.push({ year: y, amount, accumulated, remaining: Math.max(0, basis - accumulated) })
   }
 
@@ -444,7 +460,7 @@ export function computeDepreciation(transactions, opts = {}) {
   const accumulatedToDate = rows.filter(r => r.year <= currentYear).reduce((s, r) => s + r.amount, 0)
 
   return {
-    basis, inService, annual, years,
+    basis, inService, annual, years, disposedDate,
     rows,
     currentYearAmount: currentRow?.amount ?? 0,
     accumulatedToDate,
