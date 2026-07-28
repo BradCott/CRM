@@ -97,9 +97,11 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
   // ── Estimated gain & entity-level tax reserve (location-driven) ──
   // Book basis = the recorded Building + Land value. Gain ≈ sale price − selling
   // costs − basis. Entity tax reserve ≈ gain × the property state's rate.
-  const bookBasis = useMemo(() => transactions
+  // Building/Land purchase entries are stored as negative amounts (cash out), so
+  // take the magnitude to get the positive book basis.
+  const bookBasis = useMemo(() => Math.abs(transactions
     .filter(t => t.review_status === 'recorded' && (t.description === 'Building Value' || t.description === 'Land Value'))
-    .reduce((s, t) => s + num(t.amount), 0), [transactions])
+    .reduce((s, t) => s + num(t.amount), 0)), [transactions])
   const taxState  = String(property?.state || '').trim().toUpperCase()
   const taxRate   = stateTaxRate(taxState)
   const estGain   = Math.max(0, num(salePrice) - num(sellingCosts) - bookBasis)
