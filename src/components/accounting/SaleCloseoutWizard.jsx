@@ -166,6 +166,14 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
     { distributable, prefRate: prefRate / 100, lpCarryPct: lpCarryPct / 100, holdMonths },
   ), [investors, sponsorIds, distributable, prefRate, lpCarryPct, holdMonths])
 
+  // Map the waterfall row id → the real global investor id used to record a
+  // per-investor distribution (null for unmatched cap-table rows).
+  const investorIdByRowId = useMemo(() => {
+    const m = {}
+    for (const i of investors) m[i.id] = i.investor_id ?? (typeof i.id === 'number' ? i.id : null)
+    return m
+  }, [investors])
+
   // ── Safety checks ──
   const unpaidBills = bills.filter(b => !b.paid_at)
   const unpaidTotal = unpaidBills.reduce((s, b) => s + num(b.amount), 0)
@@ -222,7 +230,7 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
         loan_payoff:        num(loanPayoff),
         member_loan_payoff: num(memberPayoff),
         reserves:           reserves.filter(r => num(r.amount) > 0).map(r => ({ label: r.label, amount: num(r.amount) })),
-        distributions:      waterfall.rows.map(r => ({ investor_id: r.id, name: r.name, capital: r.capital, pref: r.pref, carry: r.carry })),
+        distributions:      waterfall.rows.map(r => ({ investor_id: investorIdByRowId[r.id] ?? null, name: r.name, capital: r.capital, pref: r.pref, carry: r.carry })),
         mark_sold:          true,
       })
       onSaved?.()

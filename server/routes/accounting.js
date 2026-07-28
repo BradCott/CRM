@@ -337,13 +337,22 @@ router.get('/:propertyId/distributions', (req, res) => {
     ORDER BY d.distribution_date DESC, d.id DESC
   `).all(req.params.propertyId)
 
-  const investors = db.prepare(`
-    SELECT i.id, i.name, l.contribution, l.preferred_return_rate
-    FROM investor_property_links l
-    JOIN investors i ON i.id = l.investor_id
-    WHERE l.property_id = ?
-    ORDER BY l.contribution DESC, i.name ASC
-  `).all(req.params.propertyId)
+  // Roster comes from the cap table (property_investors) — the SAME single source
+  // of truth as the Contributions & Capital tabs — so the sale waterfall can never
+  // disagree with what the user sees there. (The legacy investor_property_links
+  // table could contain stray/duplicate links that aren't in the cap table.)
+  // `id` is the resolved global investor id when matched (needed to record a
+  // per-investor distribution); unmatched rows get a stable synthetic key and a
+  // null investor_id so they still show in the waterfall but aren't mis-recorded.
+  const investors = capTableWithResolvedInvestorId(req.params.propertyId)
+    .filter(r => Number(r.contribution) > 0 || r.investor_id != null)
+    .map(r => ({
+      id:            r.investor_id != null ? r.investor_id : `cap-${r.id}`,
+      investor_id:   r.investor_id != null ? r.investor_id : null,
+      name:          r.name,
+      contribution:  Number(r.contribution) || 0,
+      preferred_return_rate: r.preferred_return ?? null,
+    }))
 
   res.json({ distributions, investors })
 })
