@@ -11,6 +11,14 @@ import { computeBalanceSheet, computeWaterfall } from '../../utils/accounting'
 import { getPropertyDistributions, getBills, saleCloseout, uploadSaleSettlement } from '../../api/client'
 
 const STEPS = ['Sale', 'Safety Check', 'Reserves', 'Distribute', 'Review']
+const LINE_KINDS = [
+  { value: 'sale_price',   label: 'Sale price' },
+  { value: 'selling_cost', label: 'Selling cost' },
+  { value: 'proration',    label: 'Proration (seller pays)' },
+  { value: 'loan_payoff',  label: 'Loan payoff' },
+  { value: 'net_proceeds', label: 'Net proceeds (info)' },
+  { value: 'other',        label: 'Ignore' },
+]
 const money = n => (n == null || isNaN(n) ? '—' : (n < 0 ? `-$${Math.abs(Math.round(n)).toLocaleString()}` : `$${Math.round(n).toLocaleString()}`))
 const num = v => { const n = parseFloat(String(v).replace(/[$,\s]/g, '')); return isFinite(n) ? n : 0 }
 
@@ -151,6 +159,28 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
     step === 3 ? investors.length > 0 && Math.abs(waterfall.totalDistributed - distributable) < 2 :
     true
 
+  // Editable settlement line items → derive sale figures (like the buy side)
+  const lineTotals = useMemo(() => {
+    let sale = 0, costs = 0, payoff = 0
+    for (const it of lineItems) {
+      const a = Number(it.amount) || 0
+      if (it.kind === 'sale_price') sale += a
+      else if (it.kind === 'selling_cost' || it.kind === 'proration') costs += a
+      else if (it.kind === 'loan_payoff') payoff += a
+    }
+    return { sale, costs, payoff, net: sale - costs - payoff }
+  }, [lineItems])
+
+  const updateLine = (i, field, value) =>
+    setLineItems(prev => prev.map((it, idx) => idx === i ? { ...it, [field]: value } : it))
+  const addLine    = () => setLineItems(prev => [...prev, { description: '', amount: 0, kind: 'selling_cost' }])
+  const removeLine = (i) => setLineItems(prev => prev.filter((_, idx) => idx !== i))
+  const applyLinesToFigures = () => {
+    if (lineTotals.sale > 0)  setSalePrice(String(Math.round(lineTotals.sale)))
+    setSellingCosts(String(Math.round(lineTotals.costs)))
+    if (lineTotals.payoff > 0) setLoanPayoff(String(Math.round(lineTotals.payoff)))
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40">
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col">
@@ -220,41 +250,57 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
                         <div className="flex items-start gap-2">
                           {balanced
                             ? <><CheckCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>Matches the statement's net proceeds to seller ({money(parsedNet)}).</span></>
-                            : <><AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>Off by <strong>{money(Math.abs(gap))}</strong> — statement's net to seller is {money(parsedNet)}, but sale − costs − payoff = {money(netProceeds)}. {gap > 0 ? 'Selling costs look ~' + money(gap) + ' too low (a fee or proration the parser missed).' : 'Selling costs look ~' + money(-gap) + ' too high.'}</span></>}
+                            : <><AlertTriangle className="w-3.5 h-3.5 shrink-0 mt-0.5" /><span>Off by <strong>{money(Math.abs(gap))}</strong> — statement's net to seller is {money(parsedNet)}, but sale − costs − payoff = {money(netProceeds)}. Review the line items below to categorize what's missing.</span></>}
                         </div>
-                        {!balanced && (
-                          <div className="flex flex-wrap items-center gap-2 mt-2 pl-5">
-                            <button type="button"
-                              onClick={() => setSellingCosts(String(Math.round(num(salePrice) - num(loanPayoff) - parsedNet)))}
-                              className="font-medium text-white bg-amber-600 hover:bg-amber-700 px-2.5 py-1 rounded-lg">
-                              Reconcile to statement (net {money(parsedNet)})
-                            </button>
-                            {lineItems.length > 0 && (
-                              <button type="button" onClick={() => setShowItems(s => !s)} className="font-medium text-amber-700 hover:underline">
-                                {showItems ? 'Hide' : 'Show'} the statement's line items
-                              </button>
-                            )}
-                          </div>
-                        )}
-                        {showItems && lineItems.length > 0 && (
-                          <div className="mt-2 ml-5 rounded-lg border border-amber-200 bg-white/70 divide-y divide-amber-100 max-h-52 overflow-y-auto">
-                            {lineItems.map((it, i) => (
-                              <div key={i} className="flex items-center justify-between px-2.5 py-1 gap-3">
-                                <span className="text-slate-600 truncate">{it.description}
-                                  <span className="ml-1.5 text-[10px] uppercase text-slate-400">{it.kind}</span>
-                                </span>
-                                <span className="tabular-nums text-slate-700 shrink-0">{money(it.amount)}</span>
-                              </div>
-                            ))}
-                            <div className="flex items-center justify-between px-2.5 py-1 gap-3 bg-amber-50 font-semibold">
-                              <span className="text-slate-700">Seller-cost lines total</span>
-                              <span className="tabular-nums text-slate-800">{money(lineItems.filter(it => it.kind === 'selling_cost' || it.kind === 'proration').reduce((s, it) => s + (it.amount || 0), 0))}</span>
-                            </div>
-                          </div>
+                        {lineItems.length > 0 && (
+                          <button type="button" onClick={() => setShowItems(s => !s)} className="mt-1.5 ml-5 font-medium text-blue-600 hover:underline">
+                            {showItems ? 'Hide' : 'Review / edit'} the {lineItems.length} settlement line items
+                          </button>
                         )}
                       </div>
                     )
                   })()}
+
+                  {/* Editable line-item reader — set how each settlement line is treated */}
+                  {showItems && lineItems.length > 0 && (
+                    <div className="rounded-xl border border-slate-200 overflow-hidden">
+                      <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 flex items-center justify-between">
+                        <span>How each settlement line is recorded</span>
+                        <span className="font-normal text-slate-400">edit amount or type below</span>
+                      </div>
+                      <div className="max-h-64 overflow-y-auto divide-y divide-slate-100">
+                        {lineItems.map((it, i) => (
+                          <div key={i} className="flex items-center gap-2 px-2.5 py-1.5">
+                            <input value={it.description} onChange={e => updateLine(i, 'description', e.target.value)}
+                              className="flex-1 min-w-0 text-xs border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                            <input type="number" value={it.amount} onChange={e => updateLine(i, 'amount', e.target.value)}
+                              className="w-24 text-xs text-right tabular-nums border border-slate-200 rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-400" />
+                            <select value={it.kind} onChange={e => updateLine(i, 'kind', e.target.value)}
+                              className="text-xs border border-slate-200 rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400">
+                              {LINE_KINDS.map(k => <option key={k.value} value={k.value}>{k.label}</option>)}
+                            </select>
+                            <button type="button" onClick={() => removeLine(i)} className="text-slate-300 hover:text-red-500 shrink-0"><X className="w-3.5 h-3.5" /></button>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="px-3 py-2 bg-slate-50 border-t border-slate-200 text-xs">
+                        <button type="button" onClick={addLine} className="text-blue-600 hover:underline font-medium">+ Add a line</button>
+                        <div className="flex flex-wrap items-center justify-between gap-2 mt-2">
+                          <span className="text-slate-500">
+                            From lines: sale <span className="font-semibold text-slate-700">{money(lineTotals.sale)}</span> ·
+                            costs <span className="font-semibold text-slate-700">{money(lineTotals.costs)}</span> ·
+                            payoff <span className="font-semibold text-slate-700">{money(lineTotals.payoff)}</span> ·
+                            net <span className={`font-semibold ${Math.abs(lineTotals.net - parsedNet) < 2 ? 'text-emerald-600' : 'text-amber-600'}`}>{money(lineTotals.net)}</span>
+                            {parsedNet != null && Math.abs(lineTotals.net - parsedNet) >= 2 && <span className="text-amber-600"> (statement {money(parsedNet)})</span>}
+                          </span>
+                          <button type="button" onClick={applyLinesToFigures}
+                            className="font-medium text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg shrink-0">
+                            Apply to sale figures
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
 
                   <p className="text-sm text-slate-500">Confirm the sale figures. Payoffs are pre-filled from the current balance sheet.</p>
                   <div className="grid grid-cols-2 gap-4">
