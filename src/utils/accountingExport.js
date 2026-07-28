@@ -1,7 +1,7 @@
 // Build + download the full accounting package (Ledger, Balance Sheet, P&L,
 // Cash Flow, Schedule E) for a property, as an Excel workbook or a print-to-PDF view.
 import * as XLSX from 'xlsx'
-import { computePL, computeCashFlow, computeScheduleE, computeBalanceSheet } from './accounting'
+import { computePL, computeCashFlow, computeScheduleE, computeBalanceSheet, computeDepreciation, recoveryYears, computeVendorSummary } from './accounting'
 
 const money = n => (n == null || n === '' ? '' : Number(n))
 
@@ -153,6 +153,57 @@ export function exportAccountingExcel(property, transactions, investors) {
   add('Cash Flow', r.cashFlow.rows)
   add('Schedule E', r.scheduleE.rows)
   XLSX.writeFile(wb, `${fileBase(property)}.xlsx`)
+}
+
+// ── Accountant Bundle ─────────────────────────────────────────────────────────
+// A single workbook with everything a CPA needs for a property's return / sale:
+// the five core reports plus a depreciation schedule and 1099 vendor summary.
+function depreciationRows(transactions, property) {
+  const dep = computeDepreciation(transactions, { years: recoveryYears(property?.depreciation_years) })
+  if (!dep) return [['Depreciation Schedule'], ['No Building Value on the books — nothing to depreciate.']]
+  return [
+    ['Depreciation Schedule'],
+    ['Basis', dep.basis], ['In service', dep.inService], ['Recovery period (yrs)', dep.years], ['Method', 'Straight line, mid-month'],
+    [],
+    ['Year', 'Depreciation', 'Accumulated', 'Remaining Basis'],
+    ...dep.rows.map(r => [r.year, r.amount, r.accumulated, r.remaining]),
+  ]
+}
+function vendorRows(transactions) {
+  const vs = computeVendorSummary(transactions)
+  if (!vs.length) return [['Vendor 1099 Summary'], ['No vendor payments recorded.']]
+  return [['Vendor 1099 Summary'], [], ['Vendor', 'Total Paid', 'Payments', '1099 likely ($600+)'],
+    ...vs.map(v => [v.vendor, v.total, v.count, v.total >= 600 ? 'Yes' : ''])]
+}
+
+export function buildBundleWorkbook(property, transactions, investors) {
+  const r = buildReports(property, transactions, investors)
+  const wb = XLSX.utils.book_new()
+  const add = (name, rows) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), name.slice(0, 28))
+  add('Summary', [
+    ['Accountant Package'],
+    ['Property', propTitle(property)],
+    ['Generated', new Date().toLocaleDateString()],
+    ['Tax year', r.year],
+    [],
+    ['Included: Ledger, Balance Sheet, P&L, Cash Flow, Schedule E, Depreciation, Vendors (1099).'],
+  ])
+  add('Ledger', r.ledger.rows)
+  add('Balance Sheet', r.balanceSheet.rows)
+  add('P&L', r.pl.rows)
+  add('Cash Flow', r.cashFlow.rows)
+  add('Schedule E', r.scheduleE.rows)
+  add('Depreciation', depreciationRows(transactions, property))
+  add('Vendors (1099)', vendorRows(transactions))
+  return wb
+}
+
+export const bundleFilename = (property) => `${fileBase(property)}_accountant_bundle.xlsx`
+export function downloadBundle(property, transactions, investors) {
+  XLSX.writeFile(buildBundleWorkbook(property, transactions, investors), bundleFilename(property))
+}
+export function bundleBase64(property, transactions, investors) {
+  return XLSX.write(buildBundleWorkbook(property, transactions, investors), { type: 'base64', bookType: 'xlsx' })
 }
 
 // ── PDF (styled print view — user saves as PDF) ───────────────────────────────

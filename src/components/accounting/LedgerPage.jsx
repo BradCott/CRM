@@ -26,6 +26,7 @@ import AmortizationCard from './AmortizationCard'
 import DriveDocsButton from '../properties/DriveDocsButton'
 import SaleCloseoutWizard from './SaleCloseoutWizard'
 import ReconcileCashModal from './ReconcileCashModal'
+import AccountantBundleModal from './AccountantBundleModal'
 import SettlementTab from './SettlementTab'
 import CategorySelect from './CategorySelect'
 import { CATEGORY_COLORS, computeBalanceSheet } from '../../utils/accounting'
@@ -62,6 +63,7 @@ export default function LedgerPage() {
   const [showAdd, setShowAdd]               = useState(false)
   const [showSettlement, setShowSettlement] = useState(false)
   const [showReconcile, setShowReconcile]   = useState(false)
+  const [showBundle, setShowBundle]         = useState(false)
   const [showBank, setShowBank]             = useState(false)
   const [showCloseout, setShowCloseout]     = useState(false)
   const [exportOpen, setExportOpen]         = useState(false)
@@ -576,6 +578,9 @@ export default function LedgerPage() {
                 {reversing ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />} Reverse Sale
               </button>
             )}
+            <Button variant="secondary" onClick={() => setShowBundle(true)} title="Compile the full accounting package and email it to your accountant">
+              <FileSpreadsheet className="w-4 h-4" /> Accountant Bundle
+            </Button>
             <DropTarget onFile={f => { setDriveInitialFile(f); setShowSettlement(true) }}>
               <Button variant="secondary" onClick={() => setShowSettlement(true)}>
                 <FileText className="w-4 h-4" /> Settlement Statement
@@ -1420,6 +1425,15 @@ export default function LedgerPage() {
           opening={advanced ? openingBalances : null}
           onSaved={reload}
           onClose={() => setShowReconcile(false)}
+        />
+      )}
+
+      {showBundle && (
+        <AccountantBundleModal
+          property={property}
+          transactions={transactions}
+          investors={investors}
+          onClose={() => setShowBundle(false)}
         />
       )}
 

@@ -1,0 +1,120 @@
+// Accountant Bundle — one Excel workbook (Ledger, Balance Sheet, P&L, Cash Flow,
+// Schedule E, Depreciation, 1099 vendors) that you download and/or email straight
+// to the CPA from your connected Google account.
+import { useState } from 'react'
+import { X, Loader2, Download, Send, FileSpreadsheet, CheckCircle, AlertTriangle } from 'lucide-react'
+import Button from '../ui/Button'
+import { downloadBundle, bundleBase64, bundleFilename } from '../../utils/accountingExport'
+import { emailAccountantBundle } from '../../api/client'
+
+const SHEETS = ['Ledger', 'Balance Sheet', 'P&L', 'Cash Flow', 'Schedule E', 'Depreciation', 'Vendors (1099)']
+
+export default function AccountantBundleModal({ property, transactions = [], investors = [], onClose }) {
+  const addr = property?.address || 'this property'
+  const [to, setTo]           = useState('')
+  const [cc, setCc]           = useState('')
+  const [from, setFrom]       = useState('brad@knoxcre.com')
+  const [subject, setSubject] = useState(`Accountant package — ${addr}`)
+  const [body, setBody]       = useState(
+    `Hi,\n\nAttached is the full accounting package for ${addr} — ledger, balance sheet, P&L, cash flow, Schedule E, depreciation schedule, and 1099 vendor summary.\n\nLet me know if you need anything else.\n\nThanks,\nBrad`)
+  const [sending, setSending] = useState(false)
+  const [sent, setSent]       = useState(false)
+  const [error, setError]     = useState(null)
+
+  const download = () => {
+    try { downloadBundle(property, transactions, investors) }
+    catch (e) { setError(e.message || 'Could not build the file') }
+  }
+
+  const send = async () => {
+    if (!to.trim()) { setError("Enter the accountant's email"); return }
+    if (!window.confirm(`Email the accountant package for ${addr} to ${to}?`)) return
+    setSending(true); setError(null)
+    try {
+      const attachment_base64 = bundleBase64(property, transactions, investors)
+      await emailAccountantBundle(property.id, {
+        to: to.trim(), cc: cc.trim() || undefined, from: from.trim() || undefined,
+        subject, body, filename: bundleFilename(property), attachment_base64,
+      })
+      setSent(true)
+    } catch (e) {
+      setError(e.message || 'Send failed')
+    } finally {
+      setSending(false)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] flex flex-col" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 shrink-0">
+          <div className="flex items-center gap-2">
+            <FileSpreadsheet className="w-5 h-5 text-emerald-600" />
+            <h3 className="text-base font-semibold text-slate-900">Accountant Bundle</h3>
+          </div>
+          <button onClick={onClose} className="text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>
+        </div>
+
+        {sent ? (
+          <div className="px-5 py-10 flex flex-col items-center gap-3 text-center">
+            <CheckCircle className="w-10 h-10 text-emerald-500" />
+            <p className="text-lg font-semibold text-slate-900">Package sent</p>
+            <p className="text-sm text-slate-500">The accountant bundle for {addr} was emailed to {to}.</p>
+            <Button onClick={onClose} className="mt-2">Done</Button>
+          </div>
+        ) : (
+          <div className="px-5 py-4 space-y-4 overflow-y-auto">
+            <div className="bg-slate-50 rounded-lg px-3 py-2.5">
+              <p className="text-xs font-medium text-slate-500 mb-1.5">Included in the workbook</p>
+              <div className="flex flex-wrap gap-1.5">
+                {SHEETS.map(s => <span key={s} className="text-xs bg-white border border-slate-200 rounded px-2 py-0.5 text-slate-600">{s}</span>)}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">To (accountant)</label>
+                <input value={to} onChange={e => setTo(e.target.value)} type="email" placeholder="cpa@firm.com"
+                  className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-500 mb-1">Cc (optional)</label>
+                <input value={cc} onChange={e => setCc(e.target.value)} type="email" placeholder=""
+                  className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">From</label>
+              <input value={from} onChange={e => setFrom(e.target.value)} type="email"
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+              <p className="text-[11px] text-slate-400 mt-1">Sends through your connected Google account. To send as brad@knoxcre.com, that must be the account connected in Settings (or a verified “send as” alias).</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Subject</label>
+              <input value={subject} onChange={e => setSubject(e.target.value)}
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400" />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-500 mb-1">Message</label>
+              <textarea value={body} onChange={e => setBody(e.target.value)} rows={6}
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400 resize-y" />
+            </div>
+
+            {error && <p className="text-sm text-red-600 flex items-center gap-1.5"><AlertTriangle className="w-4 h-4" /> {error}</p>}
+
+            <div className="flex items-center justify-between gap-2 pt-1">
+              <button onClick={download} className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 border border-slate-200 rounded-lg px-3 py-2 hover:bg-slate-50">
+                <Download className="w-4 h-4" /> Download package
+              </button>
+              <Button onClick={send} disabled={sending || !to.trim()}>
+                {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />} Send to accountant
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}

@@ -5,6 +5,7 @@ import db from '../db.js'
 import { autoLinkInvestors, investorRosterWithAliases, matchInvestorWire, normalizeName, nameSimilarity } from '../services/investorMatch.js'
 import { categorizeBatch, learnRules, ruleConfidence } from '../utils/categorize.js'
 import { generateSchedule, matchMortgageSplit, markRowConsumed } from '../utils/amortization.js'
+import { sendMail } from '../services/mailer.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
@@ -1624,6 +1625,35 @@ router.post('/:propertyId/estimate-entity-tax', async (req, res) => {
     res.json({ ok: true, location: [prop.city, prop.state].filter(Boolean).join(', '), ...result })
   } catch (err) {
     console.error('[accounting] Entity-tax research error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ── Email the accountant bundle ───────────────────────────────────────────────
+// The client builds the Excel workbook and sends it as base64; we attach it and
+// send via the connected Google account (brad@knoxcre.com once that's the send
+// mailbox). Sending is an explicit user action confirmed in the UI.
+router.post('/:propertyId/email-bundle', async (req, res) => {
+  const b = req.body || {}
+  if (!b.to) return res.status(400).json({ error: 'A recipient email is required' })
+  if (!b.attachment_base64) return res.status(400).json({ error: 'Missing the attachment' })
+  try {
+    await sendMail({
+      to:      String(b.to).trim(),
+      cc:      b.cc ? String(b.cc).trim() : undefined,
+      from:    b.from ? String(b.from).trim() : undefined,
+      replyTo: b.from ? String(b.from).trim() : undefined,
+      subject: b.subject || 'Accountant package',
+      text:    b.body || '',
+      attachments: [{
+        filename:    b.filename || 'accountant_bundle.xlsx',
+        content:     Buffer.from(b.attachment_base64, 'base64'),
+        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      }],
+    })
+    res.json({ ok: true })
+  } catch (err) {
+    console.error('[accounting] email-bundle:', err.message)
     res.status(500).json({ error: err.message })
   }
 })
