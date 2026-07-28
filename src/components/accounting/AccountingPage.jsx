@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { BookOpen, Loader2, ArrowRight, TrendingUp, Home, BarChart2, Tag, Banknote } from 'lucide-react'
-import { getAccountingSummary, getAccountingSettings, updateAccountingSettings } from '../../api/client'
+import { getAccountingSummary, getAccountingSettings, updateAccountingSettings, getAccountingReports } from '../../api/client'
+import { computeBalanceSheet } from '../../utils/accounting'
 import CategoryManager from './CategoryManager'
 import PortfolioReconcileModal from './PortfolioReconcileModal'
 
@@ -31,7 +32,18 @@ export default function AccountingPage() {
   const [advanced, setAdvanced] = useState(false)
   const [savingAdvanced, setSavingAdvanced] = useState(false)
 
-  const loadSummary = () => getAccountingSummary().then(setProperties).catch(e => setError(e.message))
+  // Cards keep the summary's meta (equity, rent, counts) but show cash computed the
+  // SAME way as the ledger (computeBalanceSheet), so one consistent number everywhere.
+  const loadSummary = () => Promise.all([
+    getAccountingSummary(),
+    getAccountingReports().catch(() => null),
+  ]).then(([summary, reports]) => {
+    const cashById = {}
+    for (const p of reports?.properties || []) {
+      cashById[p.id] = computeBalanceSheet(p.transactions || [], p.investors || [], reports.advanced ? p.opening_balances : null).totalCash
+    }
+    setProperties(summary.map(p => (cashById[p.id] != null ? { ...p, cash_balance: cashById[p.id] } : p)))
+  }).catch(e => setError(e.message))
 
   useEffect(() => {
     loadSummary().finally(() => setLoading(false))
