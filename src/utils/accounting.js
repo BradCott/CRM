@@ -323,31 +323,48 @@ export function filterByPeriod(transactions, period, fromDate, toDate) {
   })
 }
 
-// ── Depreciation — 27.5-year straight line, mid-month convention ─────────────
+// ── Depreciation — straight line, mid-month convention ──────────────────────
+// Commercial real property (retail, NNN, office) = 39-year. Residential rental
+// = 27.5-year. Land is never depreciable — only the Building Value basis is.
 
-export const DEPRECIATION_YEARS = 27.5
+export const COMMERCIAL_YEARS  = 39
+export const RESIDENTIAL_YEARS = 27.5
+export const DEFAULT_RECOVERY_YEARS = COMMERCIAL_YEARS
+// Back-compat alias (older imports); commercial is the portfolio default.
+export const DEPRECIATION_YEARS = COMMERCIAL_YEARS
+
+/** Normalize a recovery-period input to a supported life; blank → commercial. */
+export function recoveryYears(v) {
+  const n = Number(v)
+  if (n === RESIDENTIAL_YEARS) return RESIDENTIAL_YEARS
+  if (n === COMMERCIAL_YEARS)  return COMMERCIAL_YEARS
+  if (isFinite(n) && n > 0)     return n         // allow a custom life if ever needed
+  return DEFAULT_RECOVERY_YEARS
+}
 
 /**
  * Build a depreciation schedule from the Building Value settlement entry.
  * In-service date = date of the Building Value transaction.
  * Mid-month convention: first year gets (12.5 − in-service month)/12 of a full year.
+ * @param {object} opts { years } — recovery period in years (default 39, commercial).
  */
-export function computeDepreciation(transactions) {
+export function computeDepreciation(transactions, opts = {}) {
   const buildingTxs = transactions.filter(t => t.description === 'Building Value')
   if (!buildingTxs.length) return null
 
+  const years = recoveryYears(opts.years)
   const basis = buildingTxs.reduce((s, t) => s + Math.abs(Number(t.amount)), 0)
   const inService = buildingTxs[0].date            // YYYY-MM-DD
   const startYear  = Number(inService.slice(0, 4))
   const startMonth = Number(inService.slice(5, 7)) // 1-12
 
-  const annual    = basis / DEPRECIATION_YEARS
+  const annual    = basis / years
   const firstYear = annual * ((12.5 - startMonth) / 12)
 
   const currentYear = new Date().getFullYear()
   const rows = []
   let accumulated = 0
-  for (let y = startYear; y <= startYear + Math.ceil(DEPRECIATION_YEARS) && y <= currentYear + 28; y++) {
+  for (let y = startYear; y <= startYear + Math.ceil(years) && y <= currentYear + Math.ceil(years); y++) {
     let amount
     if (y === startYear) amount = firstYear
     else                 amount = Math.min(annual, basis - accumulated)
@@ -360,7 +377,7 @@ export function computeDepreciation(transactions) {
   const accumulatedToDate = rows.filter(r => r.year <= currentYear).reduce((s, r) => s + r.amount, 0)
 
   return {
-    basis, inService, annual,
+    basis, inService, annual, years,
     rows,
     currentYearAmount: currentRow?.amount ?? 0,
     accumulatedToDate,
@@ -372,6 +389,22 @@ export function depreciationForYear(dep, year) {
   if (!dep) return 0
   const row = dep.rows.find(r => r.year === year)
   return row?.amount ?? 0
+}
+
+/**
+ * Accumulated depreciation from the in-service date through a disposition date,
+ * mid-month convention on both ends (so the count is the whole months between the
+ * in-service month and the disposition month). Used to get adjusted basis at sale.
+ */
+export function accumulatedDepreciationThrough(dep, asOfDate) {
+  if (!dep || !asOfDate) return 0
+  const startYear  = Number(dep.inService.slice(0, 4))
+  const startMonth = Number(dep.inService.slice(5, 7))
+  const y = Number(String(asOfDate).slice(0, 4))
+  const m = Number(String(asOfDate).slice(5, 7))
+  const months = (y - startYear) * 12 + (m - startMonth)
+  if (months <= 0) return 0
+  return Math.min(dep.basis, dep.annual * (months / 12))
 }
 
 // ── Schedule E mapping ────────────────────────────────────────────────────────
@@ -398,7 +431,7 @@ export const SCHEDULE_E_LINES = [
  * Returns rents received (line 3), expense lines 5-19, depreciation (line 18),
  * total expenses (line 20), and income/loss (line 21).
  */
-export function computeScheduleE(transactions, year) {
+export function computeScheduleE(transactions, year, opts = {}) {
   const inYear = transactions.filter(t => t.date.startsWith(String(year)))
 
   const rentsReceived = inYear
@@ -413,7 +446,7 @@ export function computeScheduleE(transactions, year) {
     return { ...def, amount: txs.reduce((s, t) => s + Math.abs(Number(t.amount)), 0), txs }
   })
 
-  const dep = computeDepreciation(transactions)
+  const dep = computeDepreciation(transactions, { years: opts.years })
   const depreciation = depreciationForYear(dep, year)
 
   const totalExpenses = lines.reduce((s, l) => s + l.amount, 0) + depreciation

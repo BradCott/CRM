@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import Button from '../ui/Button'
 import { Input } from '../ui/Input'
-import { computeBalanceSheet, computeWaterfall } from '../../utils/accounting'
+import { computeBalanceSheet, computeWaterfall, computeDepreciation, accumulatedDepreciationThrough, recoveryYears } from '../../utils/accounting'
 import { getPropertyDistributions, getBills, saleCloseout, uploadSaleSettlement, estimateEntityTax } from '../../api/client'
 
 const STEPS = ['Sale', 'Safety Check', 'Reserves', 'Distribute', 'Review']
@@ -104,8 +104,17 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
     .reduce((s, t) => s + num(t.amount), 0)), [transactions])
   const taxState  = String(property?.state || '').trim().toUpperCase()
   const taxRate   = stateTaxRate(taxState)
-  const estGain   = Math.max(0, num(salePrice) - num(sellingCosts) - bookBasis)
-  const estEntityTax = Math.round(estGain * taxRate)
+
+  // Depreciation → adjusted basis → taxable gain (with recapture). Accumulated
+  // depreciation lowers the basis, so the TAXABLE gain is higher than the book gain.
+  const dep = useMemo(
+    () => computeDepreciation(transactions, { years: recoveryYears(property?.depreciation_years) }),
+    [transactions, property])
+  const accumDep      = dep ? accumulatedDepreciationThrough(dep, saleDate) : 0
+  const adjustedBasis = Math.max(0, bookBasis - accumDep)
+  const bookGain      = Math.max(0, num(salePrice) - num(sellingCosts) - bookBasis)
+  const estGain       = Math.max(0, num(salePrice) - num(sellingCosts) - adjustedBasis) // taxable gain
+  const estEntityTax  = Math.round(estGain * taxRate)
 
   // AI location research — the model decides whether the SELLING ENTITY actually
   // owes tax at this jurisdiction (franchise/excise, PTE, closing withholding…),
@@ -434,6 +443,14 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
                         {aiTaxLoading ? 'Researching…' : 'Re-run'}
                       </button>
                     </div>
+
+                    <p className="text-amber-700">
+                      {accumDep > 0 ? (
+                        <>Taxable gain <span className="font-medium">{money(estGain)}</span> = book gain {money(bookGain)} + depreciation recapture {money(accumDep)} (adjusted basis {money(adjustedBasis)}).</>
+                      ) : (
+                        <>Est. gain <span className="font-medium">{money(estGain)}</span> (sale {money(num(salePrice))} − costs {money(num(sellingCosts))} − basis {money(bookBasis)}). No depreciation taken yet.</>
+                      )}
+                    </p>
 
                     {aiTaxLoading && !aiTax && (
                       <p className="text-amber-600">Researching whether the selling entity owes tax at this location…</p>

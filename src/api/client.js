@@ -268,6 +268,7 @@ export const getPropertyDistributions = (propertyId) => req('GET', `/accounting/
 export const getAllDistributions      = ()            => req('GET', '/accounting/distributions')
 export const saleCloseout             = (propertyId, d) => req('POST', `/accounting/${propertyId}/sale-closeout`, d)
 export const estimateEntityTax        = (propertyId, d) => req('POST', `/accounting/${propertyId}/estimate-entity-tax`, d)
+export const setDepreciationYears     = (propertyId, years) => req('POST', `/accounting/${propertyId}/depreciation`, { years })
 export async function uploadSaleSettlement(propertyId, file) {
   const fd = new FormData()
   fd.append('file', file)

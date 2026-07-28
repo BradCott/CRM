@@ -2,8 +2,9 @@
 import { useState } from 'react'
 import { ChevronDown, ChevronRight, Printer } from 'lucide-react'
 import DrilldownModal from './DrilldownModal'
-import { computeScheduleE, DEPRECIATION_YEARS } from '../../utils/accounting'
+import { computeScheduleE, recoveryYears, COMMERCIAL_YEARS, RESIDENTIAL_YEARS } from '../../utils/accounting'
 import { scheduleERows } from '../../utils/accountingExport'
+import { setDepreciationYears } from '../../api/client'
 import ReportExportButton from './ReportExportButton'
 
 function fmt$(n) {
@@ -74,7 +75,16 @@ export default function ScheduleE({ property, transactions, onChanged }) {
   const [year, setYear] = useState(currentYear)
   const [showDep, setShowDep] = useState(false)
 
-  const se = computeScheduleE(transactions, year)
+  // Recovery period: property override (39 commercial / 27.5 residential), default 39.
+  const [depYears, setDepYears] = useState(recoveryYears(property?.depreciation_years))
+  const [savingDep, setSavingDep] = useState(false)
+  const changeDepYears = async (y) => {
+    setDepYears(y); setSavingDep(true)
+    try { await setDepreciationYears(property.id, y) } catch { /* keep local value */ }
+    finally { setSavingDep(false) }
+  }
+
+  const se = computeScheduleE(transactions, year, { years: depYears })
 
   // Years with any transactions, for the picker
   const years = [...new Set(transactions.map(t => Number(t.date.slice(0, 4))))].sort((a, b) => b - a)
@@ -151,11 +161,25 @@ export default function ScheduleE({ property, transactions, onChanged }) {
             <div>
               <span className="text-sm font-semibold text-slate-900">Depreciation Schedule</span>
               <p className="text-xs text-slate-400 mt-0.5">
-                Basis {fmt$(se.dep.basis)} · In service {se.dep.inService} · {DEPRECIATION_YEARS}-year straight line, mid-month convention
+                Basis {fmt$(se.dep.basis)} · In service {se.dep.inService} · {se.dep.years}-year straight line, mid-month convention
               </p>
             </div>
             {showDep ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
           </button>
+          <div className="flex items-center gap-2 px-5 pb-3 -mt-1">
+            <span className="text-xs text-slate-400">Property type:</span>
+            <div className="inline-flex rounded-lg border border-slate-200 overflow-hidden text-xs">
+              <button onClick={() => changeDepYears(COMMERCIAL_YEARS)}
+                className={`px-2.5 py-1 ${se.dep.years === COMMERCIAL_YEARS ? 'bg-blue-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                Commercial · {COMMERCIAL_YEARS} yr
+              </button>
+              <button onClick={() => changeDepYears(RESIDENTIAL_YEARS)}
+                className={`px-2.5 py-1 border-l border-slate-200 ${se.dep.years === RESIDENTIAL_YEARS ? 'bg-blue-500 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>
+                Residential · {RESIDENTIAL_YEARS} yr
+              </button>
+            </div>
+            {savingDep && <span className="text-xs text-slate-400">saving…</span>}
+          </div>
           {showDep && (
             <table className="w-full text-sm border-collapse">
               <thead>

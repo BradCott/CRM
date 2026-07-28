@@ -577,6 +577,8 @@ const migrations = [
   `ALTER TABLE properties ADD COLUMN estimated_sales      REAL`,
   `ALTER TABLE properties ADD COLUMN estimated_sales_date TEXT`,
   `ALTER TABLE properties ADD COLUMN photo_path           TEXT`,
+  // Depreciation recovery period: 39 = commercial (default), 27.5 = residential.
+  `ALTER TABLE properties ADD COLUMN depreciation_years   REAL`,
   // Tenant reimbursement tracking on taxes (insurance already has it).
   `ALTER TABLE property_taxes ADD COLUMN reimbursed_status TEXT NOT NULL DEFAULT 'unreimbursed'`,
   `ALTER TABLE property_taxes ADD COLUMN reimbursed_date   TEXT`,

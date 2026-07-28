@@ -1548,6 +1548,19 @@ router.post('/:propertyId/estimate-entity-tax', async (req, res) => {
   }
 })
 
+// ── Depreciation recovery period (per property) ───────────────────────────────
+// 39 = commercial real property (default), 27.5 = residential rental. Stored on
+// the property; the schedule itself is derived from the Building Value entry.
+router.post('/:propertyId/depreciation', (req, res) => {
+  const { propertyId } = req.params
+  const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(propertyId)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+  const y = Number(req.body?.years)
+  const years = (y === 27.5 || y === 39 || (isFinite(y) && y > 0)) ? y : null
+  db.prepare('UPDATE properties SET depreciation_years = ? WHERE id = ?').run(years, propertyId)
+  res.json({ ok: true, depreciation_years: years })
+})
+
 // ── Settlement re-balance ─────────────────────────────────────────────────────
 // Re-reads the whole PDF from scratch (a fresh parse is far more reliable than
 // asking the model to minimally edit an already-wrong extraction), then the
