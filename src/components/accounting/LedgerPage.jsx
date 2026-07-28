@@ -25,6 +25,7 @@ import SplitTransactionModal from './SplitTransactionModal'
 import AmortizationCard from './AmortizationCard'
 import DriveDocsButton from '../properties/DriveDocsButton'
 import SaleCloseoutWizard from './SaleCloseoutWizard'
+import ReconcileCashModal from './ReconcileCashModal'
 import SettlementTab from './SettlementTab'
 import CategorySelect from './CategorySelect'
 import { CATEGORY_COLORS, computeBalanceSheet } from '../../utils/accounting'
@@ -60,6 +61,7 @@ export default function LedgerPage() {
 
   const [showAdd, setShowAdd]               = useState(false)
   const [showSettlement, setShowSettlement] = useState(false)
+  const [showReconcile, setShowReconcile]   = useState(false)
   const [showBank, setShowBank]             = useState(false)
   const [showCloseout, setShowCloseout]     = useState(false)
   const [exportOpen, setExportOpen]         = useState(false)
@@ -605,8 +607,10 @@ export default function LedgerPage() {
 
         {/* Summary stats */}
         <div className="flex items-center gap-6 pb-3 flex-wrap">
-          <Stat label="Current Balance" value={fmt$(totals.balance)}
-            color={totals.balance >= 0 ? 'text-emerald-600' : 'text-red-600'} />
+          <button onClick={() => setShowReconcile(true)} className="text-left group" title="Reconcile to your actual bank balance">
+            <Stat label="Current Balance ⚖" value={fmt$(totals.balance)}
+              color={`${totals.balance >= 0 ? 'text-emerald-600' : 'text-red-600'} group-hover:underline decoration-dotted underline-offset-2`} />
+          </button>
           <div className="w-px h-8 bg-slate-200" />
           <Stat label="Equity Contributed" value={fmt$(totals.equity)}    color="text-blue-600" />
           <div className="w-px h-8 bg-slate-200" />
@@ -1377,6 +1381,15 @@ export default function LedgerPage() {
           propertyId={propertyId}
           onSaved={reload}
           onClose={() => setShowAdd(false)}
+        />
+      )}
+
+      {showReconcile && (
+        <ReconcileCashModal
+          propertyId={propertyId}
+          currentBalance={totals.balance}
+          onSaved={reload}
+          onClose={() => setShowReconcile(false)}
         />
       )}
 

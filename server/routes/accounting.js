@@ -1548,6 +1548,36 @@ router.post('/:propertyId/estimate-entity-tax', async (req, res) => {
   }
 })
 
+// ── Reconcile book cash to the actual bank balance ────────────────────────────
+// Posts a single 'Cash Adjustment' entry for (target − current book cash) so the
+// ledger cash lands exactly on the real bank balance. Fixes botched imports /
+// unrecorded activity. Non-P&L; the offset lands in retained earnings (a prior-
+// period correction). The client sends the current book cash it is displaying.
+router.post('/:propertyId/reconcile-cash', (req, res) => {
+  const { propertyId } = req.params
+  const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(propertyId)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+
+  const b = req.body || {}
+  const clean = v => { const n = Number(String(v ?? '').replace(/[$,\s]/g, '')); return isFinite(n) ? n : NaN }
+  const target  = clean(b.target_balance)
+  const current = clean(b.current_balance)
+  if (!isFinite(target) || !isFinite(current)) return res.status(400).json({ error: 'target_balance and current_balance are required' })
+
+  const delta = Math.round((target - current) * 100) / 100
+  if (Math.abs(delta) < 0.01) return res.json({ ok: true, adjustment: 0, message: 'Already reconciled — no adjustment needed.' })
+
+  const date = cleanDate(b.as_of) || new Date().toISOString().slice(0, 10)
+  const note = (b.note && String(b.note).trim())
+    || `Reconcile cash to bank balance ${target < 0 ? '-$' : '$'}${Math.abs(target).toLocaleString()} (was ${current < 0 ? '-$' : '$'}${Math.abs(current).toLocaleString()})`
+  db.prepare(`
+    INSERT INTO accounting_transactions (property_id, date, description, category, amount, source, review_status, vendor)
+    VALUES (?, ?, ?, 'Cash Adjustment', ?, 'Reconciliation', 'recorded', NULL)
+  `).run(propertyId, date, note, delta)
+
+  res.status(201).json({ ok: true, adjustment: delta, new_balance: target })
+})
+
 // ── Depreciation recovery period (per property) ───────────────────────────────
 // 39 = commercial real property (default), 27.5 = residential rental. Stored on
 // the property; the schedule itself is derived from the Building Value entry.

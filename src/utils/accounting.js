@@ -17,7 +17,10 @@ const BUILTIN_EXPENSE = [
 // company owes back); a cash injection, never income or expense.
 // "Distribution" = cash paid out to investors (return of capital / pref / profit);
 // reduces cash and equity, never a P&L expense.
-const NON_PL = ['Equity Contribution', 'Purchase', 'Loan', 'Loan Payment', 'Sale', 'Mortgage Principal', 'Member Loan', 'Distribution']
+// "Cash Adjustment" = a reconciling entry to true up book cash to the actual bank
+// balance (corrects botched imports / unrecorded activity). Affects cash & equity
+// (prior-period adjustment), never P&L income or expense.
+const NON_PL = ['Equity Contribution', 'Purchase', 'Loan', 'Loan Payment', 'Sale', 'Mortgage Principal', 'Member Loan', 'Distribution', 'Cash Adjustment']
 
 // These are `let` + live ES-module bindings so hydrateCustomCategories() can
 // merge user-defined charge types in at runtime and every importer sees them.
@@ -35,6 +38,7 @@ export const CATEGORY_COLORS = {
   'Loan Payment':           'bg-teal-100 text-teal-700',
   'Member Loan':            'bg-teal-100 text-teal-700',
   'Distribution':           'bg-violet-100 text-violet-700',
+  'Cash Adjustment':        'bg-slate-100 text-slate-600',
   'Rent':                   'bg-emerald-100 text-emerald-700',
   'Mortgage':               'bg-amber-100 text-amber-700',
   'Mortgage Interest':      'bg-amber-100 text-amber-700',
@@ -71,6 +75,7 @@ const BUILTIN_CATEGORY_KIND = {
   'Mortgage Principal':  'liability',
   'Member Loan':         'liability',
   'Distribution':        'equity',
+  'Cash Adjustment':     'equity',
 }
 
 /** Account type for a category: 'income' | 'expense' | 'asset' | 'liability' | 'equity'. */
@@ -221,7 +226,9 @@ export function computeBalanceSheet(transactions, investors = [], opening = null
   const memberLoan = sum(transactions.filter(t => t.category === 'Member Loan'))
   // Distributions to investors are cash out (negative), reducing cash and equity.
   const distributions = sum(transactions.filter(t => t.category === 'Distribution'))
-  const totalCash = opCash + otherOp + equityContribCash + principalPaid + memberLoan + distributions + obCash
+  // Reconciling entries that true up book cash to the actual bank balance.
+  const cashAdjustments = sum(transactions.filter(t => t.category === 'Cash Adjustment'))
+  const totalCash = opCash + otherOp + equityContribCash + principalPaid + memberLoan + distributions + cashAdjustments + obCash
   const totalAssets = totalRealEstate + totalCash
 
   const loanBalance = sum(transactions.filter(t => t.category === 'Loan' && t.description !== '1031 Exchange Proceeds')) + principalPaid + obLoan
