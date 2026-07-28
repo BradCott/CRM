@@ -8,7 +8,7 @@ import {
 import Button from '../ui/Button'
 import { Input } from '../ui/Input'
 import { computeBalanceSheet, computeWaterfall } from '../../utils/accounting'
-import { getPropertyDistributions, getBills, saleCloseout, uploadSaleSettlement } from '../../api/client'
+import { getPropertyDistributions, getBills, saleCloseout, uploadSaleSettlement, estimateEntityTax } from '../../api/client'
 
 const STEPS = ['Sale', 'Safety Check', 'Reserves', 'Distribute', 'Review']
 const LINE_KINDS = [
@@ -105,8 +105,32 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
   const estGain   = Math.max(0, num(salePrice) - num(sellingCosts) - bookBasis)
   const estEntityTax = Math.round(estGain * taxRate)
 
-  // Auto-fill the reserve defaults the first time the Reserves step opens:
-  // final tax return → $2,750, entity-level taxes → estimated gain × state rate.
+  // AI location research — the model decides whether the SELLING ENTITY actually
+  // owes tax at this jurisdiction (franchise/excise, PTE, closing withholding…),
+  // which varies by state and city. The static rate above is the instant fallback.
+  const setEntityReserve = (amt) =>
+    setReserves(rs => rs.map(x => /entity/i.test(x.label) ? { ...x, amount: String(amt) } : x))
+  const [aiTax, setAiTax]               = useState(null)
+  const [aiTaxLoading, setAiTaxLoading] = useState(false)
+  const [aiTaxError, setAiTaxError]     = useState(null)
+  const researchEntityTax = async () => {
+    setAiTaxLoading(true); setAiTaxError(null)
+    try {
+      const r = await estimateEntityTax(propertyId, {
+        sale_price: num(salePrice), selling_costs: num(sellingCosts), gain: estGain,
+      })
+      setAiTax(r)
+      if (r.applies && Number(r.estimated_total) > 0) setEntityReserve(Math.round(Number(r.estimated_total)))
+      else if (r.applies === false) setEntityReserve(0)
+    } catch (e) {
+      setAiTaxError(e.message || 'Research failed')
+    } finally {
+      setAiTaxLoading(false)
+    }
+  }
+
+  // First time the Reserves step opens: seed final-return + static entity estimate
+  // instantly, then kick off AI research to refine the entity-tax line.
   const [reservesAutofilled, setReservesAutofilled] = useState(false)
   useEffect(() => {
     if (step !== 2 || reservesAutofilled) return
@@ -117,7 +141,8 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
       return r
     }))
     setReservesAutofilled(true)
-  }, [step, reservesAutofilled, estEntityTax])
+    researchEntityTax()
+  }, [step, reservesAutofilled, estEntityTax]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Derived money ──
   const reservesTotal = reserves.reduce((s, r) => s + num(r.amount), 0)
@@ -397,27 +422,53 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
                     <button onClick={() => setReserves(rs => [...rs, { label: '', amount: '' }])} className="text-xs font-medium text-emerald-600 hover:text-emerald-800">+ Add reserve</button>
                   </div>
 
-                  {/* Entity-tax estimate basis */}
-                  <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-xs text-amber-800 space-y-1">
-                    {taxRate > 0 ? (
-                      <p>
-                        <span className="font-medium">Entity-level tax estimate:</span>{' '}
-                        {taxState} rate {(taxRate * 100).toFixed(2)}% × est. gain {money(estGain)}
-                        {' '}(sale {money(num(salePrice))} − costs {money(num(sellingCosts))} − basis {money(bookBasis)})
-                        {' '}= <span className="font-medium">{money(estEntityTax)}</span>.
-                      </p>
-                    ) : (
-                      <p>
-                        <span className="font-medium">{taxState || 'This state'}</span> has no entity/income tax on a
-                        real-estate gain in the table — entity-tax reserve left at $0. Set it manually if needed.
+                  {/* AI-researched entity-level tax */}
+                  <div className="bg-amber-50 border border-amber-100 rounded-xl px-4 py-3 text-xs text-amber-800 space-y-1.5">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="font-medium text-amber-900">Entity-level tax — AI research for {[property?.city, taxState].filter(Boolean).join(', ') || 'this location'}</span>
+                      <button onClick={researchEntityTax} disabled={aiTaxLoading}
+                        className="inline-flex items-center gap-1 text-amber-700 underline hover:text-amber-900 disabled:opacity-50">
+                        {aiTaxLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+                        {aiTaxLoading ? 'Researching…' : 'Re-run'}
+                      </button>
+                    </div>
+
+                    {aiTaxLoading && !aiTax && (
+                      <p className="text-amber-600">Researching whether the selling entity owes tax at this location…</p>
+                    )}
+                    {aiTaxError && (
+                      <p className="text-red-600">Couldn't research automatically ({aiTaxError}). Using the {taxState || 'state'} table estimate of {money(estEntityTax)} — edit above.</p>
+                    )}
+
+                    {aiTax && (
+                      <>
+                        <p>
+                          <span className="font-medium">{aiTax.applies ? 'Entity tax likely applies' : 'No entity-level tax'}</span>
+                          {aiTax.jurisdiction ? ` — ${aiTax.jurisdiction}` : ''}
+                          {aiTax.applies ? <> · reserve <span className="font-medium">{money(Number(aiTax.estimated_total))}</span></> : ' — flows through to members personally'}
+                          {aiTax.confidence ? <span className="text-amber-500"> ({aiTax.confidence} confidence)</span> : null}
+                        </p>
+                        {Array.isArray(aiTax.components) && aiTax.components.length > 0 && (
+                          <ul className="pl-4 list-disc space-y-0.5">
+                            {aiTax.components.map((c, i) => (
+                              <li key={i}>
+                                {c.name}{c.rate_pct != null ? ` (${c.rate_pct}% of ${c.basis || 'gain'})` : ''}: <span className="font-medium">{money(Number(c.estimated_amount))}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                        {aiTax.reasoning && <p className="text-amber-700">{aiTax.reasoning}</p>}
+                        <p className="text-amber-500">{aiTax.caveat || 'Rough estimate — confirm the final number with your CPA, then edit above.'}</p>
+                      </>
+                    )}
+
+                    {!aiTax && !aiTaxLoading && (
+                      <p className="text-amber-600">
+                        Fallback table estimate: {taxRate > 0
+                          ? <>{taxState} {(taxRate * 100).toFixed(2)}% × gain {money(estGain)} = {money(estEntityTax)}</>
+                          : <>no entity tax on file for {taxState || 'this state'}</>}.
                       </p>
                     )}
-                    <p className="text-amber-600">Rough starting estimate — confirm the final number with your CPA, then edit above.</p>
-                    <button
-                      onClick={() => setReserves(rs => rs.map(r =>
-                        /entity/i.test(r.label) ? { ...r, amount: estEntityTax > 0 ? String(estEntityTax) : r.amount }
-                        : /final tax|accountant/i.test(r.label) ? { ...r, amount: String(FINAL_RETURN_DEFAULT) } : r))}
-                      className="text-xs font-medium text-amber-700 underline hover:text-amber-900">Re-apply estimates</button>
                   </div>
                   <label className="flex items-center gap-2 text-sm text-slate-600 pt-1">
                     <input type="checkbox" checked={includeCash} onChange={e => setIncludeCash(e.target.checked)} className="rounded border-slate-300" />

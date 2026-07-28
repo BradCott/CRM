@@ -1492,6 +1492,62 @@ router.post('/:propertyId/sale-settlement', upload.single('file'), async (req, r
   }
 })
 
+// ── AI entity-level tax research ──────────────────────────────────────────────
+// Researches the actual jurisdiction (state + city) to decide whether the SELLING
+// ENTITY itself owes a tax on the sale — franchise/excise, gross-receipts, LLC
+// fee, nonresident withholding at closing, or a state-level entity tax — as
+// opposed to tax that only flows through to the members' personal returns.
+// Returns a reserve estimate with reasoning. Always a starting estimate the user
+// can override; never treated as filed tax advice.
+const ENTITY_TAX_PROMPT = `You are a U.S. real-estate tax analyst helping a sponsor set aside a cash RESERVE at the sale of a single commercial property held in a pass-through LLC. Decide whether the SELLING ENTITY itself (not the individual members' personal returns) will owe any tax triggered by this sale in this jurisdiction.
+
+Consider ONLY entity-level obligations, such as:
+- State franchise / excise tax (e.g., TN F&E, TX franchise/margin tax, CA $800 + LLC gross-receipts fee)
+- State-level entity income tax or pass-through-entity (PTE) tax on the gain
+- Mandatory nonresident/FIRPTA-style STATE withholding collected at closing on the sale of real property
+- Local/city business or transfer taxes owed by the seller entity
+
+Do NOT include: the members' personal federal or state income tax on their K-1 (that is not entity-level), or federal capital gains.
+
+Respond with ONLY a JSON object, no prose:
+{
+  "applies": true|false,
+  "jurisdiction": "<state, and city if relevant>",
+  "components": [{"name":"<tax name>","basis":"<gain|sale price|revenue|flat>","rate_pct":<number or null>,"estimated_amount":<number>}],
+  "estimated_total": <number, sum of components, 0 if none>,
+  "confidence": "high|medium|low",
+  "reasoning": "<2-4 sentences: what applies, what does not, and why>",
+  "caveat": "<one sentence telling the user to confirm with their CPA>"
+}
+If nothing applies at the entity level, set applies=false, estimated_total=0, and explain that the tax only flows through to members personally.`
+
+router.post('/:propertyId/estimate-entity-tax', async (req, res) => {
+  const { propertyId } = req.params
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set' })
+  const prop = db.prepare('SELECT address, city, state, zip FROM properties WHERE id = ?').get(propertyId)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+
+  const b = req.body || {}
+  const n = v => { const x = Number(String(v ?? '').replace(/[$,\s]/g, '')); return isFinite(x) ? x : 0 }
+  const facts = [
+    `Property: ${[prop.address, prop.city, prop.state, prop.zip].filter(Boolean).join(', ') || 'unknown location'}`,
+    `Entity type: ${b.entity_type || 'single-member or multi-member LLC (pass-through), holding one commercial property'}`,
+    `Sale price: $${Math.round(n(b.sale_price)).toLocaleString()}`,
+    `Selling costs: $${Math.round(n(b.selling_costs)).toLocaleString()}`,
+    `Estimated gain on sale: $${Math.round(n(b.gain)).toLocaleString()}`,
+    b.members_out_of_state ? 'At least one member is a non-resident of the property state.' : '',
+  ].filter(Boolean).join('\n')
+
+  try {
+    const result = await callClaudeTextJson(apiKey, facts, ENTITY_TAX_PROMPT)
+    res.json({ ok: true, location: [prop.city, prop.state].filter(Boolean).join(', '), ...result })
+  } catch (err) {
+    console.error('[accounting] Entity-tax research error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ── Settlement re-balance ─────────────────────────────────────────────────────
 // Re-reads the whole PDF from scratch (a fresh parse is far more reliable than
 // asking the model to minimally edit an already-wrong extraction), then the
