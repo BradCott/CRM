@@ -23,7 +23,7 @@ function fmtDate(iso) {
 
 function RecordModal({ propertyId, investors, onSaved, onClose }) {
   const [form, setForm] = useState({
-    investor_id: investors[0]?.id || '',
+    investor_id: investors.find(i => i.investor_id != null)?.investor_id || '',
     amount: '',
     distribution_date: new Date().toISOString().slice(0, 10),
     distribution_type: 'Preferred Return',
@@ -67,8 +67,8 @@ function RecordModal({ propertyId, investors, onSaved, onClose }) {
         <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
           {error && <div className="px-3 py-2 bg-red-50 border border-red-200 rounded-lg text-sm text-red-700">{error}</div>}
           <Select label="Investor" value={form.investor_id} onChange={set('investor_id')}>
-            {investors.map(i => (
-              <option key={i.id} value={i.id}>
+            {investors.filter(i => i.investor_id != null).map(i => (
+              <option key={i.id} value={i.investor_id}>
                 {i.name}{i.contribution > 0 ? ` — ${fmt$(i.contribution)} invested` : ''}
               </option>
             ))}
@@ -128,17 +128,24 @@ export default function Distributions({ propertyId }) {
   })).filter(t => t.total > 0)
 
   // Per-investor rollup: contribution vs total received
+  // The same global investor can be listed on multiple cap-table rows (e.g. Knox as
+  // a GP position + an LP co-invest). Distributions are recorded at the global level,
+  // so credit them to the FIRST row for that investor only — otherwise Knox shows the
+  // full amount received on every row and the pct blows up.
+  const seenInvestor = new Set()
   const byInvestor = investors.map(inv => {
-    const received = distributions
-      .filter(d => d.investor_id === inv.id)
-      .reduce((s, d) => s + Number(d.amount), 0)
+    const firstForInvestor = inv.investor_id != null && !seenInvestor.has(inv.investor_id)
+    if (inv.investor_id != null) seenInvestor.add(inv.investor_id)
+    const received = firstForInvestor
+      ? distributions.filter(d => d.investor_id === inv.investor_id).reduce((s, d) => s + Number(d.amount), 0)
+      : 0
     return {
       ...inv, received,
-      pctReturned: inv.contribution > 0 ? (received / inv.contribution) * 100 : null,
+      pctReturned: firstForInvestor && inv.contribution > 0 ? (received / inv.contribution) * 100 : null,
     }
   })
   // Investors with distributions but no link row (edge case)
-  const linkedIds = new Set(investors.map(i => i.id))
+  const linkedIds = new Set(investors.map(i => i.investor_id))
   const unlinked = [...new Set(distributions.filter(d => !linkedIds.has(d.investor_id)).map(d => d.investor_id))]
     .map(id => {
       const ds = distributions.filter(d => d.investor_id === id)

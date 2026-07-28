@@ -548,8 +548,11 @@ export function computeCashFlow(transactions) {
 
 /** Group outflows by vendor for a given year (or all time if year is null). */
 export function computeVendorSummary(transactions, year = null) {
+  // Only real expense payments count as vendors (for 1099s). Exclude balance-sheet
+  // / capital movements — distributions to investors, loan payoffs, purchases, etc.
+  // (their "vendor" is an investor or lender, not a 1099 vendor).
   const outflows = transactions.filter(t =>
-    t.vendor && Number(t.amount) < 0 &&
+    t.vendor && Number(t.amount) < 0 && !NON_PL.includes(t.category) &&
     (year === null || t.date.startsWith(String(year)))
   )
   const byVendor = new Map()

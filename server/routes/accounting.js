@@ -344,10 +344,14 @@ router.get('/:propertyId/distributions', (req, res) => {
   // `id` is the resolved global investor id when matched (needed to record a
   // per-investor distribution); unmatched rows get a stable synthetic key and a
   // null investor_id so they still show in the waterfall but aren't mis-recorded.
+  // `id` is a UNIQUE per-cap-table-row key (a property can list the same global
+  // investor twice — e.g. Knox as both a GP position and an LP co-invest — and
+  // each row must be independently selectable as Sponsor). `investor_id` is the
+  // resolved global id used to record the per-investor distribution.
   const investors = capTableWithResolvedInvestorId(req.params.propertyId)
     .filter(r => Number(r.contribution) > 0 || r.investor_id != null)
     .map(r => ({
-      id:            r.investor_id != null ? r.investor_id : `cap-${r.id}`,
+      id:            `row-${r.id}`,
       investor_id:   r.investor_id != null ? r.investor_id : null,
       name:          r.name,
       contribution:  Number(r.contribution) || 0,
@@ -1152,10 +1156,18 @@ router.get('/:propertyId/capital-accounts', (req, res) => {
   const contribMap = new Map(contributed.map(r => [r.investor_id, r.total]))
   const distMap    = new Map(dist.map(r => [r.investor_id, r.total]))
 
+  // A single global investor can appear on multiple cap-table rows (e.g. Knox as a
+  // GP position and an LP co-invest). Recorded contributions/distributions live at
+  // the global-investor level, so attribute them to the FIRST row for that investor
+  // only — otherwise the same dollars are counted on every row and totals double up.
+  // Committed stays per-row (each position has its own commitment).
+  const seenInvestor = new Set()
   const out = rows.map(r => {
     const committed       = r.contribution || 0
-    const contributed_amt = r.investor_id ? (contribMap.get(r.investor_id) || 0) : 0
-    const distributions   = r.investor_id ? (distMap.get(r.investor_id) || 0) : 0
+    const firstForInvestor = r.investor_id != null && !seenInvestor.has(r.investor_id)
+    if (r.investor_id != null) seenInvestor.add(r.investor_id)
+    const contributed_amt = firstForInvestor ? (contribMap.get(r.investor_id) || 0) : 0
+    const distributions   = firstForInvestor ? (distMap.get(r.investor_id) || 0) : 0
     return {
       id:            r.id,            // cap-table row id (stable React key)
       investor_id:   r.investor_id,
