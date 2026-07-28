@@ -380,7 +380,21 @@ router.post('/:propertyId/sale-closeout', (req, res) => {
     const run = db.transaction(() => {
       if (salePrice)    insTx.run(propertyId, date, 'Sale Proceeds', 'Sale', salePrice, null)
       if (sellingCosts) insTx.run(propertyId, date, 'Selling Costs (commission, title, transfer tax)', 'Sale', -sellingCosts, null)
-      if (loanPayoff)   insTx.run(propertyId, date, 'Loan Payoff at Sale', 'Mortgage Principal', -loanPayoff, null)
+
+      // Loan payoff: the amount above the book principal balance is accrued
+      // interest, not principal. Pay principal down to exactly $0 and book the
+      // remainder as Mortgage Interest so the loan doesn't go negative.
+      if (loanPayoff) {
+        const loanBalance = db.prepare(`
+          SELECT COALESCE(SUM(amount), 0) AS v FROM accounting_transactions
+          WHERE property_id = ? AND review_status = 'recorded'
+            AND ((category = 'Loan' AND description != '1031 Exchange Proceeds') OR category = 'Mortgage Principal')
+        `).get(propertyId).v
+        const principalPortion = Math.min(loanPayoff, Math.max(0, loanBalance))
+        const interestPortion  = Math.max(0, loanPayoff - principalPortion)
+        if (principalPortion) insTx.run(propertyId, date, 'Loan Payoff at Sale (principal)', 'Mortgage Principal', -principalPortion, null)
+        if (interestPortion)  insTx.run(propertyId, date, 'Loan Payoff at Sale (accrued interest)', 'Mortgage Interest', -interestPortion, null)
+      }
       if (memberPayoff) insTx.run(propertyId, date, 'Member Loan Repayment at Sale', 'Member Loan', -memberPayoff, null)
 
       // Remove the real estate from the books — on a sale the asset is gone. The

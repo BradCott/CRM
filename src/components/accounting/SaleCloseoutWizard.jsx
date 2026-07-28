@@ -99,7 +99,10 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
   const checks = [
     { ok: unpaidBills.length === 0, warn: `${unpaidBills.length} unpaid bill${unpaidBills.length !== 1 ? 's' : ''} (${money(unpaidTotal)}) still open`, good: 'No unpaid bills' },
     { ok: needsReview === 0, warn: `${needsReview} transaction${needsReview !== 1 ? 's' : ''} still in "needs review"`, good: 'All transactions reviewed' },
-    { ok: Math.abs(loanRemaining) < 1, warn: `Mortgage not fully paid off — ${money(loanRemaining)} would remain`, good: 'Mortgage payoff covers the loan balance' },
+    { ok: loanRemaining < 1, warn: `Mortgage not fully paid off — ${money(loanRemaining)} would remain`,
+      good: loanRemaining < -1
+        ? `Payoff covers the loan; ${money(-loanRemaining)} above principal books as interest`
+        : 'Mortgage payoff covers the loan balance' },
     { ok: Math.abs(memberRemaining) < 1, warn: `Member loan not fully repaid — ${money(memberRemaining)} would remain`, good: 'Member loans repaid' },
   ]
   const allClear = checks.every(c => c.ok)
