@@ -41,10 +41,58 @@ function Section({ title, amount, txs, onChanged, note }) {
   )
 }
 
+function MonthlyCashFlow({ transactions, onChanged }) {
+  const monthKeys = [...new Set(transactions.map(t => t.date.slice(0, 7)))].sort()
+  if (monthKeys.length === 0) return <p className="text-sm text-slate-400 py-8 text-center">No transactions to display</p>
+
+  const months = monthKeys.map(key => {
+    const [y, m] = key.split('-')
+    const label = new Date(Number(y), Number(m) - 1, 1).toLocaleDateString(undefined, { month: 'short', year: '2-digit' })
+    return { key, label, cf: computeCashFlow(transactions.filter(t => t.date.startsWith(key))) }
+  })
+  const totals = computeCashFlow(transactions)
+
+  const rows = [
+    { key: 'operating', label: 'Operating Activities', get: cf => ({ v: cf.operating, txs: cf.operatingTxs }) },
+    { key: 'investing', label: 'Investing Activities', get: cf => ({ v: cf.investing, txs: cf.investingTxs }), note: 'incl. sale proceeds' },
+    { key: 'financing', label: 'Financing Activities', get: cf => ({ v: cf.financing, txs: cf.financingTxs }), note: 'incl. loan payoff, distributions' },
+    { key: 'net',       label: 'Net Change in Cash',   get: cf => ({ v: cf.netChange, txs: [] }), bold: true },
+  ]
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full text-sm border-collapse">
+        <thead>
+          <tr className="border-b-2 border-slate-200">
+            <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-left sticky left-0 bg-white min-w-[160px]"></th>
+            {months.map(m => <th key={m.key} className="px-2 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide min-w-[90px] text-right">{m.label}</th>)}
+            <th className="px-2 py-2.5 text-xs font-semibold text-slate-700 uppercase tracking-wide min-w-[90px] text-right border-l border-slate-200">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map(row => (
+            <tr key={row.key} className={`${row.bold ? 'border-t-2 border-slate-300 bg-slate-50' : 'border-b border-slate-100'}`}>
+              <td className={`px-3 py-2 text-xs sticky left-0 bg-inherit ${row.bold ? 'font-semibold text-slate-900' : 'text-slate-600'}`}>
+                {row.label}{row.note && <span className="block text-[10px] text-slate-400 normal-case">{row.note}</span>}
+              </td>
+              {months.map(m => {
+                const { v } = row.get(m.cf)
+                return <td key={m.key} className={`px-2 py-2 text-xs tabular-nums text-right ${row.bold ? 'font-semibold' : ''} ${v < 0 ? 'text-red-600' : v > 0 ? 'text-emerald-700' : 'text-slate-300'}`}>{v === 0 ? '—' : fmt$(v)}</td>
+              })}
+              {(() => { const { v } = row.get(totals); return <td className={`px-2 py-2 text-xs tabular-nums text-right border-l border-slate-200 ${row.bold ? 'font-semibold' : ''} ${v < 0 ? 'text-red-600' : 'text-emerald-700'}`}>{fmt$(v)}</td> })()}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 export default function CashFlowStatement({ property, transactions, onChanged }) {
   const [period,   setPeriod]   = useState('all')
   const [fromDate, setFromDate] = useState('')
   const [toDate,   setToDate]   = useState('')
+  const [view,     setView]     = useState('summary') // 'summary' | 'monthly'
 
   const base = filterByPeriod(transactions, period, fromDate, toDate)
   const cf   = computeCashFlow(base)
@@ -63,7 +111,13 @@ export default function CashFlowStatement({ property, transactions, onChanged })
           <h2 className="text-base font-bold text-slate-900">Cash Flow Statement</h2>
           <p className="text-xs text-slate-400">{periodLabel}</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex rounded-lg border border-slate-200 overflow-hidden text-xs font-medium">
+            <button onClick={() => setView('summary')}
+              className={`px-3 py-1.5 transition-colors ${view === 'summary' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>Summary</button>
+            <button onClick={() => setView('monthly')}
+              className={`px-3 py-1.5 transition-colors ${view === 'monthly' ? 'bg-slate-800 text-white' : 'bg-white text-slate-600 hover:bg-slate-50'}`}>By Month</button>
+          </div>
           <select
             value={period}
             onChange={e => setPeriod(e.target.value)}
@@ -93,6 +147,9 @@ export default function CashFlowStatement({ property, transactions, onChanged })
         </div>
       )}
 
+      {view === 'monthly' && <MonthlyCashFlow transactions={base} onChanged={onChanged} />}
+
+      {view === 'summary' && <>
       <Section title="Cash from Operating Activities" amount={cf.operating} txs={cf.operatingTxs}
         onChanged={onChanged} note="Rent collected minus operating expenses" />
       <Section title="Cash from Investing Activities" amount={cf.investing} txs={cf.investingTxs}
@@ -113,6 +170,7 @@ export default function CashFlowStatement({ property, transactions, onChanged })
         Note: mortgage payments are shown under financing in full (principal + interest combined).
         Building and land values are excluded — they are non-cash asset entries.
       </p>
+      </>}
     </div>
   )
 }

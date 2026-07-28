@@ -294,6 +294,32 @@ export default function ProfitLoss({ property, transactions, onChanged }) {
               </span>
             </div>
           </div>
+
+          {/* Gain / (loss) on sale — only once the property has been sold */}
+          {pl.hasSale && (
+            <>
+              <SectionLabel>Gain on Sale of Property</SectionLabel>
+              <ClickableAmount label="Sale proceeds" value={pl.saleProceeds}
+                transactions={pl.saleTxs.filter(t => Number(t.amount) > 0)} indent color="text-emerald-700" onChanged={onChanged} />
+              <ClickableAmount label="Less: selling costs" value={-pl.sellingCosts}
+                transactions={pl.saleTxs.filter(t => Number(t.amount) < 0)} indent color="text-red-600" onChanged={onChanged} />
+              <ClickableAmount label="Less: book value of property sold" value={-pl.bookValueSold}
+                transactions={pl.removalTxs} indent color="text-red-600" onChanged={onChanged}
+                note="Building + land basis removed from the books at sale" />
+              <Divider thick />
+              <ClickableAmount label="GAIN / (LOSS) ON SALE" value={pl.gainOnSale} bold
+                color={pl.gainOnSale >= 0 ? 'text-emerald-700' : 'text-red-600'} onChanged={onChanged} />
+
+              <div className="mt-4 bg-blue-50 rounded-xl p-4 border border-blue-200">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-bold text-slate-900" title="Net operating income plus the gain/(loss) on sale">Net Income (incl. sale)</span>
+                  <span className={`text-lg font-bold tabular-nums ${pl.netIncome >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                    {fmt$(pl.netIncome)}
+                  </span>
+                </div>
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

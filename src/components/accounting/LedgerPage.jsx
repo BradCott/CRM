@@ -740,7 +740,7 @@ export default function LedgerPage() {
       )}
       {activeView === 'distributions' && (
         <div className="flex-1 overflow-y-auto">
-          <Distributions propertyId={propertyId} />
+          <Distributions propertyId={propertyId} property={property} />
         </div>
       )}
 

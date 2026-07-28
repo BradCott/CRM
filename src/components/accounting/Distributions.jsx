@@ -91,7 +91,19 @@ function RecordModal({ propertyId, investors, onSaved, onClose }) {
   )
 }
 
-export default function Distributions({ propertyId }) {
+// Whole months between two ISO dates (acquisition → sale/today).
+function monthsBetween(startIso, endIso) {
+  if (!startIso) return null
+  const s = new Date(String(startIso).slice(0, 10) + 'T00:00:00')
+  const e = endIso ? new Date(String(endIso).slice(0, 10) + 'T00:00:00') : new Date()
+  if (isNaN(s) || isNaN(e)) return null
+  let m = (e.getFullYear() - s.getFullYear()) * 12 + (e.getMonth() - s.getMonth())
+  if (e.getDate() < s.getDate()) m -= 1
+  return Math.max(0, m)
+}
+const monthsLabel = m => (m == null ? '—' : m >= 12 ? `${Math.floor(m / 12)}y ${m % 12}m` : `${m}m`)
+
+export default function Distributions({ propertyId, property }) {
   const [data, setData]         = useState({ distributions: [], investors: [] })
   const [loading, setLoading]   = useState(true)
   const [showAdd, setShowAdd]   = useState(false)
@@ -145,9 +157,11 @@ export default function Distributions({ propertyId }) {
     const received = tagged + untagged
     return {
       ...inv, received,
+      gain: received > 0 ? received - Number(inv.contribution || 0) : null,
       pctReturned: inv.contribution > 0 ? (received / inv.contribution) * 100 : null,
     }
   })
+  const holdMonths = monthsBetween(property?.close_date, property?.sold_date)
   // Investors with distributions but no link row (edge case)
   const linkedIds = new Set(investors.map(i => i.investor_id))
   const unlinked = [...new Set(distributions.filter(d => !linkedIds.has(d.investor_id)).map(d => d.investor_id))]
@@ -172,6 +186,12 @@ export default function Distributions({ propertyId }) {
             {fmt$(total)} distributed
             {byType.length > 0 && <> — {byType.map(t => `${fmt$(t.total)} ${t.type.toLowerCase()}`).join(' · ')}</>}
           </p>
+          {holdMonths != null && (
+            <p className="text-xs text-slate-400 mt-0.5">
+              Hold period: <span className="font-medium text-slate-600">{monthsLabel(holdMonths)}</span>
+              {property?.close_date && <> · {fmtDate(property.close_date)} → {property?.sold_date ? fmtDate(property.sold_date) : 'today'}</>}
+            </p>
+          )}
         </div>
         <Button onClick={() => setShowAdd(true)} disabled={investors.length === 0}>
           <Plus className="w-4 h-4" /> Record Distribution
@@ -202,6 +222,7 @@ export default function Distributions({ propertyId }) {
                     <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-right">Invested</th>
                     <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-right">Pref %</th>
                     <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-right">Received</th>
+                    <th className="px-3 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-right">Gain</th>
                     <th className="px-4 py-2.5 text-xs font-semibold text-slate-500 uppercase tracking-wide text-right">Capital Returned</th>
                   </tr>
                 </thead>
@@ -215,6 +236,9 @@ export default function Distributions({ propertyId }) {
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums font-semibold text-emerald-700">
                         {inv.received > 0 ? fmt$(inv.received) : <span className="text-slate-300 font-normal">—</span>}
+                      </td>
+                      <td className={`px-3 py-2.5 text-right tabular-nums font-medium ${inv.gain == null ? 'text-slate-300' : inv.gain >= 0 ? 'text-emerald-700' : 'text-red-600'}`}>
+                        {inv.gain == null ? '—' : fmt$(inv.gain)}
                       </td>
                       <td className="px-4 py-2.5 text-right">
                         {inv.pctReturned != null ? (
@@ -237,6 +261,9 @@ export default function Distributions({ propertyId }) {
                     </td>
                     <td />
                     <td className="px-3 py-2.5 text-right tabular-nums font-bold text-emerald-700">{fmt$(total)}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums font-bold text-emerald-700">
+                      {fmt$(total - investorRows.reduce((s, i) => s + Number(i.contribution || 0), 0))}
+                    </td>
                     <td />
                   </tr>
                 </tfoot>

@@ -197,10 +197,23 @@ export function computePL(transactions) {
   const principalPaid = principalTxs.reduce((s, t) => s + Math.abs(Number(t.amount)), 0)
   const cashAvailable = noi - principalPaid
 
+  // Gain/(loss) on sale — below operating income. The close-out posts sale proceeds
+  // & selling costs (category 'Sale') and removes the Building/Land basis (category
+  // 'Purchase', source 'Sale'). Book gain = proceeds − selling costs − basis removed.
+  const saleTxs      = transactions.filter(t => t.category === 'Sale')
+  const removalTxs   = transactions.filter(t => t.category === 'Purchase' && t.source === 'Sale')
+  const saleProceeds = saleTxs.filter(t => Number(t.amount) > 0).reduce((s, t) => s + Number(t.amount), 0)
+  const sellingCosts = saleTxs.filter(t => Number(t.amount) < 0).reduce((s, t) => s + Math.abs(Number(t.amount)), 0)
+  const bookValueSold = Math.abs(removalTxs.reduce((s, t) => s + Number(t.amount), 0))
+  const gainOnSale   = saleTxs.length ? saleProceeds - sellingCosts - bookValueSold : 0
+  const hasSale      = saleTxs.length > 0
+  const netIncome    = noi + gainOnSale
+
   return {
     rentRevenue, otherRevenue, totalRevenue,
     expenses, totalExpenses, noi,
     principalPaid, cashAvailable, principalTxs,
+    hasSale, saleProceeds, sellingCosts, bookValueSold, gainOnSale, netIncome, saleTxs, removalTxs,
     margin: totalRevenue > 0 ? (noi / totalRevenue) * 100 : null,
     txs: { rentTxs, otherRevTxs, allExpenseTxs: expenses.flatMap(e => e.txs) },
   }
