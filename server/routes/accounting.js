@@ -330,7 +330,7 @@ router.get('/distributions', (req, res) => {
 router.get('/:propertyId/distributions', (req, res) => {
   const distributions = db.prepare(`
     SELECT d.id, d.investor_id, d.property_id, d.amount, d.distribution_date, d.distribution_type, d.notes,
-           i.name AS investor_name
+           d.cap_row_id, i.name AS investor_name
     FROM investor_distributions d
     JOIN investors i ON i.id = d.investor_id
     WHERE d.property_id = ?
@@ -352,6 +352,7 @@ router.get('/:propertyId/distributions', (req, res) => {
     .filter(r => Number(r.contribution) > 0 || r.investor_id != null)
     .map(r => ({
       id:            `row-${r.id}`,
+      cap_row_id:    r.id,
       investor_id:   r.investor_id != null ? r.investor_id : null,
       name:          r.name,
       contribution:  Number(r.contribution) || 0,
@@ -385,8 +386,8 @@ router.post('/:propertyId/sale-closeout', (req, res) => {
     VALUES (?, ?, ?, ?, ?, 'Sale', 'recorded', ?)
   `)
   const insDist = db.prepare(`
-    INSERT INTO investor_distributions (investor_id, property_id, amount, distribution_date, distribution_type, notes)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO investor_distributions (investor_id, property_id, amount, distribution_date, distribution_type, notes, cap_row_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `)
   const money = n => (n < 0 ? `-$${Math.abs(Math.round(n)).toLocaleString()}` : `$${Math.round(n).toLocaleString()}`)
 
@@ -430,9 +431,10 @@ router.post('/:propertyId/sale-closeout', (req, res) => {
         insTx.run(propertyId, date, `Distribution — ${d.name || 'Investor'}`, 'Distribution', -total, d.name || null)
         distributed += total
         if (d.investor_id) {
-          if (cap  > 0) insDist.run(d.investor_id, propertyId, cap,   date, 'Principal',        'Sale close-out — return of capital')
-          if (pref > 0) insDist.run(d.investor_id, propertyId, pref,  date, 'Preferred Return', 'Sale close-out — preferred return')
-          if (carry > 0) insDist.run(d.investor_id, propertyId, carry, date, 'Profit',           'Sale close-out — carry / profit')
+          const rowId = d.cap_row_id != null ? Number(d.cap_row_id) : null
+          if (cap  > 0) insDist.run(d.investor_id, propertyId, cap,   date, 'Principal',        'Sale close-out — return of capital', rowId)
+          if (pref > 0) insDist.run(d.investor_id, propertyId, pref,  date, 'Preferred Return', 'Sale close-out — preferred return', rowId)
+          if (carry > 0) insDist.run(d.investor_id, propertyId, carry, date, 'Profit',           'Sale close-out — carry / profit', rowId)
         }
       }
 
@@ -1149,12 +1151,19 @@ router.get('/:propertyId/capital-accounts', (req, res) => {
       AND review_status = 'recorded' AND amount > 0 AND investor_id IS NOT NULL
     GROUP BY investor_id
   `).all(pid)
-  const dist = db.prepare(`
-    SELECT investor_id, COALESCE(SUM(amount), 0) AS total
-    FROM investor_distributions WHERE property_id = ? GROUP BY investor_id
+  // Distributions tagged with a cap_row_id belong to a specific position (row);
+  // untagged (legacy) ones are summed by investor and fall back to the first row.
+  const distByRow = db.prepare(`
+    SELECT cap_row_id, COALESCE(SUM(amount), 0) AS total
+    FROM investor_distributions WHERE property_id = ? AND cap_row_id IS NOT NULL GROUP BY cap_row_id
   `).all(pid)
-  const contribMap = new Map(contributed.map(r => [r.investor_id, r.total]))
-  const distMap    = new Map(dist.map(r => [r.investor_id, r.total]))
+  const distUntagged = db.prepare(`
+    SELECT investor_id, COALESCE(SUM(amount), 0) AS total
+    FROM investor_distributions WHERE property_id = ? AND cap_row_id IS NULL GROUP BY investor_id
+  `).all(pid)
+  const contribMap    = new Map(contributed.map(r => [r.investor_id, r.total]))
+  const distRowMap    = new Map(distByRow.map(r => [r.cap_row_id, r.total]))
+  const distUntagMap  = new Map(distUntagged.map(r => [r.investor_id, r.total]))
 
   // A single global investor can appear on multiple cap-table rows (e.g. Knox as a
   // GP position and an LP co-invest). Recorded contributions/distributions live at
@@ -1167,7 +1176,10 @@ router.get('/:propertyId/capital-accounts', (req, res) => {
     const firstForInvestor = r.investor_id != null && !seenInvestor.has(r.investor_id)
     if (r.investor_id != null) seenInvestor.add(r.investor_id)
     const contributed_amt = firstForInvestor ? (contribMap.get(r.investor_id) || 0) : 0
-    const distributions   = firstForInvestor ? (distMap.get(r.investor_id) || 0) : 0
+    // Position-tagged distributions land on their own row; untagged legacy ones
+    // fall back to the investor's first row so nothing is dropped or double-counted.
+    const distributions   = (distRowMap.get(r.id) || 0)
+                          + (firstForInvestor ? (distUntagMap.get(r.investor_id) || 0) : 0)
     return {
       id:            r.id,            // cap-table row id (stable React key)
       investor_id:   r.investor_id,

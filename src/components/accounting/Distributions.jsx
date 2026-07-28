@@ -129,19 +129,23 @@ export default function Distributions({ propertyId }) {
 
   // Per-investor rollup: contribution vs total received
   // The same global investor can be listed on multiple cap-table rows (e.g. Knox as
-  // a GP position + an LP co-invest). Distributions are recorded at the global level,
-  // so credit them to the FIRST row for that investor only — otherwise Knox shows the
-  // full amount received on every row and the pct blows up.
+  // a GP position + an LP co-invest). Position-tagged distributions (cap_row_id) show
+  // on their own row; untagged legacy ones credit to the investor's first row only, so
+  // nothing double-counts and the pct doesn't blow up.
   const seenInvestor = new Set()
   const byInvestor = investors.map(inv => {
     const firstForInvestor = inv.investor_id != null && !seenInvestor.has(inv.investor_id)
     if (inv.investor_id != null) seenInvestor.add(inv.investor_id)
-    const received = firstForInvestor
-      ? distributions.filter(d => d.investor_id === inv.investor_id).reduce((s, d) => s + Number(d.amount), 0)
+    const tagged = distributions
+      .filter(d => d.cap_row_id != null && d.cap_row_id === inv.cap_row_id)
+      .reduce((s, d) => s + Number(d.amount), 0)
+    const untagged = firstForInvestor
+      ? distributions.filter(d => d.cap_row_id == null && d.investor_id === inv.investor_id).reduce((s, d) => s + Number(d.amount), 0)
       : 0
+    const received = tagged + untagged
     return {
       ...inv, received,
-      pctReturned: firstForInvestor && inv.contribution > 0 ? (received / inv.contribution) * 100 : null,
+      pctReturned: inv.contribution > 0 ? (received / inv.contribution) * 100 : null,
     }
   })
   // Investors with distributions but no link row (edge case)

@@ -582,6 +582,10 @@ const migrations = [
   // Sale date (set at close-out). Kept separate so close_date stays the ACQUISITION
   // date used for preferred-return accrual.
   `ALTER TABLE properties ADD COLUMN sold_date            TEXT`,
+  // The cap-table row (property_investors.id) a distribution belongs to, so a single
+  // global investor listed on multiple rows (e.g. Knox GP position + LP co-invest)
+  // can have its GP carry and LP returns displayed separately.
+  `ALTER TABLE investor_distributions ADD COLUMN cap_row_id INTEGER`,
   // Tenant reimbursement tracking on taxes (insurance already has it).
   `ALTER TABLE property_taxes ADD COLUMN reimbursed_status TEXT NOT NULL DEFAULT 'unreimbursed'`,
   `ALTER TABLE property_taxes ADD COLUMN reimbursed_date   TEXT`,

@@ -230,7 +230,14 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
         loan_payoff:        num(loanPayoff),
         member_loan_payoff: num(memberPayoff),
         reserves:           reserves.filter(r => num(r.amount) > 0).map(r => ({ label: r.label, amount: num(r.amount) })),
-        distributions:      waterfall.rows.map(r => ({ investor_id: investorIdByRowId[r.id] ?? null, name: r.name, capital: r.capital, pref: r.pref, carry: r.carry })),
+        distributions:      waterfall.rows.map(r => {
+          const m = String(r.id).match(/^row-(\d+)$/)
+          return {
+            investor_id: investorIdByRowId[r.id] ?? null,
+            cap_row_id:  m ? Number(m[1]) : null,
+            name: r.name, capital: r.capital, pref: r.pref, carry: r.carry,
+          }
+        }),
         mark_sold:          true,
       })
       onSaved?.()
