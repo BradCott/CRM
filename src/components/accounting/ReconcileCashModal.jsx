@@ -1,21 +1,25 @@
 // Reconcile book cash to the actual bank balance. Posts a single 'Cash Adjustment'
 // entry for the difference so the ledger's Current Balance matches reality —
 // fixes botched imports / unrecorded activity. Can pull the live linked-bank balance.
-import { useState } from 'react'
-import { X, Loader2, Banknote, AlertTriangle } from 'lucide-react'
+import { useState, useMemo } from 'react'
+import { X, Loader2, Banknote, AlertTriangle, ChevronRight, ChevronDown } from 'lucide-react'
 import Button from '../ui/Button'
 import { reconcileCash, getPlaidBalance } from '../../api/client'
+import { computeCashBreakdown } from '../../utils/accounting'
 
 const money = n => (n == null || isNaN(n) ? '—' : (n < 0 ? `-$${Math.abs(Math.round(n)).toLocaleString()}` : `$${Math.round(n).toLocaleString()}`))
 const num = v => { const n = parseFloat(String(v).replace(/[$,\s]/g, '')); return isFinite(n) ? n : NaN }
 
-export default function ReconcileCashModal({ propertyId, currentBalance, onClose, onSaved }) {
+export default function ReconcileCashModal({ propertyId, currentBalance, transactions = [], opening = null, onClose, onSaved }) {
   const [target, setTarget]   = useState('')
   const [asOf, setAsOf]       = useState(new Date().toISOString().slice(0, 10))
   const [saving, setSaving]   = useState(false)
   const [pulling, setPulling] = useState(false)
   const [error, setError]     = useState(null)
   const [bankInfo, setBankInfo] = useState(null)
+  const [showBreakdown, setShowBreakdown] = useState(true)
+  const [openLine, setOpenLine] = useState(null)
+  const breakdown = useMemo(() => computeCashBreakdown(transactions, opening), [transactions, opening])
 
   const targetNum = num(target)
   const delta = isFinite(targetNum) ? Math.round((targetNum - currentBalance) * 100) / 100 : null
@@ -65,6 +69,60 @@ export default function ReconcileCashModal({ propertyId, currentBalance, onClose
             <span className="text-slate-500">Current book cash</span>
             <span className="font-medium tabular-nums text-slate-900">{money(currentBalance)}</span>
           </div>
+
+          {/* Audit trail — what makes up the book cash */}
+          {breakdown.lines.length > 0 && (
+            <div className="border border-slate-200 rounded-lg overflow-hidden">
+              <button onClick={() => setShowBreakdown(s => !s)}
+                className="w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-slate-50">
+                <span className="font-medium text-slate-700">What's in this balance?</span>
+                {showBreakdown ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}
+              </button>
+              {showBreakdown && (
+                <div className="border-t border-slate-100 divide-y divide-slate-50">
+                  {breakdown.lines.map(l => (
+                    <div key={l.key}>
+                      <button onClick={() => setOpenLine(openLine === l.key ? null : l.key)}
+                        className={`w-full flex items-center justify-between px-3 py-1.5 text-sm text-left hover:bg-slate-50 ${l.flag ? 'bg-amber-50/60' : ''}`}>
+                        <span className="flex items-center gap-1.5 text-slate-600">
+                          {l.txs.length > 0 && (openLine === l.key ? <ChevronDown className="w-3 h-3 text-slate-300" /> : <ChevronRight className="w-3 h-3 text-slate-300" />)}
+                          {l.label}{l.txs.length > 0 ? <span className="text-slate-300"> ({l.txs.length})</span> : null}
+                          {l.flag && <span className="text-[10px] font-medium text-amber-600 bg-amber-100 rounded px-1">check</span>}
+                        </span>
+                        <span className={`tabular-nums ${l.amount < 0 ? 'text-red-600' : 'text-slate-800'}`}>{money(l.amount)}</span>
+                      </button>
+                      {l.note && <p className="px-3 pb-1 text-[11px] text-amber-600">{l.note}</p>}
+                      {openLine === l.key && l.txs.length > 0 && (
+                        <div className="px-3 pb-2 bg-slate-50/60 max-h-40 overflow-y-auto">
+                          {l.txs.map(t => (
+                            <div key={t.id} className="flex items-center justify-between text-xs py-0.5 text-slate-500">
+                              <span className="truncate mr-2">{t.date} · {t.description || t.category}</span>
+                              <span className={`tabular-nums shrink-0 ${Number(t.amount) < 0 ? 'text-red-500' : 'text-slate-600'}`}>{money(Number(t.amount))}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                  <div className="flex items-center justify-between px-3 py-1.5 text-sm font-semibold bg-slate-50">
+                    <span className="text-slate-700">Book cash</span>
+                    <span className="tabular-nums text-slate-900">{money(breakdown.total)}</span>
+                  </div>
+                  {breakdown.excluded.length > 0 && (
+                    <div className="px-3 py-2 bg-slate-50/40">
+                      <p className="text-[11px] text-slate-400 mb-1">Acquisition items excluded from cash (for reference):</p>
+                      {breakdown.excluded.map(l => (
+                        <div key={l.key} className="flex items-center justify-between text-xs py-0.5 text-slate-400">
+                          <span className="truncate mr-2">{l.label}</span>
+                          <span className="tabular-nums shrink-0">{money(l.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-medium text-slate-500 mb-1">Actual bank balance</label>

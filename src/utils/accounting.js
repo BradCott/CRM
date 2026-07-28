@@ -248,6 +248,53 @@ export function computeBalanceSheet(transactions, investors = [], opening = null
   }
 }
 
+/**
+ * Itemize what makes up a property's book cash — an audit trail so drift from the
+ * real bank balance can be traced to specific entries instead of plugged. Each
+ * line carries the underlying transactions so the UI can drill in. Also surfaces
+ * the acquisition items that are deliberately EXCLUDED from cash (loan proceeds,
+ * the purchase) — the usual double-count is equity counted as cash while the
+ * purchase it funded is not.
+ */
+export function computeCashBreakdown(transactions, opening = null) {
+  const ob = opening || {}
+  const sum = txs => txs.reduce((s, t) => s + Number(t.amount), 0)
+  const pick = pred => transactions.filter(pred)
+
+  const opTxs     = pick(t => (PL_CATS.has(t.category) || t.category === 'Sale') && t.category !== 'Other' && t.source !== 'Settlement Statement')
+  const otherTxs  = pick(t => t.category === 'Other' && t.source !== 'Settlement Statement')
+  const equityTxs = pick(t => t.category === 'Equity Contribution')
+  const princTxs  = pick(t => t.category === 'Mortgage Principal')
+  const memberTxs = pick(t => t.category === 'Member Loan')
+  const distTxs   = pick(t => t.category === 'Distribution')
+  const adjTxs    = pick(t => t.category === 'Cash Adjustment')
+
+  const equityFromSettlement = sum(equityTxs.filter(t => t.source === 'Settlement Statement'))
+
+  const lines = [
+    { key: 'operating',    label: 'Operating (rent − expenses)',        amount: sum(opTxs),     txs: opTxs },
+    { key: 'other',        label: 'Other',                              amount: sum(otherTxs),  txs: otherTxs },
+    { key: 'equity',       label: 'Equity contributions',               amount: sum(equityTxs), txs: equityTxs,
+      flag: sum(equityTxs) !== 0, note: equityFromSettlement !== 0 ? 'includes acquisition-time equity — usually wired to closing, not the bank' : null },
+    { key: 'memberLoan',   label: 'Member loans',                       amount: sum(memberTxs), txs: memberTxs },
+    { key: 'principal',    label: 'Mortgage principal paid',            amount: sum(princTxs),  txs: princTxs },
+    { key: 'distributions',label: 'Distributions to investors',         amount: sum(distTxs),   txs: distTxs },
+    { key: 'adjustments',  label: 'Cash adjustments (reconciliations)', amount: sum(adjTxs),    txs: adjTxs },
+    { key: 'opening',      label: 'Opening cash balance',               amount: Number(ob.cash) || 0, txs: [] },
+  ].filter(l => l.amount !== 0 || l.txs.length > 0)
+
+  const building = pick(t => t.description === 'Building Value')
+  const land     = pick(t => t.description === 'Land Value')
+  const loanTxs  = pick(t => t.category === 'Loan' && t.description !== '1031 Exchange Proceeds')
+  const excluded = [
+    { key: 'loan',     label: 'Loan proceeds',                    amount: sum(loanTxs),                   txs: loanTxs,               note: 'funded the purchase — not counted as spendable cash' },
+    { key: 'purchase', label: 'Property purchase (Building+Land)', amount: sum([...building, ...land]),    txs: [...building, ...land], note: 'capitalized as an asset — not counted as cash' },
+  ].filter(l => l.amount !== 0)
+
+  const total = lines.reduce((s, l) => s + l.amount, 0)
+  return { total, lines, excluded }
+}
+
 // ── Distribution waterfall ────────────────────────────────────────────────────
 // American-style 3-tier waterfall matching Knox's deal calculator:
 //   Tier 1  Return of Capital        — pari passu (pro-rata if cash is short)

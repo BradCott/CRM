@@ -1416,6 +1416,8 @@ export default function LedgerPage() {
         <ReconcileCashModal
           propertyId={propertyId}
           currentBalance={totals.balance}
+          transactions={recordedTx}
+          opening={advanced ? openingBalances : null}
           onSaved={reload}
           onClose={() => setShowReconcile(false)}
         />
