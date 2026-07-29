@@ -1646,6 +1646,7 @@ router.post('/:propertyId/email-bundle', async (req, res) => {
       account: b.account || undefined,
       subject: b.subject || 'Accountant package',
       text:    b.body || '',
+      html:    emailTextToHtml(b.body || ''),
       attachments: [{
         filename:    b.filename || 'accountant_bundle.xlsx',
         content:     Buffer.from(b.attachment_base64, 'base64'),
@@ -1658,6 +1659,22 @@ router.post('/:propertyId/email-bundle', async (req, res) => {
     res.status(500).json({ error: err.message })
   }
 })
+
+// Convert a plain-text email body into simple, well-formed HTML so email clients
+// reflow it to the reader's width (instead of hard-wrapping plain text ~70 chars).
+function emailTextToHtml(text) {
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  const blocks = String(text || '').replace(/\r\n/g, '\n').trim().split(/\n{2,}/)
+  const body = blocks.map(block => {
+    const lines = block.split('\n')
+    const isBullet = l => /^\s*[•\-*]\s+/.test(l)
+    if (lines.length && lines.every(isBullet)) {
+      return `<ul style="margin:0 0 14px;padding-left:22px">${lines.map(l => `<li style="margin:2px 0">${esc(l.replace(/^\s*[•\-*]\s+/, ''))}</li>`).join('')}</ul>`
+    }
+    return `<p style="margin:0 0 14px">${lines.map(esc).join('<br>')}</p>`
+  }).join('')
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;font-size:15px;line-height:1.55;color:#1a1a1a;max-width:640px">${body}</div>`
+}
 
 // ── Investor closing emails ───────────────────────────────────────────────────
 // Per-investor sale returns (capital + pref + carry) with resolved emails, so the
@@ -1750,6 +1767,7 @@ router.post('/:propertyId/email-investors', async (req, res) => {
         account: b.account || undefined,
         subject: s.subject || 'Your investment update',
         text: s.body || '',
+        html: emailTextToHtml(s.body || ''),
       })
       results.sent++
     } catch (e) {

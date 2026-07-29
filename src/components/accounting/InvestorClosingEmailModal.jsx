@@ -92,7 +92,7 @@ export default function InvestorClosingEmailModal({ propertyId, property, onClos
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[92vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 shrink-0">
           <div className="flex items-center gap-2">
             <Mail className="w-5 h-5 text-emerald-600" />
@@ -127,8 +127,8 @@ export default function InvestorClosingEmailModal({ propertyId, property, onClos
             </div>
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1">Message template</label>
-              <textarea value={body} onChange={e => setBody(e.target.value)} rows={11}
-                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 font-mono focus:outline-none focus:ring-2 focus:ring-emerald-400 resize-y" />
+              <textarea value={body} onChange={e => setBody(e.target.value)} rows={14}
+                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2.5 leading-relaxed focus:outline-none focus:ring-2 focus:ring-emerald-400 resize-y" />
               <p className="text-[11px] text-slate-400 mt-1">Tokens filled per investor: <code>{'{{first_name}} {{property}} {{capital}} {{pref}} {{carry}} {{total}}'}</code></p>
             </div>
 
