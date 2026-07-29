@@ -651,6 +651,126 @@ const migrations = [
     created_at  TEXT DEFAULT (datetime('now'))
   )`,
   `CREATE INDEX IF NOT EXISTS idx_person_notes ON person_notes(person_id)`,
+
+  // ── Tenant expense reimbursements (dollar-based tracker) ────────────────────
+  // One row per recoverable expense we bill a net-lease tenant back for
+  // (real estate taxes, insurance, CAM). Replaces the old "task title contains
+  // 'reimburs'" heuristic with actual dollar amounts + a billed→received status.
+  //   expense_amount    = total cost we incurred
+  //   recoverable_amount = tenant's share after caps/exclusions/pro-rata
+  //                        (defaults to expense_amount; edited down for caps)
+  //   recovery_method   = 'landlord_bills' (we front + invoice) or
+  //                       'tenant_direct'  (tenant pays authority/carrier directly;
+  //                        we only verify + collect proof — nothing to collect)
+  //   status            = not_billed | billed | partial | received | waived | tenant_direct
+  //   source_type/source_id links back to the originating property_taxes or
+  //   property_insurance row when auto-created.
+  `CREATE TABLE IF NOT EXISTS property_reimbursements (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id        INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    expense_type       TEXT NOT NULL DEFAULT 'cam'
+                       CHECK(expense_type IN ('tax','insurance','cam')),
+    year               INTEGER NOT NULL,
+    source_type        TEXT CHECK(source_type IN ('tax','insurance') OR source_type IS NULL),
+    source_id          INTEGER,
+    expense_amount     REAL,
+    recoverable_amount REAL,
+    recovery_method    TEXT NOT NULL DEFAULT 'landlord_bills'
+                       CHECK(recovery_method IN ('landlord_bills','tenant_direct')),
+    billed_amount      REAL,
+    billed_date        TEXT,
+    received_amount    REAL,
+    received_date      TEXT,
+    status             TEXT NOT NULL DEFAULT 'not_billed'
+                       CHECK(status IN ('not_billed','billed','partial','received','waived','tenant_direct')),
+    notes              TEXT,
+    created_at         TEXT DEFAULT (datetime('now')),
+    updated_at         TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_reimb_property ON property_reimbursements(property_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_reimb_year     ON property_reimbursements(year)`,
+  `CREATE INDEX IF NOT EXISTS idx_reimb_status   ON property_reimbursements(status)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_reimb_source
+     ON property_reimbursements(source_type, source_id)
+     WHERE source_type IS NOT NULL AND source_id IS NOT NULL`,
+
+  // ── Reimbursement method per property + expense type ────────────────────────
+  // How a tenant reimburses each recoverable expense:
+  //   'direct'       = we pay the bill, then invoice the tenant the full amount
+  //                    (existing property_reimbursements flow — no installments).
+  //   'installments' = tenant remits a monthly estimate all year; at year-end we
+  //                    reconcile actual recoverable vs. collected and true up.
+  // monthly_estimate / annual_budget drive the installment schedule + a projected
+  // collected total. UNIQUE(property_id, expense_type) = one setting per pairing.
+  `CREATE TABLE IF NOT EXISTS property_expense_settings (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id      INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    expense_type     TEXT NOT NULL CHECK(expense_type IN ('tax','insurance','cam')),
+    method           TEXT NOT NULL DEFAULT 'direct'
+                     CHECK(method IN ('direct','installments')),
+    monthly_estimate REAL,
+    annual_budget    REAL,
+    notes            TEXT,
+    created_at       TEXT DEFAULT (datetime('now')),
+    updated_at       TEXT DEFAULT (datetime('now')),
+    UNIQUE(property_id, expense_type)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_exp_settings_property ON property_expense_settings(property_id)`,
+
+  // ── Monthly installments ledger ─────────────────────────────────────────────
+  // One row per property · expense_type · year · month recording what the tenant
+  // actually remitted. `source` distinguishes manually-entered rows from ones
+  // auto-populated by the (future) email-remittance parser; email rows land as
+  // 'email' and can be reviewed before they're trusted. UNIQUE(property, type,
+  // year, month) makes upserts safe — one cell per month.
+  `CREATE TABLE IF NOT EXISTS property_installments (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id    INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    expense_type   TEXT NOT NULL CHECK(expense_type IN ('tax','insurance','cam')),
+    year           INTEGER NOT NULL,
+    month          INTEGER NOT NULL CHECK(month BETWEEN 1 AND 12),
+    amount         REAL NOT NULL DEFAULT 0,
+    paid_date      TEXT,
+    source         TEXT NOT NULL DEFAULT 'manual'
+                   CHECK(source IN ('manual','email','plaid')),
+    remittance_ref TEXT,
+    notes          TEXT,
+    created_at     TEXT DEFAULT (datetime('now')),
+    updated_at     TEXT DEFAULT (datetime('now')),
+    UNIQUE(property_id, expense_type, year, month)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_install_property ON property_installments(property_id, year, expense_type)`,
+
+  // ── Year-end reconciliation statements ──────────────────────────────────────
+  // The true-up per property · expense_type · year:
+  //   true_up_amount = actual_recoverable − total_collected
+  //     > 0  → tenant owes the balance   (posts a landlord_bills reimbursement)
+  //     < 0  → tenant overpaid (credit)  (recorded; no reimbursement row created)
+  // 'posted' snapshots total_collected and links reimbursement_id back to the row
+  // created in property_reimbursements so the true-up flows into the same tracker.
+  `CREATE TABLE IF NOT EXISTS property_reconciliations (
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id        INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    expense_type       TEXT NOT NULL CHECK(expense_type IN ('tax','insurance','cam')),
+    year               INTEGER NOT NULL,
+    actual_recoverable REAL,
+    total_collected    REAL,
+    true_up_amount     REAL,
+    status             TEXT NOT NULL DEFAULT 'draft'
+                       CHECK(status IN ('draft','posted')),
+    reimbursement_id   INTEGER REFERENCES property_reimbursements(id) ON DELETE SET NULL,
+    notes              TEXT,
+    posted_at          TEXT,
+    created_at         TEXT DEFAULT (datetime('now')),
+    updated_at         TEXT DEFAULT (datetime('now')),
+    UNIQUE(property_id, expense_type, year)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_recon_property ON property_reconciliations(property_id, year)`,
+
+  // Trace a reimbursement row back to the reconciliation that generated it (the
+  // property_reimbursements.source_type CHECK only allows tax/insurance/NULL, so
+  // reconciliation true-ups carry source_type NULL + this link instead).
+  `ALTER TABLE property_reimbursements ADD COLUMN reconciliation_id INTEGER`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

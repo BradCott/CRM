@@ -4,10 +4,11 @@ import {
   Building2, ClipboardList, AlertTriangle, Shield, Receipt,
   ChevronRight, CheckCircle2, Loader2, RefreshCw,
   LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown,
-  CalendarClock, RefreshCcw, Search, X,
+  CalendarClock, RefreshCcw, Search, X, DollarSign,
 } from 'lucide-react'
-import { getManagementDashboard, completeTask, getAllManagementTasks } from '../../api/client'
+import { getManagementDashboard, completeTask, getAllManagementTasks, getReimbursementSummary } from '../../api/client'
 import InsurancePage from '../insurance/InsurancePage'
+import ReimbursementsView from './ReimbursementsView'
 
 // ── Shared utilities ──────────────────────────────────────────────────────────
 
@@ -117,7 +118,7 @@ function PropertyCard({ property, counts = {} }) {
 
 // ── Properties view ───────────────────────────────────────────────────────────
 
-function PropertiesView({ data, onRefresh, search, setSearch }) {
+function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
   const [propView, setPropView] = useState('cards') // 'cards' | 'list'
 
   const {
@@ -127,9 +128,10 @@ function PropertiesView({ data, onRefresh, search, setSearch }) {
     insurance_expiring = [],
     maintenance_spend_ytd = 0,
     tax_due_6mo = 0,
-    tax_reimburse_pending = 0,
-    ins_reimburse_pending = 0,
   } = data
+
+  const taxReimb = reimbSummary?.tax       || { count: 0, outstanding: 0 }
+  const insReimb = reimbSummary?.insurance || { count: 0, outstanding: 0 }
 
   const filteredProperties = search.trim()
     ? properties.filter(p => {
@@ -153,8 +155,8 @@ function PropertiesView({ data, onRefresh, search, setSearch }) {
       {/* Stats bar — row 2 */}
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <StatCard icon={CalendarClock} label="Tax Due (6 months)"              value={tax_due_6mo}           color={tax_due_6mo > 0 ? 'amber' : 'green'}  note="unpaid tax bills" />
-        <StatCard icon={RefreshCcw}    label="Awaiting Tax Reimbursement"      value={tax_reimburse_pending} color={tax_reimburse_pending > 0 ? 'amber' : 'green'} note="open reimbursement tasks" />
-        <StatCard icon={RefreshCcw}    label="Awaiting Insurance Reimbursement" value={ins_reimburse_pending} color={ins_reimburse_pending > 0 ? 'amber' : 'green'} note="open reimbursement tasks" />
+        <StatCard icon={DollarSign}    label="Awaiting Tax Reimbursement"       value={fmt(taxReimb.outstanding)} color={taxReimb.outstanding > 0 ? 'amber' : 'green'} note={`${taxReimb.count} open · owed by tenants`} />
+        <StatCard icon={DollarSign}    label="Awaiting Insurance Reimbursement" value={fmt(insReimb.outstanding)} color={insReimb.outstanding > 0 ? 'amber' : 'green'} note={`${insReimb.count} open · owed by tenants`} />
       </div>
 
       {/* Alert banners (compact) */}
@@ -531,16 +533,22 @@ function AllTasksView() {
 
 export default function ManagementDashboard() {
   const [data, setData]       = useState(null)
+  const [reimbSummary, setReimbSummary] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState(null)
-  const [view, setView]       = useState('properties') // 'properties' | 'all-tasks' | 'insurance'
+  const [view, setView]       = useState('properties') // 'properties' | 'all-tasks' | 'insurance' | 'reimbursements'
   const [search, setSearch]   = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      setData(await getManagementDashboard())
+      const [dash, reimb] = await Promise.all([
+        getManagementDashboard(),
+        getReimbursementSummary().catch(() => null),
+      ])
+      setData(dash)
+      setReimbSummary(reimb)
     } catch (err) {
       setError(err.message)
     } finally {
@@ -615,6 +623,14 @@ export default function ManagementDashboard() {
         >
           <Shield className="w-3.5 h-3.5" /> Insurance
         </button>
+        <button
+          onClick={() => setView('reimbursements')}
+          className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+            view === 'reimbursements' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-100'
+          }`}
+        >
+          <DollarSign className="w-3.5 h-3.5" /> Reimbursements
+        </button>
 
         {/* Search — right-aligned, only visible on the Properties tab */}
         {view === 'properties' && (
@@ -641,9 +657,10 @@ export default function ManagementDashboard() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        {view === 'properties' && <div className="p-6"><PropertiesView data={data} onRefresh={load} search={search} setSearch={setSearch} /></div>}
-        {view === 'all-tasks'  && <div className="p-6"><AllTasksView /></div>}
-        {view === 'insurance'  && <InsurancePage />}
+        {view === 'properties'     && <div className="p-6"><PropertiesView data={data} reimbSummary={reimbSummary} onRefresh={load} search={search} setSearch={setSearch} /></div>}
+        {view === 'all-tasks'      && <div className="p-6"><AllTasksView /></div>}
+        {view === 'insurance'      && <InsurancePage />}
+        {view === 'reimbursements' && <ReimbursementsView />}
       </div>
     </div>
   )

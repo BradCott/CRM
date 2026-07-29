@@ -489,6 +489,46 @@ export const createContact        = (propId, data) => req('POST',   `/management
 export const updateContact        = (id, data)     => req('PUT',    `/management/contacts/${id}`, data)
 export const deleteContact        = (id)           => req('DELETE', `/management/contacts/${id}`)
 
+// Reimbursements (tenant expense recovery)
+export const getAllReimbursements     = (params = {}) => {
+  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString()
+  return req('GET', `/management/reimbursements${qs ? `?${qs}` : ''}`)
+}
+export const getReimbursementSummary  = ()            => req('GET',    `/management/reimbursements/summary`)
+export const getPropertyReimbursements = (propId)     => req('GET',    `/management/${propId}/reimbursements`)
+export const createReimbursement      = (propId, data) => req('POST',   `/management/${propId}/reimbursements`, data)
+export const updateReimbursement      = (id, data)     => req('PUT',    `/management/reimbursements/${id}`, data)
+export const billReimbursement        = (id, data = {}) => req('PATCH',  `/management/reimbursements/${id}/bill`, data)
+export const receiveReimbursement     = (id, data = {}) => req('PATCH',  `/management/reimbursements/${id}/receive`, data)
+export const deleteReimbursement      = (id)           => req('DELETE', `/management/reimbursements/${id}`)
+
+// Expense reimbursement methods (per property + expense type)
+export const getExpenseSettings       = (propId)         => req('GET', `/management/${propId}/expense-settings`)
+export const updateExpenseSetting     = (propId, type, data) => req('PUT', `/management/${propId}/expense-settings/${type}`, data)
+
+// Monthly installments ledger
+export const getInstallments          = (propId, params = {}) => {
+  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString()
+  return req('GET', `/management/${propId}/installments${qs ? `?${qs}` : ''}`)
+}
+export const saveInstallment          = (propId, data)   => req('PUT',    `/management/${propId}/installments`, data)
+export const fillInstallments         = (propId, data)   => req('PUT',    `/management/${propId}/installments/fill`, data)
+export const deleteInstallment        = (id)             => req('DELETE', `/management/installments/${id}`)
+
+// Year-end reconciliation
+export const getReconciliationSuggestions = (propId, params = {}) => {
+  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString()
+  return req('GET', `/management/${propId}/reconciliation-suggestions${qs ? `?${qs}` : ''}`)
+}
+export const getReconciliations       = (propId, params = {}) => {
+  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString()
+  return req('GET', `/management/${propId}/reconciliations${qs ? `?${qs}` : ''}`)
+}
+export const saveReconciliation       = (propId, data)   => req('PUT',    `/management/${propId}/reconciliations`, data)
+export const postReconciliation       = (id)             => req('POST',   `/management/reconciliations/${id}/post`)
+export const unpostReconciliation     = (id)             => req('POST',   `/management/reconciliations/${id}/unpost`)
+export const deleteReconciliation     = (id)             => req('DELETE', `/management/reconciliations/${id}`)
+
 // Handwrytten
 export const getHandwryttenCards      = ()          => req('GET', '/handwrytten/cards')
 export const getHandwryttenFonts      = ()          => req('GET', '/handwrytten/fonts')

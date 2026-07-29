@@ -662,6 +662,22 @@ router.patch('/insurance/:id/paid', (req, res) => {
     `).run(policy.property_id)
   }
 
+  // Keep the dollar-based reimbursement tracker in sync with paid status.
+  if (paid) {
+    const year = (policy.effective_date && /^\d{4}/.test(policy.effective_date))
+      ? parseInt(policy.effective_date.slice(0, 4), 10)
+      : new Date().getFullYear()
+    ensureReimbursementForSource({
+      propertyId:    policy.property_id,
+      sourceType:    'insurance',
+      sourceId:      policy.id,
+      year,
+      expenseAmount: policy.premium,
+    })
+  } else {
+    removeUntouchedReimbursement('insurance', policy.id)
+  }
+
   res.json(db.prepare('SELECT * FROM property_insurance WHERE id = ?').get(req.params.id))
 })
 
@@ -800,11 +816,22 @@ router.post('/:propertyId/taxes', (req, res) => {
       `Amount: $${f.amount} | Authority: ${f.taxing_authority || 'N/A'}`
     )
   }
+  // If the tax was recorded as already paid, open a reimbursement to recover it.
+  if (f.paid_date) {
+    ensureReimbursementForSource({
+      propertyId:    req.params.propertyId,
+      sourceType:    'tax',
+      sourceId:      r.lastInsertRowid,
+      year:          f.tax_year != null ? parseInt(f.tax_year, 10) : new Date().getFullYear(),
+      expenseAmount: f.paid_amount != null ? f.paid_amount : f.amount,
+    })
+  }
   res.status(201).json(db.prepare('SELECT * FROM property_taxes WHERE id = ?').get(r.lastInsertRowid))
 })
 
 router.put('/taxes/:id', (req, res) => {
   const f = req.body
+  const before = db.prepare('SELECT * FROM property_taxes WHERE id = ?').get(req.params.id)
   db.prepare(`
     UPDATE property_taxes SET
       tax_year=?, due_date=?, amount=?, paid_date=?, paid_amount=?,
@@ -821,6 +848,20 @@ router.put('/taxes/:id', (req, res) => {
     f.notes || null,
     req.params.id
   )
+  // Newly marked paid → open a reimbursement; un-paid → drop an untouched one.
+  const nowPaid = !!f.paid_date
+  const wasPaid = !!(before && before.paid_date)
+  if (nowPaid && !wasPaid) {
+    ensureReimbursementForSource({
+      propertyId:    before ? before.property_id : null,
+      sourceType:    'tax',
+      sourceId:      parseInt(req.params.id, 10),
+      year:          f.tax_year != null ? parseInt(f.tax_year, 10) : (before?.tax_year || new Date().getFullYear()),
+      expenseAmount: f.paid_amount != null ? f.paid_amount : f.amount,
+    })
+  } else if (!nowPaid && wasPaid) {
+    removeUntouchedReimbursement('tax', parseInt(req.params.id, 10))
+  }
   res.json(db.prepare('SELECT * FROM property_taxes WHERE id = ?').get(req.params.id))
 })
 
@@ -1366,6 +1407,541 @@ router.post('/insurance/:id/reimbursement/send', async (req, res) => {
   }
 
   res.json({ ok: true, sent_to: recipients, attachments: attachments.length, follow_up_on: addDays(today(), 45) })
+})
+
+// ── Reimbursements (tenant expense recovery — dollar-based tracker) ────────────
+// Derive the workflow status from the dollar amounts so the UI and dashboard
+// never disagree with the data. An explicit 'waived' is preserved; everything
+// else is computed from recovery_method + billed/received amounts.
+function computeReimbursementStatus(r) {
+  if (r.status === 'waived') return 'waived'
+  if (r.recovery_method === 'tenant_direct') return 'tenant_direct'
+  const recoverable = r.recoverable_amount != null ? Number(r.recoverable_amount) : null
+  const received    = r.received_amount    != null ? Number(r.received_amount)    : 0
+  const billed      = r.billed_amount      != null ? Number(r.billed_amount)      : 0
+  if (received > 0 && recoverable != null && received >= recoverable - 0.005) return 'received'
+  if (received > 0) return 'partial'
+  if (billed > 0 || r.billed_date) return 'billed'
+  return 'not_billed'
+}
+
+function reimbNum(v) { return v != null && v !== '' ? parseFloat(v) : null }
+
+// Auto-create a reimbursement row for a just-paid tax/insurance expense.
+// The unique partial index on (source_type, source_id) makes this idempotent, so
+// re-marking a paid expense won't create duplicates. Returns silently on any error
+// so it can never block the underlying tax/insurance save.
+function ensureReimbursementForSource({ propertyId, sourceType, sourceId, year, expenseAmount }) {
+  try {
+    const existing = db.prepare(
+      'SELECT id FROM property_reimbursements WHERE source_type = ? AND source_id = ?'
+    ).get(sourceType, sourceId)
+    if (existing) return
+    const amount = expenseAmount != null ? Number(expenseAmount) : null
+    db.prepare(`
+      INSERT INTO property_reimbursements
+        (property_id, expense_type, year, source_type, source_id,
+         expense_amount, recoverable_amount, recovery_method, status)
+      VALUES (?,?,?,?,?,?,?, 'landlord_bills', 'not_billed')
+    `).run(propertyId, sourceType, year, sourceType, sourceId, amount, amount)
+  } catch (e) {
+    console.warn('[management] ensureReimbursementForSource skipped:', e.message)
+  }
+}
+
+// Remove a source-linked reimbursement when the expense is un-paid — but only if
+// it's still untouched (not_billed), so we never wipe billing/receipt history.
+function removeUntouchedReimbursement(sourceType, sourceId) {
+  try {
+    db.prepare(`
+      DELETE FROM property_reimbursements
+      WHERE source_type = ? AND source_id = ? AND status = 'not_billed'
+    `).run(sourceType, sourceId)
+  } catch (e) {
+    console.warn('[management] removeUntouchedReimbursement skipped:', e.message)
+  }
+}
+
+// GET /reimbursements — all reimbursements across portfolio, with optional
+// ?year= / ?status= / ?type= filters. Defined before /:propertyId/* routes.
+router.get('/reimbursements', (req, res) => {
+  const { year, status, type } = req.query
+  const where = ['p.is_portfolio = 1']
+  const args  = []
+  if (year)   { where.push('r.year = ?');         args.push(parseInt(year, 10)) }
+  if (status) { where.push('r.status = ?');        args.push(status) }
+  if (type)   { where.push('r.expense_type = ?');  args.push(type) }
+  const rows = db.prepare(`
+    SELECT r.*,
+           p.address    AS property_address,
+           p.city       AS property_city,
+           p.state      AS property_state,
+           t.name       AS tenant_brand_name
+    FROM property_reimbursements r
+    JOIN properties p ON p.id = r.property_id
+    LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE ${where.join(' AND ')}
+    ORDER BY r.year DESC, p.address ASC, r.expense_type ASC
+  `).all(...args)
+  res.json(rows)
+})
+
+// GET /reimbursements/summary — outstanding dollar totals for the dashboard cards.
+router.get('/reimbursements/summary', (req, res) => {
+  const rows = db.prepare(`
+    SELECT r.expense_type,
+           r.status,
+           r.recoverable_amount,
+           r.received_amount
+    FROM property_reimbursements r
+    JOIN properties p ON p.id = r.property_id
+    WHERE p.is_portfolio = 1
+      AND r.recovery_method = 'landlord_bills'
+      AND r.status NOT IN ('received','waived')
+  `).all()
+  const acc = { tax: { count: 0, outstanding: 0 }, insurance: { count: 0, outstanding: 0 }, cam: { count: 0, outstanding: 0 } }
+  for (const r of rows) {
+    const bucket = acc[r.expense_type]
+    if (!bucket) continue
+    const outstanding = (r.recoverable_amount || 0) - (r.received_amount || 0)
+    bucket.count += 1
+    bucket.outstanding += outstanding > 0 ? outstanding : 0
+  }
+  res.json(acc)
+})
+
+router.get('/:propertyId/reimbursements', (req, res) => {
+  res.json(db.prepare(
+    'SELECT * FROM property_reimbursements WHERE property_id = ? ORDER BY year DESC, expense_type'
+  ).all(req.params.propertyId))
+})
+
+router.post('/:propertyId/reimbursements', (req, res) => {
+  const f = req.body
+  if (!f.expense_type) return res.status(400).json({ error: 'expense_type is required' })
+  if (!f.year)         return res.status(400).json({ error: 'year is required' })
+
+  const draft = {
+    recovery_method:    f.recovery_method === 'tenant_direct' ? 'tenant_direct' : 'landlord_bills',
+    recoverable_amount: reimbNum(f.recoverable_amount ?? f.expense_amount),
+    billed_amount:      reimbNum(f.billed_amount),
+    billed_date:        f.billed_date || null,
+    received_amount:    reimbNum(f.received_amount),
+    status:             f.status === 'waived' ? 'waived' : null,
+  }
+  const status = computeReimbursementStatus(draft)
+
+  const r = db.prepare(`
+    INSERT INTO property_reimbursements
+      (property_id, expense_type, year, source_type, source_id,
+       expense_amount, recoverable_amount, recovery_method,
+       billed_amount, billed_date, received_amount, received_date, status, notes)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+  `).run(
+    req.params.propertyId,
+    f.expense_type,
+    parseInt(f.year, 10),
+    f.source_type || null,
+    f.source_id != null ? parseInt(f.source_id, 10) : null,
+    reimbNum(f.expense_amount),
+    draft.recoverable_amount,
+    draft.recovery_method,
+    draft.billed_amount,
+    draft.billed_date,
+    draft.received_amount,
+    f.received_date || null,
+    status,
+    f.notes || null
+  )
+  res.status(201).json(db.prepare('SELECT * FROM property_reimbursements WHERE id = ?').get(r.lastInsertRowid))
+})
+
+router.put('/reimbursements/:id', (req, res) => {
+  const existing = db.prepare('SELECT * FROM property_reimbursements WHERE id = ?').get(req.params.id)
+  if (!existing) return res.status(404).json({ error: 'Reimbursement not found' })
+  const f = req.body
+
+  const merged = {
+    expense_type:       f.expense_type       ?? existing.expense_type,
+    year:               f.year != null ? parseInt(f.year, 10) : existing.year,
+    expense_amount:     f.expense_amount     !== undefined ? reimbNum(f.expense_amount)     : existing.expense_amount,
+    recoverable_amount: f.recoverable_amount !== undefined ? reimbNum(f.recoverable_amount) : existing.recoverable_amount,
+    recovery_method:    f.recovery_method    ?? existing.recovery_method,
+    billed_amount:      f.billed_amount      !== undefined ? reimbNum(f.billed_amount)      : existing.billed_amount,
+    billed_date:        f.billed_date        !== undefined ? (f.billed_date || null)        : existing.billed_date,
+    received_amount:    f.received_amount    !== undefined ? reimbNum(f.received_amount)    : existing.received_amount,
+    received_date:      f.received_date      !== undefined ? (f.received_date || null)      : existing.received_date,
+    notes:              f.notes              !== undefined ? (f.notes || null)              : existing.notes,
+  }
+  // Preserve a prior 'waived' unless the client sends an explicit non-waived status.
+  let waived = existing.status === 'waived'
+  if (f.status === 'waived') waived = true
+  else if (f.status !== undefined) waived = false
+  merged.status = waived ? 'waived' : null
+  merged.status = computeReimbursementStatus(merged)
+
+  db.prepare(`
+    UPDATE property_reimbursements SET
+      expense_type=?, year=?, expense_amount=?, recoverable_amount=?, recovery_method=?,
+      billed_amount=?, billed_date=?, received_amount=?, received_date=?, status=?, notes=?,
+      updated_at=datetime('now')
+    WHERE id=?
+  `).run(
+    merged.expense_type, merged.year, merged.expense_amount, merged.recoverable_amount,
+    merged.recovery_method, merged.billed_amount, merged.billed_date,
+    merged.received_amount, merged.received_date, merged.status, merged.notes,
+    req.params.id
+  )
+  res.json(db.prepare('SELECT * FROM property_reimbursements WHERE id = ?').get(req.params.id))
+})
+
+// PATCH /reimbursements/:id/bill — record that the tenant was invoiced.
+router.patch('/reimbursements/:id/bill', (req, res) => {
+  const existing = db.prepare('SELECT * FROM property_reimbursements WHERE id = ?').get(req.params.id)
+  if (!existing) return res.status(404).json({ error: 'Reimbursement not found' })
+  const billedAmount = req.body.billed_amount !== undefined
+    ? reimbNum(req.body.billed_amount)
+    : (existing.recoverable_amount ?? existing.expense_amount)
+  const billedDate = req.body.billed_date || today()
+  const merged = { ...existing, billed_amount: billedAmount, billed_date: billedDate, status: null }
+  const status = computeReimbursementStatus(merged)
+  db.prepare(`UPDATE property_reimbursements SET billed_amount=?, billed_date=?, status=?, updated_at=datetime('now') WHERE id=?`)
+    .run(billedAmount, billedDate, status, req.params.id)
+  res.json(db.prepare('SELECT * FROM property_reimbursements WHERE id = ?').get(req.params.id))
+})
+
+// PATCH /reimbursements/:id/receive — record tenant payment received.
+router.patch('/reimbursements/:id/receive', (req, res) => {
+  const existing = db.prepare('SELECT * FROM property_reimbursements WHERE id = ?').get(req.params.id)
+  if (!existing) return res.status(404).json({ error: 'Reimbursement not found' })
+  const receivedAmount = req.body.received_amount !== undefined
+    ? reimbNum(req.body.received_amount)
+    : (existing.recoverable_amount ?? existing.billed_amount)
+  const receivedDate = req.body.received_date || today()
+  const merged = { ...existing, received_amount: receivedAmount, received_date: receivedDate, status: null }
+  const status = computeReimbursementStatus(merged)
+  db.prepare(`UPDATE property_reimbursements SET received_amount=?, received_date=?, status=?, updated_at=datetime('now') WHERE id=?`)
+    .run(receivedAmount, receivedDate, status, req.params.id)
+  res.json(db.prepare('SELECT * FROM property_reimbursements WHERE id = ?').get(req.params.id))
+})
+
+router.delete('/reimbursements/:id', (req, res) => {
+  db.prepare('DELETE FROM property_reimbursements WHERE id = ?').run(req.params.id)
+  res.status(204).end()
+})
+
+// ── Reimbursement methods, installments ledger & year-end reconciliation ───────
+// Installment tenants remit a monthly estimate all year; at year-end we compare
+// the actual recoverable cost against what was collected and post a true-up into
+// the reimbursement tracker. 'direct' tenants skip all of this (they just get the
+// paid bill invoiced via the existing reimbursement flow).
+const EXPENSE_TYPES = ['tax', 'insurance', 'cam']
+
+// Sum of installments collected for a property · expense_type · year.
+function collectedTotal(propertyId, expenseType, year) {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) AS total
+    FROM property_installments
+    WHERE property_id = ? AND expense_type = ? AND year = ?
+  `).get(propertyId, expenseType, year)
+  return row ? Number(row.total) : 0
+}
+
+// Suggested "actual recoverable" for a reconciliation, pulled from the paid
+// expense records already on file — the starting number the user confirms or
+// caps down. Returns null when there's nothing paid to base it on.
+//   insurance → sum of paid policy premiums whose coverage year matches
+//   tax       → sum of paid tax bills for that tax_year (paid_amount, else amount)
+//   cam       → null (CAM has no expense source yet)
+function suggestedRecoverable(propertyId, expenseType, year) {
+  if (expenseType === 'insurance') {
+    const rows = db.prepare(
+      `SELECT premium, effective_date, paid_date FROM property_insurance
+       WHERE property_id = ? AND paid_status = 'paid'`
+    ).all(propertyId)
+    let sum = 0, found = false
+    for (const r of rows) {
+      const src = /^\d{4}/.test(r.effective_date || '') ? r.effective_date
+                : /^\d{4}/.test(r.paid_date || '')      ? r.paid_date : null
+      const y = src ? parseInt(src.slice(0, 4), 10) : null
+      if (y === year && r.premium != null) { sum += Number(r.premium); found = true }
+    }
+    return found ? sum : null
+  }
+  if (expenseType === 'tax') {
+    const rows = db.prepare(
+      `SELECT paid_amount, amount FROM property_taxes
+       WHERE property_id = ? AND tax_year = ? AND paid_date IS NOT NULL`
+    ).all(propertyId, year)
+    let sum = 0, found = false
+    for (const r of rows) {
+      const amt = r.paid_amount != null ? Number(r.paid_amount)
+                : r.amount != null ? Number(r.amount) : null
+      if (amt != null) { sum += amt; found = true }
+    }
+    return found ? sum : null
+  }
+  return null
+}
+
+// GET /:propertyId/expense-settings — all three expense types, defaulted to
+// 'direct' when no row exists yet so the UI always has a full set to render.
+router.get('/:propertyId/expense-settings', (req, res) => {
+  const saved = db.prepare(
+    'SELECT * FROM property_expense_settings WHERE property_id = ?'
+  ).all(req.params.propertyId)
+  const byType = Object.fromEntries(saved.map(s => [s.expense_type, s]))
+  res.json(EXPENSE_TYPES.map(t => byType[t] || {
+    property_id: parseInt(req.params.propertyId, 10),
+    expense_type: t, method: 'direct', monthly_estimate: null,
+    annual_budget: null, notes: null,
+  }))
+})
+
+// PUT /:propertyId/expense-settings/:type — upsert one expense type's method.
+router.put('/:propertyId/expense-settings/:type', (req, res) => {
+  const { propertyId, type } = req.params
+  if (!EXPENSE_TYPES.includes(type)) return res.status(400).json({ error: 'invalid expense type' })
+  const f = req.body
+  const method = f.method === 'installments' ? 'installments' : 'direct'
+  db.prepare(`
+    INSERT INTO property_expense_settings
+      (property_id, expense_type, method, monthly_estimate, annual_budget, notes)
+    VALUES (?,?,?,?,?,?)
+    ON CONFLICT(property_id, expense_type) DO UPDATE SET
+      method=excluded.method, monthly_estimate=excluded.monthly_estimate,
+      annual_budget=excluded.annual_budget, notes=excluded.notes,
+      updated_at=datetime('now')
+  `).run(propertyId, type, method, reimbNum(f.monthly_estimate), reimbNum(f.annual_budget), f.notes || null)
+  res.json(db.prepare(
+    'SELECT * FROM property_expense_settings WHERE property_id = ? AND expense_type = ?'
+  ).get(propertyId, type))
+})
+
+// GET /:propertyId/installments?year=&type= — monthly ledger rows.
+router.get('/:propertyId/installments', (req, res) => {
+  const where = ['property_id = ?']
+  const args  = [req.params.propertyId]
+  if (req.query.year) { where.push('year = ?');         args.push(parseInt(req.query.year, 10)) }
+  if (req.query.type) { where.push('expense_type = ?'); args.push(req.query.type) }
+  res.json(db.prepare(
+    `SELECT * FROM property_installments WHERE ${where.join(' AND ')} ORDER BY year DESC, expense_type, month`
+  ).all(...args))
+})
+
+// PUT /:propertyId/installments — upsert one month's cell. Amount 0 keeps the row
+// (an explicit "nothing collected"); use DELETE to clear a cell entirely.
+router.put('/:propertyId/installments', (req, res) => {
+  const f = req.body
+  if (!EXPENSE_TYPES.includes(f.expense_type)) return res.status(400).json({ error: 'invalid expense type' })
+  const year  = parseInt(f.year, 10)
+  const month = parseInt(f.month, 10)
+  if (!year)                 return res.status(400).json({ error: 'year is required' })
+  if (!(month >= 1 && month <= 12)) return res.status(400).json({ error: 'month must be 1-12' })
+  const source = ['manual', 'email', 'plaid'].includes(f.source) ? f.source : 'manual'
+  db.prepare(`
+    INSERT INTO property_installments
+      (property_id, expense_type, year, month, amount, paid_date, source, remittance_ref, notes)
+    VALUES (?,?,?,?,?,?,?,?,?)
+    ON CONFLICT(property_id, expense_type, year, month) DO UPDATE SET
+      amount=excluded.amount, paid_date=excluded.paid_date, source=excluded.source,
+      remittance_ref=excluded.remittance_ref, notes=excluded.notes, updated_at=datetime('now')
+  `).run(
+    req.params.propertyId, f.expense_type, year, month,
+    reimbNum(f.amount) ?? 0, f.paid_date || null, source,
+    f.remittance_ref || null, f.notes || null
+  )
+  res.json(db.prepare(
+    'SELECT * FROM property_installments WHERE property_id = ? AND expense_type = ? AND year = ? AND month = ?'
+  ).get(req.params.propertyId, f.expense_type, year, month))
+})
+
+router.delete('/installments/:id', (req, res) => {
+  db.prepare('DELETE FROM property_installments WHERE id = ?').run(req.params.id)
+  res.status(204).end()
+})
+
+// PUT /:propertyId/installments/fill — bulk-fill the 12 monthly cells from a flat
+// rate (tenants pay the same amount all year). mode='empty' only fills months with
+// no row yet (safe auto-fill on rate entry); mode='all' overwrites every manual
+// cell. Rows the email/plaid importer created are never touched.
+router.put('/:propertyId/installments/fill', (req, res) => {
+  const f = req.body
+  if (!EXPENSE_TYPES.includes(f.expense_type)) return res.status(400).json({ error: 'invalid expense type' })
+  const year   = parseInt(f.year, 10)
+  const amount = reimbNum(f.amount)
+  const mode   = f.mode === 'all' ? 'all' : 'empty'
+  if (!year)          return res.status(400).json({ error: 'year is required' })
+  if (amount == null) return res.status(400).json({ error: 'amount is required' })
+
+  const fill = db.transaction(() => {
+    const existing = db.prepare(
+      'SELECT month, source FROM property_installments WHERE property_id = ? AND expense_type = ? AND year = ?'
+    ).all(req.params.propertyId, f.expense_type, year)
+    const byMonth = Object.fromEntries(existing.map(r => [r.month, r.source]))
+    for (let m = 1; m <= 12; m++) {
+      const src = byMonth[m]
+      if (src === 'email' || src === 'plaid') continue   // never clobber imported rows
+      if (mode === 'empty' && src !== undefined) continue // only fill blanks
+      db.prepare(`
+        INSERT INTO property_installments (property_id, expense_type, year, month, amount, source)
+        VALUES (?,?,?,?,?, 'manual')
+        ON CONFLICT(property_id, expense_type, year, month) DO UPDATE SET
+          amount=excluded.amount, source='manual', updated_at=datetime('now')
+      `).run(req.params.propertyId, f.expense_type, year, m, amount)
+    }
+  })
+  fill()
+
+  res.json(db.prepare(
+    'SELECT * FROM property_installments WHERE property_id = ? AND expense_type = ? AND year = ? ORDER BY month'
+  ).all(req.params.propertyId, f.expense_type, year))
+})
+
+// GET /:propertyId/reconciliation-suggestions?year= — suggested actual-recoverable
+// per expense type from paid records, so the UI can prefill (still editable for caps).
+router.get('/:propertyId/reconciliation-suggestions', (req, res) => {
+  const year = parseInt(req.query.year, 10) || new Date().getFullYear()
+  res.json({
+    tax:       suggestedRecoverable(req.params.propertyId, 'tax', year),
+    insurance: suggestedRecoverable(req.params.propertyId, 'insurance', year),
+    cam:       suggestedRecoverable(req.params.propertyId, 'cam', year),
+  })
+})
+
+// GET /:propertyId/reconciliations?year= — saved reconciliations, each refreshed
+// with the live collected total so drafts stay accurate as installments change.
+router.get('/:propertyId/reconciliations', (req, res) => {
+  const where = ['property_id = ?']
+  const args  = [req.params.propertyId]
+  if (req.query.year) { where.push('year = ?'); args.push(parseInt(req.query.year, 10)) }
+  const rows = db.prepare(
+    `SELECT * FROM property_reconciliations WHERE ${where.join(' AND ')} ORDER BY year DESC, expense_type`
+  ).all(...args)
+  for (const r of rows) {
+    if (r.status !== 'posted') {
+      r.total_collected = collectedTotal(r.property_id, r.expense_type, r.year)
+      r.true_up_amount  = r.actual_recoverable != null ? Number(r.actual_recoverable) - r.total_collected : null
+    }
+  }
+  res.json(rows)
+})
+
+// PUT /:propertyId/reconciliations — upsert a DRAFT (property·type·year). Snapshots
+// the live collected total and recomputes the true-up. Posting is a separate step.
+router.put('/:propertyId/reconciliations', (req, res) => {
+  const f = req.body
+  if (!EXPENSE_TYPES.includes(f.expense_type)) return res.status(400).json({ error: 'invalid expense type' })
+  const year = parseInt(f.year, 10)
+  if (!year) return res.status(400).json({ error: 'year is required' })
+
+  const existing = db.prepare(
+    'SELECT * FROM property_reconciliations WHERE property_id = ? AND expense_type = ? AND year = ?'
+  ).get(req.params.propertyId, f.expense_type, year)
+  if (existing && existing.status === 'posted') {
+    return res.status(409).json({ error: 'Reconciliation already posted — unpost to edit' })
+  }
+
+  const actual    = reimbNum(f.actual_recoverable)
+  const collected = collectedTotal(req.params.propertyId, f.expense_type, year)
+  const trueUp    = actual != null ? actual - collected : null
+
+  db.prepare(`
+    INSERT INTO property_reconciliations
+      (property_id, expense_type, year, actual_recoverable, total_collected, true_up_amount, status, notes)
+    VALUES (?,?,?,?,?,?, 'draft', ?)
+    ON CONFLICT(property_id, expense_type, year) DO UPDATE SET
+      actual_recoverable=excluded.actual_recoverable, total_collected=excluded.total_collected,
+      true_up_amount=excluded.true_up_amount, notes=excluded.notes, updated_at=datetime('now')
+  `).run(req.params.propertyId, f.expense_type, year, actual, collected, trueUp, f.notes || null)
+
+  res.json(db.prepare(
+    'SELECT * FROM property_reconciliations WHERE property_id = ? AND expense_type = ? AND year = ?'
+  ).get(req.params.propertyId, f.expense_type, year))
+})
+
+// POST /reconciliations/:id/post — freeze the true-up and push it into the
+// reimbursement tracker. A positive true-up (tenant owes) creates a landlord_bills
+// reimbursement linked back via reconciliation_id; a credit is recorded only.
+router.post('/reconciliations/:id/post', (req, res) => {
+  const recon = db.prepare('SELECT * FROM property_reconciliations WHERE id = ?').get(req.params.id)
+  if (!recon) return res.status(404).json({ error: 'Reconciliation not found' })
+  if (recon.status === 'posted') return res.status(409).json({ error: 'Already posted' })
+  if (recon.actual_recoverable == null) return res.status(400).json({ error: 'Enter the actual recoverable amount before posting' })
+
+  const collected = collectedTotal(recon.property_id, recon.expense_type, recon.year)
+  const trueUp    = Number(recon.actual_recoverable) - collected
+
+  const post = db.transaction(() => {
+    let reimbursementId = null
+    if (trueUp > 0.005) {
+      const draft = {
+        recovery_method: 'landlord_bills',
+        recoverable_amount: trueUp,
+        billed_amount: null, received_amount: null, status: null,
+      }
+      const status = computeReimbursementStatus(draft)
+      const r = db.prepare(`
+        INSERT INTO property_reimbursements
+          (property_id, expense_type, year, source_type, source_id,
+           expense_amount, recoverable_amount, recovery_method, status, notes, reconciliation_id)
+        VALUES (?,?,?, NULL, NULL, ?, ?, 'landlord_bills', ?, ?, ?)
+      `).run(
+        recon.property_id, recon.expense_type, recon.year,
+        recon.actual_recoverable, trueUp, status,
+        `Year-end ${recon.year} ${recon.expense_type} reconciliation true-up`,
+        recon.id
+      )
+      reimbursementId = r.lastInsertRowid
+    }
+    db.prepare(`
+      UPDATE property_reconciliations SET
+        total_collected=?, true_up_amount=?, status='posted',
+        reimbursement_id=?, posted_at=datetime('now'), updated_at=datetime('now')
+      WHERE id=?
+    `).run(collected, trueUp, reimbursementId, recon.id)
+    return reimbursementId
+  })
+  const reimbursementId = post()
+
+  res.json({
+    reconciliation: db.prepare('SELECT * FROM property_reconciliations WHERE id = ?').get(recon.id),
+    reimbursement: reimbursementId
+      ? db.prepare('SELECT * FROM property_reimbursements WHERE id = ?').get(reimbursementId)
+      : null,
+  })
+})
+
+// POST /reconciliations/:id/unpost — revert to draft. Removes the linked
+// reimbursement only if it's still untouched (not_billed), mirroring un-pay.
+router.post('/reconciliations/:id/unpost', (req, res) => {
+  const recon = db.prepare('SELECT * FROM property_reconciliations WHERE id = ?').get(req.params.id)
+  if (!recon) return res.status(404).json({ error: 'Reconciliation not found' })
+  if (recon.status !== 'posted') return res.status(409).json({ error: 'Not posted' })
+
+  const unpost = db.transaction(() => {
+    if (recon.reimbursement_id) {
+      db.prepare(
+        `DELETE FROM property_reimbursements WHERE id = ? AND status = 'not_billed'`
+      ).run(recon.reimbursement_id)
+    }
+    db.prepare(`
+      UPDATE property_reconciliations SET status='draft', reimbursement_id=NULL,
+        posted_at=NULL, updated_at=datetime('now') WHERE id=?
+    `).run(recon.id)
+  })
+  unpost()
+  res.json(db.prepare('SELECT * FROM property_reconciliations WHERE id = ?').get(recon.id))
+})
+
+router.delete('/reconciliations/:id', (req, res) => {
+  const recon = db.prepare('SELECT * FROM property_reconciliations WHERE id = ?').get(req.params.id)
+  if (recon && recon.status === 'posted' && recon.reimbursement_id) {
+    db.prepare(`DELETE FROM property_reimbursements WHERE id = ? AND status = 'not_billed'`)
+      .run(recon.reimbursement_id)
+  }
+  db.prepare('DELETE FROM property_reconciliations WHERE id = ?').run(req.params.id)
+  res.status(204).end()
 })
 
 export default router
