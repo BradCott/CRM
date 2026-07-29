@@ -136,12 +136,29 @@ router.get('/google/sender', (_req, res) => {
   res.redirect(url)
 })
 
+// Additional send-from account (e.g. brad@knoxcre.com) that you can pick per-email
+// on a draft screen — WITHOUT changing the app-wide default. Stored as
+// provider='send:<email>'. `return` = the client path to come back to.
+router.get('/google/send-account', (req, res) => {
+  const ret  = typeof req.query.return === 'string' ? req.query.return : '/settings'
+  const auth = getOAuth2Client()
+  const url  = auth.generateAuthUrl({
+    access_type: 'offline',
+    prompt:      'select_account consent',
+    scope:       SENDER_SCOPES,
+    state:       `sendacct:${encodeURIComponent(ret)}`,
+  })
+  res.redirect(url)
+})
+
 // ── Unified Google callback — handles both login and Drive ────────────────────
 
 router.get('/google/callback', async (req, res) => {
   const { code, state, error } = req.query
   const isLogin  = state === 'login'
   const isSender = state === 'sender'
+  const isSendAcct = typeof state === 'string' && state.startsWith('sendacct:')
+  const sendAcctReturn = isSendAcct ? decodeURIComponent(state.slice('sendacct:'.length)) : null
   const isSignup = typeof state === 'string' && state.startsWith('signup:')
   const inviteToken = isSignup ? state.slice('signup:'.length) : null
 
@@ -153,6 +170,7 @@ router.get('/google/callback', async (req, res) => {
     }
     if (isLogin) return res.redirect(clientUrl(`/login?error=${code}`))
     if (isSender) return res.redirect(clientUrl('/settings?sender=error'))
+    if (isSendAcct) return res.redirect(clientUrl(`${sendAcctReturn}${sendAcctReturn.includes('?') ? '&' : '?'}sendaccount=error`))
     return res.redirect(clientUrl('/settings?google=error'))
   }
 
@@ -181,6 +199,24 @@ router.get('/google/callback', async (req, res) => {
       `).run(tokens.access_token, tokens.refresh_token ?? null, tokens.expiry_date ?? null, email)
       console.log(`[auth] Send mailbox connected: ${email}`)
       return res.redirect(clientUrl('/settings?sender=connected'))
+    }
+
+    if (isSendAcct) {
+      // ── Additional per-send account (pick on a draft screen) ──────────────────
+      const provider = `send:${String(email).toLowerCase()}`
+      db.prepare(`
+        INSERT INTO oauth_tokens (provider, access_token, refresh_token, expiry_date, email, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(provider) DO UPDATE SET
+          access_token  = excluded.access_token,
+          refresh_token = COALESCE(excluded.refresh_token, refresh_token),
+          expiry_date   = excluded.expiry_date,
+          email         = excluded.email,
+          updated_at    = datetime('now')
+      `).run(provider, tokens.access_token, tokens.refresh_token ?? null, tokens.expiry_date ?? null, email)
+      console.log(`[auth] Additional send account connected: ${email}`)
+      const ret = sendAcctReturn || '/settings'
+      return res.redirect(clientUrl(`${ret}${ret.includes('?') ? '&' : '?'}sendaccount=connected&email=${encodeURIComponent(email)}`))
     }
 
     if (isSignup) {
@@ -305,6 +341,27 @@ router.put('/email-settings', requireAuth, (req, res) => {
   db.prepare(`INSERT INTO app_settings (key, value) VALUES ('email_from', ?)
               ON CONFLICT(key) DO UPDATE SET value = excluded.value`).run(from)
   res.json({ from })
+})
+
+// All accounts an email can be sent from — the app default (dedicated mailbox, or
+// the main connected account) plus any additional per-send accounts. Used by the
+// "Send from" picker on draft screens.
+router.get('/send-accounts', requireAuth, (_req, res) => {
+  const accounts = []
+  const send = db.prepare(`SELECT email FROM oauth_tokens WHERE provider = 'google_send'`).get()
+  const main = db.prepare(`SELECT email FROM oauth_tokens WHERE provider = 'google'`).get()
+  if (send?.email)      accounts.push({ key: 'google_send', email: send.email, label: `${send.email} (default mailbox)`, is_default: true })
+  else if (main?.email) accounts.push({ key: 'google',      email: main.email, label: `${main.email} (main account)`,   is_default: true })
+  for (const r of db.prepare(`SELECT provider, email FROM oauth_tokens WHERE provider LIKE 'send:%' ORDER BY email`).all()) {
+    accounts.push({ key: r.provider, email: r.email, label: r.email, is_default: false })
+  }
+  res.json({ accounts })
+})
+router.delete('/send-accounts/:key', requireAuth, (req, res) => {
+  const key = req.params.key
+  if (!key.startsWith('send:')) return res.status(400).json({ error: 'Only additional accounts can be removed here' })
+  db.prepare(`DELETE FROM oauth_tokens WHERE provider = ?`).run(key)
+  res.json({ ok: true })
 })
 
 // Dedicated send mailbox status/disconnect (see /google/sender).

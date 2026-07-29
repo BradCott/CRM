@@ -6,6 +6,7 @@ import { useState, useEffect } from 'react'
 import { X, Loader2, Send, Sparkles, Mail, CheckCircle, AlertTriangle, ChevronRight, ChevronDown } from 'lucide-react'
 import Button from '../ui/Button'
 import { getInvestorReturns, draftInvestorEmail, emailInvestors } from '../../api/client'
+import SendFromPicker from './SendFromPicker'
 
 const money = n => (n == null || isNaN(n) ? '$0' : (n < 0 ? `-$${Math.abs(Math.round(n)).toLocaleString()}` : `$${Math.round(n).toLocaleString()}`))
 const COMPANY_RE = /\b(LLC|L\.L\.C|Inc|Corp|Company|Capital|Partners|Holdings|Trust|Fund|Group|Investments?|Ventures?)\b/i
@@ -36,7 +37,7 @@ export default function InvestorClosingEmailModal({ propertyId, property, onClos
   const [loading, setLoading]   = useState(true)
   const [subject, setSubject]   = useState(DEFAULT_SUBJECT)
   const [body, setBody]         = useState(DEFAULT_BODY)
-  const [from, setFrom]         = useState('brad@knoxcre.com')
+  const [account, setAccount]   = useState('')
   const [instructions, setInstructions] = useState('')
   const [drafting, setDrafting] = useState(false)
   const [sending, setSending]   = useState(false)
@@ -84,7 +85,7 @@ export default function InvestorClosingEmailModal({ propertyId, property, onClos
     setSending(true); setError(null)
     try {
       const sends = recipients.map(r => ({ to: emailOf(r).trim(), name: r.name, subject: merge(subject, r), body: merge(body, r) }))
-      const res = await emailInvestors(propertyId, { from: from.trim() || undefined, sends })
+      const res = await emailInvestors(propertyId, { account: account || undefined, sends })
       setResult(res)
     } catch (e) { setError(e.message || 'Send failed'); setSending(false) }
   }
@@ -145,13 +146,8 @@ export default function InvestorClosingEmailModal({ propertyId, property, onClos
               </div>
             </div>
 
-            {/* From */}
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">From</label>
-              <input value={from} onChange={e => setFrom(e.target.value)} type="email"
-                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400" />
-              <p className="text-[11px] text-slate-400 mt-1">Sends through your connected Google account (must be brad@knoxcre.com, or a verified “send as” alias).</p>
-            </div>
+            {/* Send-from account */}
+            <SendFromPicker value={account} onChange={setAccount} />
 
             {/* Recipients */}
             <div>

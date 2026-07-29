@@ -60,13 +60,19 @@ function buildRaw({ from, to, cc, replyTo, subject, text, html, attachments = []
  * to EMAIL_FROM, else the connected account). Throws a clear message if Google
  * isn't connected or lacks the send scope.
  */
-export async function sendMail({ to, cc, replyTo, subject, text, html, from, attachments }) {
+export async function sendMail({ to, cc, replyTo, subject, text, html, from, attachments, account }) {
   if (!to) throw new Error('No recipient')
-  // Prefer the dedicated send mailbox (so sent copies land in ITS Sent folder);
-  // fall back to the main connected account.
-  const tokenRow = db.prepare(`SELECT * FROM oauth_tokens WHERE provider = 'google_send'`).get()
-                || db.prepare(`SELECT * FROM oauth_tokens WHERE provider = 'google'`).get()
+  // `account` (a provider key like 'send:brad@knoxcre.com') sends through that
+  // specific connected account. Otherwise prefer the dedicated send mailbox, then
+  // the main connected account. Sent copies land in whichever mailbox is used.
+  const tokenRow =
+       (account ? db.prepare(`SELECT * FROM oauth_tokens WHERE provider = ?`).get(account) : null)
+    || db.prepare(`SELECT * FROM oauth_tokens WHERE provider = 'google_send'`).get()
+    || db.prepare(`SELECT * FROM oauth_tokens WHERE provider = 'google'`).get()
   if (!tokenRow?.access_token) throw new Error('Google account not connected — connect it in Settings to send email.')
+  // When sending through a specific account and no explicit From given, send AS
+  // that account's own address (so the From matches the mailbox).
+  if (!from && account && tokenRow.email) from = tokenRow.email
 
   const auth  = getAuthedClient(tokenRow)
   const gmail = google.gmail({ version: 'v1', auth })

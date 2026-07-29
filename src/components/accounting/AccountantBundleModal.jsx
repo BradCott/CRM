@@ -6,6 +6,7 @@ import { X, Loader2, Download, Send, FileSpreadsheet, CheckCircle, AlertTriangle
 import Button from '../ui/Button'
 import { downloadBundle, bundleBase64, bundleFilename } from '../../utils/accountingExport'
 import { emailAccountantBundle } from '../../api/client'
+import SendFromPicker from './SendFromPicker'
 
 const SHEETS = ['Ledger', 'Balance Sheet', 'P&L', 'Cash Flow', 'Schedule E', 'Depreciation', 'Vendors (1099)']
 
@@ -13,7 +14,7 @@ export default function AccountantBundleModal({ property, transactions = [], inv
   const addr = property?.address || 'this property'
   const [to, setTo]           = useState('')
   const [cc, setCc]           = useState('')
-  const [from, setFrom]       = useState('brad@knoxcre.com')
+  const [account, setAccount] = useState('')
   const [subject, setSubject] = useState(`Accountant package — ${addr}`)
   const [body, setBody]       = useState(
     `Hi,\n\nAttached is the full accounting package for ${addr} — ledger, balance sheet, P&L, cash flow, Schedule E, depreciation schedule, and 1099 vendor summary.\n\nLet me know if you need anything else.\n\nThanks,\nBrad`)
@@ -33,7 +34,7 @@ export default function AccountantBundleModal({ property, transactions = [], inv
     try {
       const attachment_base64 = bundleBase64(property, transactions, investors)
       await emailAccountantBundle(property.id, {
-        to: to.trim(), cc: cc.trim() || undefined, from: from.trim() || undefined,
+        to: to.trim(), cc: cc.trim() || undefined, account: account || undefined,
         subject, body, filename: bundleFilename(property), attachment_base64,
       })
       setSent(true)
@@ -84,12 +85,7 @@ export default function AccountantBundleModal({ property, transactions = [], inv
               </div>
             </div>
 
-            <div>
-              <label className="block text-xs font-medium text-slate-500 mb-1">From</label>
-              <input value={from} onChange={e => setFrom(e.target.value)} type="email"
-                className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400" />
-              <p className="text-[11px] text-slate-400 mt-1">Sends through your connected Google account. To send as brad@knoxcre.com, that must be the account connected in Settings (or a verified “send as” alias).</p>
-            </div>
+            <SendFromPicker value={account} onChange={setAccount} />
 
             <div>
               <label className="block text-xs font-medium text-slate-500 mb-1">Subject</label>

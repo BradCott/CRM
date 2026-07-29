@@ -1643,6 +1643,7 @@ router.post('/:propertyId/email-bundle', async (req, res) => {
       cc:      b.cc ? String(b.cc).trim() : undefined,
       from:    b.from ? String(b.from).trim() : undefined,
       replyTo: b.from ? String(b.from).trim() : undefined,
+      account: b.account || undefined,
       subject: b.subject || 'Accountant package',
       text:    b.body || '',
       attachments: [{
@@ -1746,6 +1747,7 @@ router.post('/:propertyId/email-investors', async (req, res) => {
         to: String(s.to).trim(),
         from: b.from ? String(b.from).trim() : undefined,
         replyTo: b.from ? String(b.from).trim() : undefined,
+        account: b.account || undefined,
         subject: s.subject || 'Your investment update',
         text: s.body || '',
       })
