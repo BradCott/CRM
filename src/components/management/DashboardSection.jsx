@@ -6,7 +6,7 @@ import {
   Camera, Pencil, Phone, User, ClipboardList, Shield, Receipt, HandCoins,
   AlertTriangle, Loader2, Check, X, Building2, DollarSign, ExternalLink, Plus, Trash2, PhoneCall,
 } from 'lucide-react'
-import { getPropertyDash, updatePropertyDash, uploadPropertyPhoto, propertyPhotoUrl, getCallNotes, addCallNote, deleteCallNote, markInsuranceReimbursed } from '../../api/client'
+import { getPropertyDash, updatePropertyDash, uploadPropertyPhoto, propertyPhotoUrl, getCallNotes, addCallNote, deleteCallNote, markExpenseReimbursed } from '../../api/client'
 
 const fmtDateTime = (d) => d ? new Date(String(d).includes('T') ? d : d.replace(' ', 'T') + 'Z').toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''
 
@@ -118,11 +118,11 @@ export default function DashboardSection({ propertyId }) {
     try { await uploadPropertyPhoto(propertyId, file); setPhotoV(v => v + 1); await load() }
     catch (e) { alert(e.message) } finally { setUploadingPhoto(false) }
   }
-  const [reimbBusy, setReimbBusy] = useState(null)   // insurance_id currently updating
-  async function setReimb(insuranceId, status) {
+  const [reimbBusy, setReimbBusy] = useState(null)   // expense_type currently updating
+  async function setReimb(expenseType, year, status) {
     if (status === 'limbo' && !window.confirm("Keep this open and check back in 30 days?")) return
-    setReimbBusy(insuranceId)
-    try { await markInsuranceReimbursed(insuranceId, status); await load() }
+    setReimbBusy(expenseType)
+    try { await markExpenseReimbursed(propertyId, expenseType, year, status); await load() }
     catch (e) { alert(e.message) } finally { setReimbBusy(null) }
   }
 
@@ -131,7 +131,7 @@ export default function DashboardSection({ propertyId }) {
 
   const { property: p, tasks, insurance, taxes, contacts, maintenance_vendors, landlord_responsibilities, awaiting_reimbursement } = dash
   const nextTax = taxes.find(t => !t.paid) || null
-  const owedTotal = awaiting_reimbursement.reduce((a, r) => a + (Number(r.amount) || 0), 0)
+  const owedTotal = awaiting_reimbursement.reduce((a, r) => a + (Number(r.net) || 0), 0)
 
   return (
     <div className="space-y-5">
@@ -247,25 +247,34 @@ export default function DashboardSection({ propertyId }) {
         <Card title="Awaiting Reimbursement" icon={HandCoins} tint="text-amber-500">
           {awaiting_reimbursement.length ? (
             <div className="space-y-1.5 text-sm">
-              <p className="text-lg font-bold text-amber-700 tabular-nums">{fmt$(owedTotal)} owed by tenant</p>
-              <ul className="space-y-2">
-                {awaiting_reimbursement.map((r, i) => (
-                  <li key={i} className="text-slate-600">
-                    <div className="flex items-center justify-between">
-                      <span>{r.label}</span><span className="tabular-nums">{fmt$(r.amount)}</span>
-                    </div>
-                    {r.insurance_id && (
-                      <div className="flex items-center flex-wrap gap-1.5 mt-1">
+              <p className="text-lg font-bold text-amber-700 tabular-nums">{fmt$(owedTotal)} net owed by tenant</p>
+              <ul className="space-y-3">
+                {awaiting_reimbursement.map((r) => {
+                  const credit = Number(r.net) < -0.005
+                  return (
+                    <li key={r.expense_type} className="text-slate-600 border-b border-slate-50 last:border-0 pb-2 last:pb-0">
+                      <div className="flex items-center justify-between">
+                        <span className="font-medium text-slate-700">{r.label}</span>
+                        <span className={`tabular-nums font-semibold ${credit ? 'text-emerald-600' : 'text-slate-800'}`}>
+                          {credit ? `${fmt$(Math.abs(r.net))} credit` : `${fmt$(r.net)} owed`}
+                        </span>
+                      </div>
+                      {r.method === 'installments' && (
+                        <p className="text-[11px] text-slate-400 mt-0.5">
+                          {fmt$(r.actual)} actual − {fmt$(r.collected)} paid in installments · through this month
+                        </p>
+                      )}
+                      <div className="flex items-center flex-wrap gap-1.5 mt-1.5">
                         <button
-                          onClick={() => setReimb(r.insurance_id, 'reimbursed')}
-                          disabled={reimbBusy === r.insurance_id}
+                          onClick={() => setReimb(r.expense_type, r.year, 'reimbursed')}
+                          disabled={reimbBusy === r.expense_type}
                           className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
                         >
-                          {reimbBusy === r.insurance_id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Mark reimbursed
+                          {reimbBusy === r.expense_type ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />} Mark reimbursed
                         </button>
                         <button
-                          onClick={() => setReimb(r.insurance_id, 'limbo')}
-                          disabled={reimbBusy === r.insurance_id}
+                          onClick={() => setReimb(r.expense_type, r.year, 'limbo')}
+                          disabled={reimbBusy === r.expense_type}
                           className="inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-1 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 disabled:opacity-50"
                         >
                           Still in limbo
@@ -274,9 +283,9 @@ export default function DashboardSection({ propertyId }) {
                           <span className="text-[11px] text-slate-400">next check {fmtDate(r.next_check)}</span>
                         )}
                       </div>
-                    )}
-                  </li>
-                ))}
+                    </li>
+                  )
+                })}
               </ul>
             </div>
           ) : <p className="text-sm text-slate-400">Nothing outstanding.</p>}

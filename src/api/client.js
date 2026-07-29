@@ -529,6 +529,31 @@ export const postReconciliation       = (id)             => req('POST',   `/mana
 export const unpostReconciliation     = (id)             => req('POST',   `/management/reconciliations/${id}/unpost`)
 export const deleteReconciliation     = (id)             => req('DELETE', `/management/reconciliations/${id}`)
 
+// CAM invoices (property-work costs that roll up into CAM actuals)
+export const getCamInvoices           = (propId, params = {}) => {
+  const qs = new URLSearchParams(Object.entries(params).filter(([, v]) => v != null && v !== '')).toString()
+  return req('GET', `/management/${propId}/cam-invoices${qs ? `?${qs}` : ''}`)
+}
+export const createCamInvoice         = (propId, data)   => req('POST',   `/management/${propId}/cam-invoices`, data)
+export async function uploadCamInvoice(propId, file, fields = {}) {
+  const fd = new FormData()
+  if (file) fd.append('file', file)
+  for (const [k, v] of Object.entries(fields)) if (v != null && v !== '') fd.append(k, v)
+  return req('POST', `/management/${propId}/cam-invoices/upload`, fd)
+}
+export async function parseCamInvoice(propId, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return req('POST', `/management/${propId}/cam-invoices/parse`, fd)
+}
+export const updateCamInvoice         = (id, data)       => req('PUT',    `/management/cam-invoices/${id}`, data)
+export const deleteCamInvoice         = (id)             => req('DELETE', `/management/cam-invoices/${id}`)
+export const camInvoiceUrl            = (id)             => `${BASE}/management/cam-invoices/${id}/file`
+
+// Per-type reimbursement status (dashboard net card)
+export const markExpenseReimbursed    = (propId, type, year, status) =>
+  req('PATCH', `/management/${propId}/expense-reimbursement/${type}`, { year, status })
+
 // Handwrytten
 export const getHandwryttenCards      = ()          => req('GET', '/handwrytten/cards')
 export const getHandwryttenFonts      = ()          => req('GET', '/handwrytten/fonts')

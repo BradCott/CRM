@@ -771,6 +771,50 @@ const migrations = [
   // property_reimbursements.source_type CHECK only allows tax/insurance/NULL, so
   // reconciliation true-ups carry source_type NULL + this link instead).
   `ALTER TABLE property_reimbursements ADD COLUMN reconciliation_id INTEGER`,
+
+  // ── CAM actuals: invoices for property work ─────────────────────────────────
+  // CAM has no annual bill like insurance/tax; its "actual recoverable" is the
+  // running sum of vendor invoices for the year. Each invoice can carry an
+  // attached file (stored on disk, path here). invoice_date drives the year the
+  // amount rolls into; paid_date is when we actually paid it.
+  `CREATE TABLE IF NOT EXISTS property_cam_invoices (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id  INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    vendor       TEXT,
+    description  TEXT,
+    amount       REAL NOT NULL DEFAULT 0,
+    invoice_date TEXT,
+    paid_date    TEXT,
+    file_name    TEXT,
+    file_path    TEXT,
+    mime         TEXT,
+    notes        TEXT,
+    created_at   TEXT DEFAULT (datetime('now')),
+    updated_at   TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_cam_invoices_property ON property_cam_invoices(property_id, invoice_date)`,
+
+  // ── Per-type reimbursement status (dashboard net card) ──────────────────────
+  // Tracks whether the tenant has reimbursed a given expense_type for a given
+  // year, independently per type (tax / insurance / cam). Source of truth for the
+  // dashboard "Awaiting Reimbursement" card. 'limbo' keeps it unreimbursed and
+  // sets next_check so a follow-up is due; marking insurance reimbursed also
+  // back-syncs the policy flag + closes its follow-up task elsewhere.
+  `CREATE TABLE IF NOT EXISTS property_expense_reimbursements (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id     INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    expense_type    TEXT NOT NULL CHECK(expense_type IN ('tax','insurance','cam')),
+    year            INTEGER NOT NULL,
+    status          TEXT NOT NULL DEFAULT 'unreimbursed'
+                    CHECK(status IN ('unreimbursed','reimbursed')),
+    reimbursed_date TEXT,
+    next_check      TEXT,
+    notes           TEXT,
+    created_at      TEXT DEFAULT (datetime('now')),
+    updated_at      TEXT DEFAULT (datetime('now')),
+    UNIQUE(property_id, expense_type, year)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_exp_reimb_property ON property_expense_reimbursements(property_id, year)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

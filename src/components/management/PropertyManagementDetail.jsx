@@ -6,11 +6,12 @@ import DashboardSection from './DashboardSection'
 import InsuranceReimbursement from './InsuranceReimbursement'
 import DropZone from '../ui/DropZone'
 import ReconciliationSection from './ReconciliationSection'
+import CamSection from './CamSection'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import {
   ArrowLeft, ClipboardList, Shield, Receipt, Wrench, Users,
   Plus, Pencil, Trash2, CheckCircle2, Loader2,
-  Upload, AlertCircle, ChevronDown, ChevronUp, FileUp, FileText, LayoutDashboard, Calculator, Scale,
+  Upload, AlertCircle, ChevronDown, ChevronUp, FileUp, FileText, LayoutDashboard, Calculator, Scale, Hammer,
 } from 'lucide-react'
 import {
   getProperty,
@@ -1220,6 +1221,7 @@ const TABS = [
   { id: 'tasks',       label: 'Tasks',       icon: ClipboardList },
   { id: 'insurance',   label: 'Insurance',   icon: Shield },
   { id: 'taxes',       label: 'Taxes',       icon: Receipt },
+  { id: 'cam',         label: 'CAM',         icon: Hammer },
   { id: 'reconciliation', label: 'Reconciliation', icon: Scale },
   { id: 'maintenance', label: 'Maintenance', icon: Wrench },
   { id: 'contacts',    label: 'Contacts',    icon: Users },
@@ -1307,6 +1309,7 @@ export default function PropertyManagementDetail() {
         {tab === 'tasks'       && <TasksSection       propertyId={propertyId} />}
         {tab === 'insurance'   && <InsuranceSection   propertyId={propertyId} />}
         {tab === 'taxes'       && <TaxesSection       propertyId={propertyId} />}
+        {tab === 'cam'         && <CamSection         propertyId={propertyId} />}
         {tab === 'reconciliation' && <ReconciliationSection propertyId={propertyId} />}
         {tab === 'maintenance' && <MaintenanceSection propertyId={propertyId} />}
         {tab === 'contacts'    && <ContactsSection    propertyId={propertyId} />}

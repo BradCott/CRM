@@ -1143,20 +1143,41 @@ router.get('/:propertyId/dash', (req, res) => {
     catch (_) {}
   }
 
-  // Awaiting-reimbursement: things we've paid that the tenant still owes us back.
+  // Awaiting-reimbursement: one net row per expense type for the current year.
+  // For installment properties the amount owed is netted against what the tenant
+  // has already paid in through the current month; for direct properties it's the
+  // full actual-to-date. A negative net means the tenant has overpaid (credit).
+  const now = new Date()
+  const curYear = now.getFullYear()
+  const throughMonth = now.getMonth() + 1
+  const TYPE_LABEL = { tax: 'Real Estate Taxes', insurance: 'Insurance', cam: 'CAM' }
+
+  const settingsRows = db.prepare(`SELECT expense_type, method FROM property_expense_settings WHERE property_id = ?`).all(p.id)
+  const methodOf = Object.fromEntries(settingsRows.map(s => [s.expense_type, s.method]))
+  const reimbRows = db.prepare(`SELECT expense_type, status, next_check FROM property_expense_reimbursements WHERE property_id = ? AND year = ?`).all(p.id, curYear)
+  const reimbOf = Object.fromEntries(reimbRows.map(r => [r.expense_type, r]))
+
   const awaiting = []
-  if (insurance && insurance.reimbursed_status !== 'reimbursed') {
-    const chk = db.prepare(`SELECT due_date FROM property_tasks WHERE insurance_id = ? AND completed_at IS NULL AND title = ? ORDER BY due_date DESC LIMIT 1`).get(insurance.id, REIMB_CHECK_TITLE)
-    // Show it once we've either marked the premium paid or actually emailed a
-    // reimbursement request (which leaves an open follow-up task).
-    if (insurance.paid_status === 'paid' || chk) {
-      awaiting.push({ type: 'Insurance', insurance_id: insurance.id, label: `${insurance.carrier || 'Insurance'} premium`, amount: insurance.premium, next_check: chk?.due_date || null })
+  for (const type of EXPENSE_TYPES) {
+    const rstat = reimbOf[type]
+    if (rstat?.status === 'reimbursed') continue          // already settled for the year
+    const method = methodOf[type] === 'installments' ? 'installments' : 'direct'
+    const actual = actualToDate(p.id, type, curYear, throughMonth)
+    const collected = method === 'installments' ? collectedToDate(p.id, type, curYear, throughMonth) : 0
+    const net = actual - collected
+    const show = method === 'installments' ? (actual > 0 || collected > 0) : (actual > 0)
+    if (!show) continue
+    // Insurance follow-up task due date is a secondary source for next_check.
+    let next_check = rstat?.next_check || null
+    if (!next_check && type === 'insurance') {
+      const chk = db.prepare(`SELECT due_date FROM property_tasks WHERE property_id = ? AND completed_at IS NULL AND title = ? ORDER BY due_date DESC LIMIT 1`).get(p.id, REIMB_CHECK_TITLE)
+      next_check = chk?.due_date || null
     }
-  }
-  for (const t of taxes) {
-    if (t.paid && t.reimbursed_status !== 'reimbursed') {
-      awaiting.push({ type: 'Tax', label: `${t.tax_year || ''} property tax`.trim(), amount: t.paid_amount ?? t.amount })
-    }
+    awaiting.push({
+      expense_type: type, label: TYPE_LABEL[type], method, year: curYear,
+      actual, collected, net,
+      status: rstat?.status || 'unreimbursed', next_check,
+    })
   }
 
   res.json({
@@ -1681,7 +1702,92 @@ function suggestedRecoverable(propertyId, expenseType, year) {
     }
     return found ? sum : null
   }
+  if (expenseType === 'cam') {
+    // CAM's actual is the sum of vendor invoices dated in the year.
+    const total = camActualToDate(propertyId, year, 12)
+    return total > 0 ? total : null
+  }
   return null
+}
+
+// The calendar month (1-12) an actual expense record belongs to, from its most
+// relevant date. Returns null if no parseable date.
+function monthOf(dateStr) {
+  if (!/^\d{4}-\d{2}/.test(dateStr || '')) return null
+  return parseInt(dateStr.slice(5, 7), 10)
+}
+
+// Sum of CAM invoices for a property·year, counting only those dated on or
+// before `throughMonth` (1-12). invoice_date drives the year/month; paid_date is
+// the fallback. Pass throughMonth=12 for the full-year total.
+function camActualToDate(propertyId, year, throughMonth) {
+  const rows = db.prepare(
+    `SELECT amount, invoice_date, paid_date FROM property_cam_invoices WHERE property_id = ?`
+  ).all(propertyId)
+  let sum = 0
+  for (const r of rows) {
+    const src = /^\d{4}/.test(r.invoice_date || '') ? r.invoice_date
+              : /^\d{4}/.test(r.paid_date || '')    ? r.paid_date : null
+    if (!src) continue
+    if (parseInt(src.slice(0, 4), 10) !== year) continue
+    const m = monthOf(src)
+    if (m != null && m > throughMonth) continue
+    sum += Number(r.amount) || 0
+  }
+  return sum
+}
+
+// "Actual recoverable to date" for a property·expense_type·year, counting only
+// records dated on or before `throughMonth`. This is the real cost incurred so
+// far — it jumps when a bill/premium/invoice is actually recorded, rather than
+// accruing smoothly. Returns 0 when nothing is on file yet.
+function actualToDate(propertyId, expenseType, year, throughMonth) {
+  if (expenseType === 'insurance') {
+    const rows = db.prepare(
+      `SELECT premium, effective_date, paid_date FROM property_insurance
+       WHERE property_id = ? AND paid_status = 'paid'`
+    ).all(propertyId)
+    let sum = 0
+    for (const r of rows) {
+      const src = /^\d{4}/.test(r.paid_date || '')      ? r.paid_date
+                : /^\d{4}/.test(r.effective_date || '') ? r.effective_date : null
+      if (!src) continue
+      if (parseInt(src.slice(0, 4), 10) !== year) continue
+      const m = monthOf(src)
+      if (m != null && m > throughMonth) continue
+      if (r.premium != null) sum += Number(r.premium)
+    }
+    return sum
+  }
+  if (expenseType === 'tax') {
+    const rows = db.prepare(
+      `SELECT paid_amount, amount, paid_date FROM property_taxes
+       WHERE property_id = ? AND tax_year = ? AND paid_date IS NOT NULL`
+    ).all(propertyId, year)
+    let sum = 0
+    for (const r of rows) {
+      const m = monthOf(r.paid_date)
+      if (m != null && m > throughMonth) continue
+      const amt = r.paid_amount != null ? Number(r.paid_amount)
+                : r.amount != null ? Number(r.amount) : 0
+      sum += amt
+    }
+    return sum
+  }
+  if (expenseType === 'cam') return camActualToDate(propertyId, year, throughMonth)
+  return 0
+}
+
+// Sum of installments collected for a property·expense_type·year, counting only
+// months 1..throughMonth (so future flat-filled months don't inflate the
+// running "collected so far" figure the dashboard nets against).
+function collectedToDate(propertyId, expenseType, year, throughMonth) {
+  const row = db.prepare(`
+    SELECT COALESCE(SUM(amount), 0) AS total
+    FROM property_installments
+    WHERE property_id = ? AND expense_type = ? AND year = ? AND month <= ?
+  `).get(propertyId, expenseType, year, throughMonth)
+  return row ? Number(row.total) : 0
 }
 
 // GET /:propertyId/expense-settings — all three expense types, defaulted to
@@ -1942,6 +2048,206 @@ router.delete('/reconciliations/:id', (req, res) => {
   }
   db.prepare('DELETE FROM property_reconciliations WHERE id = ?').run(req.params.id)
   res.status(204).end()
+})
+
+// ── CAM invoices (property-work costs that roll up into CAM actuals) ───────────
+const CAM_DOCS_DIR = join(DATA_DIR, 'cam-invoices')
+
+// List invoices for a property, newest first. Optional ?year= filters by the
+// invoice_date (falling back to paid_date) calendar year.
+router.get('/:propertyId/cam-invoices', (req, res) => {
+  const rows = db.prepare(
+    `SELECT id, vendor, description, amount, invoice_date, paid_date, file_name, mime, notes, created_at
+     FROM property_cam_invoices WHERE property_id = ?
+     ORDER BY (invoice_date IS NULL), invoice_date DESC, id DESC`
+  ).all(req.params.propertyId)
+  const year = req.query.year ? parseInt(req.query.year, 10) : null
+  const filtered = year
+    ? rows.filter(r => {
+        const src = /^\d{4}/.test(r.invoice_date || '') ? r.invoice_date
+                  : /^\d{4}/.test(r.paid_date || '')    ? r.paid_date : null
+        return src && parseInt(src.slice(0, 4), 10) === year
+      })
+    : rows
+  const total = filtered.reduce((a, r) => a + (Number(r.amount) || 0), 0)
+  res.json({ invoices: filtered, total })
+})
+
+router.post('/:propertyId/cam-invoices', (req, res) => {
+  const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(req.params.propertyId)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+  const b = req.body || {}
+  const amount = reimbNum(b.amount)
+  if (amount == null) return res.status(400).json({ error: 'amount is required' })
+  const info = db.prepare(
+    `INSERT INTO property_cam_invoices (property_id, vendor, description, amount, invoice_date, paid_date, notes)
+     VALUES (?,?,?,?,?,?,?)`
+  ).run(prop.id, b.vendor || null, b.description || null, amount, b.invoice_date || null, b.paid_date || null, b.notes || null)
+  res.json(db.prepare('SELECT * FROM property_cam_invoices WHERE id = ?').get(info.lastInsertRowid))
+})
+
+// Upload an invoice file and create the row in one step. Amount/vendor/date come
+// as multipart form fields alongside the file.
+router.post('/:propertyId/cam-invoices/upload', upload.single('file'), (req, res) => {
+  const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(req.params.propertyId)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+  const b = req.body || {}
+  const amount = reimbNum(b.amount)
+  if (amount == null) return res.status(400).json({ error: 'amount is required' })
+  let file_name = null, file_path = null, mime = null
+  if (req.file) {
+    const dir = join(CAM_DOCS_DIR, String(prop.id))
+    try { mkdirSync(dir, { recursive: true }) } catch (_) {}
+    const safe  = (req.file.originalname || 'invoice').replace(/[^\w.\-]+/g, '_')
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+    file_path = join(dir, `${stamp}-${safe}`)
+    try { writeFileSync(file_path, req.file.buffer) } catch (e) { return res.status(500).json({ error: e.message }) }
+    file_name = req.file.originalname || safe
+    mime = req.file.mimetype || null
+  }
+  const info = db.prepare(
+    `INSERT INTO property_cam_invoices (property_id, vendor, description, amount, invoice_date, paid_date, file_name, file_path, mime, notes)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`
+  ).run(prop.id, b.vendor || null, b.description || null, amount, b.invoice_date || null, b.paid_date || null, file_name, file_path, mime, b.notes || null)
+  res.json(db.prepare('SELECT * FROM property_cam_invoices WHERE id = ?').get(info.lastInsertRowid))
+})
+
+// POST /:propertyId/cam-invoices/parse — read a CAM/vendor invoice with AI and
+// return the fields to prefill the add form. Does NOT save anything; the client
+// reviews the values then submits the upload as usual.
+router.post('/:propertyId/cam-invoices/parse', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  const mediaType = req.file.mimetype || 'application/pdf'
+  const prompt = `You are extracting key fields from a vendor invoice for property work (Common Area Maintenance — e.g. landscaping, snow removal, parking-lot repair, janitorial, roofing). Return ONLY a valid JSON object with these exact fields — no explanation, no markdown:
+
+{
+  "vendor": "",
+  "description": "",
+  "amount": "",
+  "invoice_date": "",
+  "paid_date": ""
+}
+
+- vendor: the company that issued the invoice (the biller/payee), not the property owner.
+- description: a short summary of the work performed (a few words).
+- amount: the TOTAL amount due on the invoice, as a plain number with no $ sign or commas (e.g. 1250.00).
+- invoice_date: the invoice date in YYYY-MM-DD format. If only a service/period date is present, use that.
+- paid_date: the date paid in YYYY-MM-DD format if the invoice is marked paid; otherwise "".
+Extract exact values as they appear. Leave a field as "" if it is not present.`
+
+  try {
+    let pdfBuffer = req.file.buffer
+    if (mediaType === 'application/pdf') {
+      const srcDoc = await PDFDocument.load(pdfBuffer)
+      const total  = srcDoc.getPageCount()
+      if (total > 20) {
+        const trimDoc = await PDFDocument.create()
+        const pages   = await trimDoc.copyPages(srcDoc, [...Array(20).keys()])
+        pages.forEach(p => trimDoc.addPage(p))
+        pdfBuffer = Buffer.from(await trimDoc.save())
+      }
+    }
+    const result = await callClaude(pdfBuffer, mediaType, prompt)
+    const raw  = result.content[0].text.trim()
+    const json = raw.replace(/^```json\s*/i, '').replace(/\s*```$/, '')
+    const data = JSON.parse(json)
+    // Normalize the amount to a bare number if the model included symbols.
+    if (data.amount != null) {
+      const n = String(data.amount).replace(/[^0-9.\-]/g, '')
+      data.amount = n === '' ? '' : n
+    }
+    res.json(data)
+  } catch (err) {
+    console.error('[management] CAM invoice parse error:', err.message)
+    res.status(422).json({ error: 'Could not parse invoice: ' + err.message })
+  }
+})
+
+router.put('/cam-invoices/:id', (req, res) => {
+  const inv = db.prepare('SELECT * FROM property_cam_invoices WHERE id = ?').get(req.params.id)
+  if (!inv) return res.status(404).json({ error: 'Invoice not found' })
+  const b = req.body || {}
+  const amount = b.amount !== undefined ? reimbNum(b.amount) : inv.amount
+  db.prepare(
+    `UPDATE property_cam_invoices SET vendor = ?, description = ?, amount = ?, invoice_date = ?, paid_date = ?, notes = ?, updated_at = datetime('now') WHERE id = ?`
+  ).run(
+    b.vendor !== undefined ? b.vendor : inv.vendor,
+    b.description !== undefined ? b.description : inv.description,
+    amount == null ? inv.amount : amount,
+    b.invoice_date !== undefined ? b.invoice_date : inv.invoice_date,
+    b.paid_date !== undefined ? b.paid_date : inv.paid_date,
+    b.notes !== undefined ? b.notes : inv.notes,
+    inv.id
+  )
+  res.json(db.prepare('SELECT * FROM property_cam_invoices WHERE id = ?').get(inv.id))
+})
+
+router.get('/cam-invoices/:id/file', (req, res) => {
+  const d = db.prepare('SELECT file_name, file_path, mime FROM property_cam_invoices WHERE id = ?').get(req.params.id)
+  if (!d || !d.file_path || !existsSync(d.file_path)) return res.status(404).json({ error: 'File not found' })
+  res.setHeader('Content-Type', d.mime || 'application/octet-stream')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Content-Disposition', `inline; filename="${(d.file_name || 'invoice').replace(/"/g, '')}"`)
+  createReadStream(d.file_path).pipe(res)
+})
+
+router.delete('/cam-invoices/:id', (req, res) => {
+  const d = db.prepare('SELECT file_path FROM property_cam_invoices WHERE id = ?').get(req.params.id)
+  if (!d) return res.status(404).json({ error: 'Invoice not found' })
+  if (d.file_path) { try { unlink(d.file_path, () => {}) } catch (_) {} }
+  db.prepare('DELETE FROM property_cam_invoices WHERE id = ?').run(req.params.id)
+  res.status(204).end()
+})
+
+// ── Per-type reimbursement status (dashboard net card) ────────────────────────
+// PATCH /:propertyId/expense-reimbursement/:type  { year, status }
+//   status 'reimbursed' → mark paid back for that type·year
+//   status 'limbo'      → still waiting; keep unreimbursed, set next check +30d
+// Insurance additionally back-syncs the policy flag + closes its follow-up task
+// so Brad's Insurance-tab UI stays consistent with the dashboard.
+router.patch('/:propertyId/expense-reimbursement/:type', (req, res) => {
+  const type = req.params.type
+  if (!EXPENSE_TYPES.includes(type)) return res.status(400).json({ error: 'invalid expense type' })
+  const status = req.body?.status
+  if (status !== 'reimbursed' && status !== 'limbo') {
+    return res.status(400).json({ error: "status must be 'reimbursed' or 'limbo'" })
+  }
+  const year = parseInt(req.body?.year, 10)
+  if (!year) return res.status(400).json({ error: 'year is required' })
+  const propId = req.params.propertyId
+  const stamp = today()
+
+  const apply = db.transaction(() => {
+    if (status === 'reimbursed') {
+      db.prepare(
+        `INSERT INTO property_expense_reimbursements (property_id, expense_type, year, status, reimbursed_date, next_check)
+         VALUES (?,?,?, 'reimbursed', ?, NULL)
+         ON CONFLICT(property_id, expense_type, year)
+         DO UPDATE SET status='reimbursed', reimbursed_date=excluded.reimbursed_date, next_check=NULL, updated_at=datetime('now')`
+      ).run(propId, type, year, stamp)
+      if (type === 'insurance') {
+        db.prepare(`UPDATE property_insurance SET reimbursed_status = 'reimbursed', reimbursed_date = ? WHERE property_id = ? AND paid_status = 'paid'`).run(stamp, propId)
+        db.prepare(`UPDATE property_tasks SET completed_at = datetime('now') WHERE property_id = ? AND completed_at IS NULL AND title = ?`).run(propId, REIMB_CHECK_TITLE)
+      } else if (type === 'tax') {
+        db.prepare(`UPDATE property_taxes SET reimbursed_status = 'reimbursed', reimbursed_date = ? WHERE property_id = ? AND tax_year = ?`).run(stamp, propId, year)
+      }
+    } else {
+      const next = addDays(stamp, 30)
+      db.prepare(
+        `INSERT INTO property_expense_reimbursements (property_id, expense_type, year, status, reimbursed_date, next_check)
+         VALUES (?,?,?, 'unreimbursed', NULL, ?)
+         ON CONFLICT(property_id, expense_type, year)
+         DO UPDATE SET status='unreimbursed', reimbursed_date=NULL, next_check=excluded.next_check, updated_at=datetime('now')`
+      ).run(propId, type, year, next)
+      if (type === 'insurance') {
+        db.prepare(`UPDATE property_insurance SET reimbursed_status = 'unreimbursed', reimbursed_date = NULL WHERE property_id = ?`).run(propId)
+      } else if (type === 'tax') {
+        db.prepare(`UPDATE property_taxes SET reimbursed_status = 'unreimbursed', reimbursed_date = NULL WHERE property_id = ? AND tax_year = ?`).run(propId, year)
+      }
+    }
+  })
+  apply()
+  res.json(db.prepare('SELECT * FROM property_expense_reimbursements WHERE property_id = ? AND expense_type = ? AND year = ?').get(propId, type, year))
 })
 
 export default router
