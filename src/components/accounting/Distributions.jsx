@@ -1,9 +1,10 @@
 // Investor Distributions — record and track payouts per property
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Loader2, Trash2, X, HandCoins, AlertCircle } from 'lucide-react'
+import { Plus, Loader2, Trash2, X, HandCoins, AlertCircle, Mail } from 'lucide-react'
 import Button from '../ui/Button'
 import { Input, Select, Textarea } from '../ui/Input'
 import { getPropertyDistributions, createDistribution, deleteDistribution } from '../../api/client'
+import InvestorClosingEmailModal from './InvestorClosingEmailModal'
 
 const TYPES = ['Preferred Return', 'Principal', 'Profit']
 
@@ -107,6 +108,7 @@ export default function Distributions({ propertyId, property }) {
   const [data, setData]         = useState({ distributions: [], investors: [] })
   const [loading, setLoading]   = useState(true)
   const [showAdd, setShowAdd]   = useState(false)
+  const [showEmail, setShowEmail] = useState(false)
   const [deleting, setDeleting] = useState(null)
   const [error, setError]       = useState(null)
 
@@ -193,9 +195,16 @@ export default function Distributions({ propertyId, property }) {
             </p>
           )}
         </div>
-        <Button onClick={() => setShowAdd(true)} disabled={investors.length === 0}>
-          <Plus className="w-4 h-4" /> Record Distribution
-        </Button>
+        <div className="flex items-center gap-2">
+          <button onClick={() => setShowEmail(true)} disabled={distributions.length === 0}
+            title="Draft and send each investor their expected return from the sale"
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg px-3 py-2 hover:bg-slate-50 disabled:opacity-40">
+            <Mail className="w-4 h-4" /> Email Investors
+          </button>
+          <Button onClick={() => setShowAdd(true)} disabled={investors.length === 0}>
+            <Plus className="w-4 h-4" /> Record Distribution
+          </Button>
+        </div>
       </div>
 
       {error && (
@@ -309,6 +318,10 @@ export default function Distributions({ propertyId, property }) {
 
       {showAdd && (
         <RecordModal propertyId={propertyId} investors={investors} onSaved={load} onClose={() => setShowAdd(false)} />
+      )}
+
+      {showEmail && (
+        <InvestorClosingEmailModal propertyId={propertyId} property={property} onClose={() => setShowEmail(false)} />
       )}
     </div>
   )

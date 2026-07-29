@@ -1658,6 +1658,105 @@ router.post('/:propertyId/email-bundle', async (req, res) => {
   }
 })
 
+// ── Investor closing emails ───────────────────────────────────────────────────
+// Per-investor sale returns (capital + pref + carry) with resolved emails, so the
+// closing email can be personalized. Groups by global investor (one email each,
+// even if they hold a GP + LP position).
+router.get('/:propertyId/investor-returns', (req, res) => {
+  const pid = req.params.propertyId
+  const rows = db.prepare(`
+    SELECT d.investor_id, i.name, i.email,
+           SUM(CASE WHEN d.distribution_type = 'Principal'        THEN d.amount ELSE 0 END) AS capital,
+           SUM(CASE WHEN d.distribution_type = 'Preferred Return' THEN d.amount ELSE 0 END) AS pref,
+           SUM(CASE WHEN d.distribution_type = 'Profit'           THEN d.amount ELSE 0 END) AS carry,
+           SUM(d.amount) AS total
+    FROM investor_distributions d
+    JOIN investors i ON i.id = d.investor_id
+    WHERE d.property_id = ?
+    GROUP BY d.investor_id
+    ORDER BY total DESC
+  `).all(pid)
+  const contactStmt = db.prepare(`SELECT name, email FROM investor_contacts WHERE investor_id = ? AND email IS NOT NULL AND email != ''`)
+  for (const r of rows) {
+    const emails = []
+    if (r.email) emails.push(r.email)
+    for (const c of contactStmt.all(r.investor_id)) if (c.email && !emails.includes(c.email)) emails.push(c.email)
+    r.emails = emails
+    r.email  = emails[0] || ''
+    r.contribution = null
+  }
+  // Contribution (invested) per investor from the cap table
+  const contrib = db.prepare(`SELECT investor_id, SUM(contribution) AS c FROM property_investors WHERE property_id = ? AND investor_id IS NOT NULL GROUP BY investor_id`).all(pid)
+  const cmap = new Map(contrib.map(r => [r.investor_id, r.c]))
+  for (const r of rows) r.contribution = cmap.get(r.investor_id) ?? null
+  res.json(rows)
+})
+
+const INVESTOR_EMAIL_PROMPT = `You draft a warm, professional email from a real-estate sponsor (Knox Capital) to an investor when a property they invested in has just SOLD.
+
+Write a REUSABLE TEMPLATE that will be sent to every investor — keep these merge tokens EXACTLY as written so each investor's numbers can be filled in:
+{{first_name}} — investor's first name / greeting
+{{property}} — property name/address
+{{total}} — their total expected distribution
+{{capital}} — return of capital
+{{pref}} — preferred return
+{{carry}} — profit / carry
+
+Requirements:
+- Congratulatory, appreciative tone; concise.
+- Present their expected return, ideally broken out (return of capital, preferred return, profit) then the total.
+- CLEARLY state these figures are ESTIMATES and that all disbursements must be VERIFIED before any funds are sent — no money moves until final verification.
+- End with a friendly sign-off from the Knox Capital team.
+- Do NOT invent specific dollar amounts, dates, or wiring details — use the tokens.
+
+Respond with ONLY a JSON object: {"subject": "...", "body": "..."}. The body is plain text with \\n line breaks and the merge tokens.`
+
+router.post('/:propertyId/draft-investor-email', async (req, res) => {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set' })
+  const b = req.body || {}
+  const prop = db.prepare('SELECT address, city, state FROM properties WHERE id = ?').get(req.params.propertyId)
+  const propName = prop ? [prop.address, prop.city, prop.state].filter(Boolean).join(', ') : 'the property'
+  const context = [
+    `Property: ${propName}`,
+    b.current_subject ? `Current subject: ${b.current_subject}` : '',
+    b.current_body ? `Current draft to revise:\n${b.current_body}` : '',
+    b.instructions ? `The sponsor wants these changes / additions: ${b.instructions}` : 'Write a fresh first draft.',
+  ].filter(Boolean).join('\n\n')
+  try {
+    const result = await callClaudeTextJson(apiKey, context, INVESTOR_EMAIL_PROMPT)
+    res.json({ ok: true, subject: result.subject || '', body: result.body || '' })
+  } catch (err) {
+    console.error('[accounting] draft-investor-email:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// Send the (client-merged) per-investor closing emails through the connected
+// Google account. Each send is the sponsor's explicit action, confirmed in the UI.
+router.post('/:propertyId/email-investors', async (req, res) => {
+  const b = req.body || {}
+  const sends = Array.isArray(b.sends) ? b.sends : []
+  if (!sends.length) return res.status(400).json({ error: 'No recipients' })
+  const results = { sent: 0, failed: [] }
+  for (const s of sends) {
+    if (!s.to) { results.failed.push({ name: s.name, error: 'no email' }); continue }
+    try {
+      await sendMail({
+        to: String(s.to).trim(),
+        from: b.from ? String(b.from).trim() : undefined,
+        replyTo: b.from ? String(b.from).trim() : undefined,
+        subject: s.subject || 'Your investment update',
+        text: s.body || '',
+      })
+      results.sent++
+    } catch (e) {
+      results.failed.push({ name: s.name, to: s.to, error: e.message })
+    }
+  }
+  res.json({ ok: true, ...results })
+})
+
 // ── Reconcile book cash to the actual bank balance ────────────────────────────
 // Posts a single 'Cash Adjustment' entry for (target − current book cash) so the
 // ledger cash lands exactly on the real bank balance. Fixes botched imports /
