@@ -17,7 +17,7 @@ import {
   getProperty,
   getPropertyTasks,      createTask,        updateTask,        completeTask,    deleteTask,
   getPropertyInsurance,  createInsurance,   updateInsurance,   deleteInsurance, uploadInsurancePdf, uploadInsuranceDoc, markInsurancePaid,
-  getPropertyTaxes,      createTax,         updateTax,         deleteTax,
+  getPropertyTaxes,      createTax,         updateTax,         deleteTax,        uploadTaxPdf, uploadTaxDoc,
   getPropertyMaintenance, createMaintenance, updateMaintenance, deleteMaintenance,
   getPropertyContacts,   createContact,     updateContact,     deleteContact,
 } from '../../api/client'
@@ -359,6 +359,20 @@ const INS_EMPTY = {
   effective_date: '', expiry_date: '', auto_renewal: false,
   agent_name: '', agent_phone: '', agent_email: '', notes: '',
 }
+
+const TAX_REVIEW_SECTIONS = [
+  { label: 'BILL', fields: [
+    { key: 'tax_year',         label: 'Tax Year'         },
+    { key: 'taxing_authority', label: 'Taxing Authority' },
+    { key: 'parcel_number',    label: 'Parcel Number'    },
+  ]},
+  { label: 'AMOUNTS & DATES', fields: [
+    { key: 'amount',      label: 'Amount'      },
+    { key: 'due_date',    label: 'Due Date'    },
+    { key: 'paid_amount', label: 'Paid Amount' },
+    { key: 'paid_date',   label: 'Paid Date'   },
+  ]},
+]
 
 function parseAmount(str) {
   if (str == null || str === '') return ''
@@ -849,6 +863,11 @@ function TaxesSection({ propertyId }) {
   const [modal, setModal]     = useState(null)
   const [form, setForm]       = useState({})
   const [saving, setSaving]   = useState(false)
+  const [uploading, setUploading]         = useState(false)
+  const [parseError, setParseError]       = useState(null)
+  const [extractedData, setExtractedData] = useState(null)
+  const [parsedFile, setParsedFile]       = useState(null) // uploaded bill, kept to auto-attach on save
+  const fileInputRef                      = useRef(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -866,6 +885,61 @@ function TaxesSection({ propertyId }) {
   function openAdd() { setForm(EMPTY); setModal('add') }
   function openEdit(t) { setForm({ ...EMPTY, ...t }); setModal(t) }
   const set = f => e => setForm(prev => ({ ...prev, [f]: e.target.value }))
+
+  function handleUploadClick() {
+    setParseError(null)
+    fileInputRef.current?.click()
+  }
+
+  async function processTaxFile(file) {
+    if (!file) return
+    setUploading(true)
+    setParseError(null)
+    try {
+      const data = await uploadTaxPdf(propertyId, file)
+      setExtractedData(data)
+      setParsedFile(file)   // keep it so we can attach it as the tax bill on save
+    } catch (err) {
+      setParseError(err.message)
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  function handleFileSelected(e) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    processTaxFile(file)
+  }
+
+  async function handleSaveExtracted() {
+    const d = extractedData
+    const payload = {
+      tax_year:         parseInt(String(d.tax_year || '').replace(/[^\d]/g, ''), 10) || new Date().getFullYear(),
+      due_date:         toYMD(d.due_date),
+      amount:           parseAmount(d.amount),
+      paid_date:        toYMD(d.paid_date),
+      paid_amount:      parseAmount(d.paid_amount),
+      parcel_number:    d.parcel_number    || '',
+      taxing_authority: d.taxing_authority || '',
+      notes:            '',
+    }
+    setSaving(true)
+    try {
+      const created = await createTax(propertyId, payload)
+      // Attach the parsed bill to the tax record.
+      if (created?.id && parsedFile) {
+        try { await uploadTaxDoc(created.id, parsedFile, 'Tax Bill') } catch (_) {}
+      }
+      setExtractedData(null)
+      setParsedFile(null)
+      await load()
+    } catch (err) {
+      alert('Error saving: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   async function handleSave(e) {
     e.preventDefault()
@@ -893,11 +967,45 @@ function TaxesSection({ propertyId }) {
       icon={Receipt}
       title={`Property Taxes (${taxes.length})`}
       actions={
-        <button onClick={openAdd} className="flex items-center gap-1 text-xs text-blue-600 hover:underline font-medium">
-          <Plus className="w-3 h-3" /> Add tax record
-        </button>
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,image/*"
+            className="hidden"
+            onChange={handleFileSelected}
+          />
+          <button
+            onClick={handleUploadClick}
+            onDragOver={e => e.preventDefault()}
+            onDrop={e => { e.preventDefault(); processTaxFile(e.dataTransfer.files?.[0]) }}
+            disabled={uploading}
+            title="Upload or drag-and-drop a tax bill PDF"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 hover:border-blue-300 transition-colors disabled:opacity-60"
+          >
+            {uploading
+              ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Parsing bill…</>
+              : <><FileUp className="w-3.5 h-3.5" /> Upload tax bill</>
+            }
+          </button>
+          <button onClick={openAdd} className="flex items-center gap-1 text-xs text-blue-600 hover:underline font-medium">
+            <Plus className="w-3 h-3" /> Add manually
+          </button>
+        </>
       }
     >
+      {/* Upload parse error banner */}
+      {parseError && (
+        <div className="flex items-start gap-2 px-3 py-2.5 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+          <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
+          <div>
+            <p className="font-semibold">Could not parse tax bill</p>
+            <p>{parseError}</p>
+          </div>
+          <button onClick={() => setParseError(null)} className="ml-auto text-red-400 hover:text-red-600">✕</button>
+        </div>
+      )}
+
       {loading ? <p className="text-sm text-slate-400">Loading…</p> : (
         taxes.length === 0
           ? <p className="text-sm text-slate-400 py-2">No tax records on file.</p>
@@ -942,6 +1050,49 @@ function TaxesSection({ propertyId }) {
             </div>
           )
       )}
+
+      {/* Extraction review modal — shown after tax bill parse, before saving */}
+      <Modal
+        isOpen={!!extractedData}
+        onClose={() => { setExtractedData(null); setParsedFile(null) }}
+        title="Extracted Tax Bill Data"
+        size="md"
+      >
+        <div className="px-6 py-5 space-y-5">
+          <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+            Review the information extracted from the tax bill, then click <strong>Save Tax Record</strong> to add it to this property. The bill will be attached.
+          </p>
+
+          <div className="grid grid-cols-2 gap-x-6 gap-y-5">
+            {TAX_REVIEW_SECTIONS.map(section => (
+              <div key={section.label}>
+                <div className="text-[10px] font-semibold tracking-widest text-slate-400 uppercase mb-2 pb-1.5 border-b border-slate-100">
+                  {section.label}
+                </div>
+                <table className="w-full text-xs">
+                  <tbody>
+                    {section.fields.map(f => (
+                      <tr key={f.key} className="border-b border-slate-50 last:border-0">
+                        <td className="py-1 pr-4 text-slate-500 whitespace-nowrap w-2/5">{f.label}</td>
+                        <td className="py-1 text-slate-900 font-medium">
+                          {extractedData?.[f.key] || <span className="text-slate-300">—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex justify-end gap-2 pt-1 border-t border-slate-100">
+            <Button type="button" variant="secondary" onClick={() => { setExtractedData(null); setParsedFile(null) }}>Discard</Button>
+            <Button type="button" disabled={saving} onClick={handleSaveExtracted}>
+              {saving ? 'Saving…' : 'Save Tax Record'}
+            </Button>
+          </div>
+        </div>
+      </Modal>
 
       <Modal isOpen={!!modal} onClose={() => setModal(null)} title={modal === 'add' ? 'Add Tax Record' : 'Edit Tax Record'} size="md">
         <form onSubmit={handleSave} className="px-6 py-5 space-y-3">

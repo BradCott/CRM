@@ -786,6 +786,58 @@ router.get('/:propertyId/taxes', (req, res) => {
   res.json(db.prepare('SELECT * FROM property_taxes WHERE property_id = ? ORDER BY tax_year DESC, due_date DESC').all(req.params.propertyId))
 })
 
+// POST /:propertyId/taxes/upload — parse a property tax bill with AI (no save).
+// Mirrors the insurance upload route: returns extracted fields for review.
+router.post('/:propertyId/taxes/upload', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+
+  const mediaType = req.file.mimetype || 'application/pdf'
+  const prompt = `You are extracting key information from a commercial property tax bill / statement. Return ONLY a valid JSON object with these exact fields — no explanation, no markdown:
+
+{
+  "tax_year": "",
+  "due_date": "",
+  "amount": "",
+  "paid_date": "",
+  "paid_amount": "",
+  "parcel_number": "",
+  "taxing_authority": ""
+}
+
+For tax_year: the tax year the bill is for (a 4-digit year like 2025).
+For due_date: the payment due date, formatted YYYY-MM-DD. If several installments, use the earliest due date.
+For amount: the total tax amount owed for the year, as a bare number with no $ or commas.
+For paid_date: only if the bill clearly shows it was already paid, formatted YYYY-MM-DD; otherwise "".
+For paid_amount: only if already paid, the amount paid as a bare number; otherwise "".
+For parcel_number: the parcel / account / property ID number as shown.
+For taxing_authority: the county, city, or district issuing the bill (e.g. "Dallas County Tax Office").
+Extract exact values as they appear in the document. Use "" for anything not found.`
+
+  try {
+    let pdfBuffer = req.file.buffer
+    if (mediaType === 'application/pdf') {
+      const srcDoc = await PDFDocument.load(pdfBuffer)
+      const total  = srcDoc.getPageCount()
+      if (total > 20) {
+        const trimDoc = await PDFDocument.create()
+        const pages   = await trimDoc.copyPages(srcDoc, [...Array(20).keys()])
+        pages.forEach(p => trimDoc.addPage(p))
+        pdfBuffer = Buffer.from(await trimDoc.save())
+        console.log(`[management] tax PDF truncated from ${total} to 20 pages`)
+      }
+    }
+
+    const result = await callClaude(pdfBuffer, mediaType, prompt)
+    const raw  = result.content[0].text.trim()
+    const json = raw.replace(/^```json\s*/i, '').replace(/\s*```$/, '')
+    const data = JSON.parse(json)
+    res.json(data)
+  } catch (err) {
+    console.error('[management] tax upload parse error:', err.message)
+    res.status(422).json({ error: 'Could not parse tax document: ' + err.message })
+  }
+})
+
 router.post('/:propertyId/taxes', (req, res) => {
   const f = req.body
   const r = db.prepare(`
@@ -868,6 +920,45 @@ router.put('/taxes/:id', (req, res) => {
 router.delete('/taxes/:id', (req, res) => {
   db.prepare('DELETE FROM property_taxes WHERE id = ?').run(req.params.id)
   res.status(204).end()
+})
+
+// ── Tax documents (the uploaded tax bill) ─────────────────────────────────────
+const TAX_DOCS_DIR = join(DATA_DIR, 'tax-docs')
+
+router.get('/taxes/:id/documents', (req, res) => {
+  res.json(db.prepare(`SELECT id, doc_type, file_name, mime, created_at FROM tax_documents WHERE tax_id = ? ORDER BY created_at DESC`).all(req.params.id))
+})
+
+router.post('/taxes/:id/documents', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  const tax = db.prepare('SELECT id FROM property_taxes WHERE id = ?').get(req.params.id)
+  if (!tax) return res.status(404).json({ error: 'Tax record not found' })
+  const dir = join(TAX_DOCS_DIR, String(tax.id))
+  try { mkdirSync(dir, { recursive: true }) } catch (_) {}
+  const safe  = (req.file.originalname || 'document').replace(/[^\w.\-]+/g, '_')
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const filePath = join(dir, `${stamp}-${safe}`)
+  try { writeFileSync(filePath, req.file.buffer) } catch (e) { return res.status(500).json({ error: e.message }) }
+  db.prepare(`INSERT INTO tax_documents (tax_id, doc_type, file_name, file_path, mime) VALUES (?, ?, ?, ?, ?)`)
+    .run(tax.id, String(req.body?.doc_type || 'Tax Bill').slice(0, 40), req.file.originalname || safe, filePath, req.file.mimetype || null)
+  res.json({ ok: true })
+})
+
+router.get('/taxes/:id/documents/:docId/file', (req, res) => {
+  const d = db.prepare(`SELECT file_name, file_path, mime FROM tax_documents WHERE id = ? AND tax_id = ?`).get(req.params.docId, req.params.id)
+  if (!d || !d.file_path || !existsSync(d.file_path)) return res.status(404).json({ error: 'Document not found' })
+  res.setHeader('Content-Type', d.mime || 'application/octet-stream')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Content-Disposition', `inline; filename="${(d.file_name || 'document').replace(/"/g, '')}"`)
+  createReadStream(d.file_path).pipe(res)
+})
+
+router.delete('/taxes/:id/documents/:docId', (req, res) => {
+  const d = db.prepare(`SELECT file_path FROM tax_documents WHERE id = ? AND tax_id = ?`).get(req.params.docId, req.params.id)
+  if (!d) return res.status(404).json({ error: 'Document not found' })
+  if (d.file_path) { try { unlink(d.file_path, () => {}) } catch (_) {} }
+  db.prepare(`DELETE FROM tax_documents WHERE id = ?`).run(req.params.docId)
+  res.json({ ok: true })
 })
 
 // ── Maintenance ───────────────────────────────────────────────────────────────

@@ -476,6 +476,19 @@ export const getPropertyTaxes  = (propId)      => req('GET',    `/management/${p
 export const createTax         = (propId, data) => req('POST',   `/management/${propId}/taxes`, data)
 export const updateTax         = (id, data)     => req('PUT',    `/management/taxes/${id}`, data)
 export const deleteTax         = (id)           => req('DELETE', `/management/taxes/${id}`)
+export async function uploadTaxPdf(propId, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return req('POST', `/management/${propId}/taxes/upload`, fd)
+}
+// Tax documents (the uploaded tax bill)
+export const getTaxDocuments = (taxId)        => req('GET',    `/management/taxes/${taxId}/documents`)
+export const taxDocUrl       = (taxId, docId) => `${BASE}/management/taxes/${taxId}/documents/${docId}/file`
+export const deleteTaxDoc    = (taxId, docId) => req('DELETE', `/management/taxes/${taxId}/documents/${docId}`)
+export async function uploadTaxDoc(taxId, file, docType) {
+  const fd = new FormData(); fd.append('file', file); if (docType) fd.append('doc_type', docType)
+  return req('POST', `/management/taxes/${taxId}/documents`, fd)
+}
 
 // Maintenance
 export const getPropertyMaintenance  = (propId)      => req('GET',    `/management/${propId}/maintenance`)

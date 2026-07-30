@@ -815,6 +815,20 @@ const migrations = [
     UNIQUE(property_id, expense_type, year)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_exp_reimb_property ON property_expense_reimbursements(property_id, year)`,
+
+  // Documents attached to a property tax record — the uploaded tax bill (and any
+  // proof of payment). Mirrors insurance_documents so tax bills can be stored and
+  // served the same way.
+  `CREATE TABLE IF NOT EXISTS tax_documents (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    tax_id     INTEGER NOT NULL REFERENCES property_taxes(id) ON DELETE CASCADE,
+    doc_type   TEXT DEFAULT 'Other',
+    file_name  TEXT,
+    file_path  TEXT,
+    mime       TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_tax_docs ON tax_documents(tax_id)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────
