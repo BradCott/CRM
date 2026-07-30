@@ -222,6 +222,23 @@ export default function ReconciliationSection({ propertyId }) {
                   </div>
                 </div>
 
+                {id === 'tax' && (
+                  <label className="flex items-start gap-2 text-xs text-slate-600 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={!!setting.tax_arrears}
+                      onChange={e => patchSetting(id, { tax_arrears: e.target.checked })}
+                      className="mt-0.5 rounded border-slate-300 text-blue-600 focus:ring-blue-500"
+                    />
+                    <span>
+                      Taxes paid in arrears
+                      {setting.tax_arrears
+                        ? ` — reconciling ${year} pulls the ${year - 1} tax bill.`
+                        : ''}
+                    </span>
+                  </label>
+                )}
+
                 {!isInstall ? (
                   <p className="flex items-start gap-1.5 text-xs text-slate-500">
                     <Info className="w-3.5 h-3.5 mt-px shrink-0 text-slate-400" />

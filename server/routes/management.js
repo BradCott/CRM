@@ -1765,6 +1765,20 @@ function collectedTotal(propertyId, expenseType, year) {
 //   insurance → sum of paid policy premiums whose coverage year matches
 //   tax       → sum of paid tax bills for that tax_year (paid_amount, else amount)
 //   cam       → null (CAM has no expense source yet)
+// True when a property's taxes are paid in arrears (the bill labeled tax_year
+// Y-1 is the one paid/recovered during year Y).
+function taxIsArrears(propertyId) {
+  const row = db.prepare(
+    `SELECT tax_arrears FROM property_expense_settings WHERE property_id = ? AND expense_type = 'tax'`
+  ).get(propertyId)
+  return !!(row && row.tax_arrears)
+}
+
+// The tax_year whose bill applies when reconciling/viewing `year` for a property.
+function taxYearFor(propertyId, year) {
+  return taxIsArrears(propertyId) ? year - 1 : year
+}
+
 function suggestedRecoverable(propertyId, expenseType, year) {
   if (expenseType === 'insurance') {
     const rows = db.prepare(
@@ -1784,7 +1798,7 @@ function suggestedRecoverable(propertyId, expenseType, year) {
     const rows = db.prepare(
       `SELECT paid_amount, amount FROM property_taxes
        WHERE property_id = ? AND tax_year = ? AND paid_date IS NOT NULL`
-    ).all(propertyId, year)
+    ).all(propertyId, taxYearFor(propertyId, year))
     let sum = 0, found = false
     for (const r of rows) {
       const amt = r.paid_amount != null ? Number(r.paid_amount)
@@ -1854,11 +1868,19 @@ function actualToDate(propertyId, expenseType, year, throughMonth) {
     const rows = db.prepare(
       `SELECT paid_amount, amount, paid_date FROM property_taxes
        WHERE property_id = ? AND tax_year = ? AND paid_date IS NOT NULL`
-    ).all(propertyId, year)
+    ).all(propertyId, taxYearFor(propertyId, year))
     let sum = 0
     for (const r of rows) {
-      const m = monthOf(r.paid_date)
-      if (m != null && m > throughMonth) continue
+      // Gate by month only within the viewing year; a payment made in an earlier
+      // calendar year (e.g. an arrears bill paid last December) has already
+      // happened, so it counts in full. A payment dated to a future year hasn't.
+      const py = /^\d{4}/.test(r.paid_date || '') ? parseInt(r.paid_date.slice(0, 4), 10) : null
+      if (py === year) {
+        const m = monthOf(r.paid_date)
+        if (m != null && m > throughMonth) continue
+      } else if (py != null && py > year) {
+        continue
+      }
       const amt = r.paid_amount != null ? Number(r.paid_amount)
                 : r.amount != null ? Number(r.amount) : 0
       sum += amt
@@ -1891,7 +1913,7 @@ router.get('/:propertyId/expense-settings', (req, res) => {
   res.json(EXPENSE_TYPES.map(t => byType[t] || {
     property_id: parseInt(req.params.propertyId, 10),
     expense_type: t, method: 'direct', monthly_estimate: null,
-    annual_budget: null, notes: null,
+    annual_budget: null, notes: null, tax_arrears: 0,
   }))
 })
 
@@ -1901,15 +1923,16 @@ router.put('/:propertyId/expense-settings/:type', (req, res) => {
   if (!EXPENSE_TYPES.includes(type)) return res.status(400).json({ error: 'invalid expense type' })
   const f = req.body
   const method = f.method === 'installments' ? 'installments' : 'direct'
+  const taxArrears = f.tax_arrears ? 1 : 0
   db.prepare(`
     INSERT INTO property_expense_settings
-      (property_id, expense_type, method, monthly_estimate, annual_budget, notes)
-    VALUES (?,?,?,?,?,?)
+      (property_id, expense_type, method, monthly_estimate, annual_budget, notes, tax_arrears)
+    VALUES (?,?,?,?,?,?,?)
     ON CONFLICT(property_id, expense_type) DO UPDATE SET
       method=excluded.method, monthly_estimate=excluded.monthly_estimate,
       annual_budget=excluded.annual_budget, notes=excluded.notes,
-      updated_at=datetime('now')
-  `).run(propertyId, type, method, reimbNum(f.monthly_estimate), reimbNum(f.annual_budget), f.notes || null)
+      tax_arrears=excluded.tax_arrears, updated_at=datetime('now')
+  `).run(propertyId, type, method, reimbNum(f.monthly_estimate), reimbNum(f.annual_budget), f.notes || null, taxArrears)
   res.json(db.prepare(
     'SELECT * FROM property_expense_settings WHERE property_id = ? AND expense_type = ?'
   ).get(propertyId, type))
