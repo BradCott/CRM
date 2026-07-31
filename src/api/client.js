@@ -476,6 +476,7 @@ export const getPropertyTaxes  = (propId)      => req('GET',    `/management/${p
 export const createTax         = (propId, data) => req('POST',   `/management/${propId}/taxes`, data)
 export const updateTax         = (id, data)     => req('PUT',    `/management/taxes/${id}`, data)
 export const deleteTax         = (id)           => req('DELETE', `/management/taxes/${id}`)
+export const markTaxPaid       = (id, paid)     => req('PATCH',  `/management/taxes/${id}/paid`, { paid })
 export async function uploadTaxPdf(propId, file) {
   const fd = new FormData()
   fd.append('file', file)

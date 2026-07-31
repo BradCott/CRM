@@ -922,6 +922,34 @@ router.delete('/taxes/:id', (req, res) => {
   res.status(204).end()
 })
 
+// PATCH /taxes/:id/paid — mark the tax bill paid (or undo), mirroring insurance.
+// Marking paid stamps paid_date (and paid_amount from the bill amount if blank)
+// and opens a reimbursement so it flows onto the dashboard "Awaiting
+// Reimbursement" card. Undo clears the paid stamp and drops an untouched one.
+router.patch('/taxes/:id/paid', (req, res) => {
+  const { paid } = req.body  // true = mark paid, false = undo
+  const t = db.prepare('SELECT * FROM property_taxes WHERE id = ?').get(req.params.id)
+  if (!t) return res.status(404).json({ error: 'Tax record not found' })
+
+  if (paid) {
+    const paidAmount = t.paid_amount != null ? t.paid_amount : t.amount
+    db.prepare(`UPDATE property_taxes SET paid_date = ?, paid_amount = ? WHERE id = ?`)
+      .run(today(), paidAmount, req.params.id)
+    ensureReimbursementForSource({
+      propertyId:    t.property_id,
+      sourceType:    'tax',
+      sourceId:      t.id,
+      year:          t.tax_year != null ? t.tax_year : new Date().getFullYear(),
+      expenseAmount: paidAmount,
+    })
+  } else {
+    db.prepare(`UPDATE property_taxes SET paid_date = NULL WHERE id = ?`).run(req.params.id)
+    removeUntouchedReimbursement('tax', t.id)
+  }
+
+  res.json(db.prepare('SELECT * FROM property_taxes WHERE id = ?').get(req.params.id))
+})
+
 // ── Tax documents (the uploaded tax bill) ─────────────────────────────────────
 const TAX_DOCS_DIR = join(DATA_DIR, 'tax-docs')
 
