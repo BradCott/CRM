@@ -1627,25 +1627,32 @@ router.get('/reimbursements', (req, res) => {
 })
 
 // GET /reimbursements/summary — outstanding dollar totals for the dashboard cards.
+// Portfolio-wide "awaiting reimbursement" totals per expense type. Computed with
+// the same net logic as the per-property dashboard (actual-to-date minus what
+// the tenant has paid in via installments), aggregated across all portfolio
+// properties. This covers CAM — which never writes to property_reimbursements —
+// and keeps all three widgets consistent, truly-net numbers.
 router.get('/reimbursements/summary', (req, res) => {
-  const rows = db.prepare(`
-    SELECT r.expense_type,
-           r.status,
-           r.recoverable_amount,
-           r.received_amount
-    FROM property_reimbursements r
-    JOIN properties p ON p.id = r.property_id
-    WHERE p.is_portfolio = 1
-      AND r.recovery_method = 'landlord_bills'
-      AND r.status NOT IN ('received','waived')
-  `).all()
+  const now = new Date()
+  const curYear = now.getFullYear()
+  const throughMonth = now.getMonth() + 1
   const acc = { tax: { count: 0, outstanding: 0 }, insurance: { count: 0, outstanding: 0 }, cam: { count: 0, outstanding: 0 } }
-  for (const r of rows) {
-    const bucket = acc[r.expense_type]
-    if (!bucket) continue
-    const outstanding = (r.recoverable_amount || 0) - (r.received_amount || 0)
-    bucket.count += 1
-    bucket.outstanding += outstanding > 0 ? outstanding : 0
+
+  const properties = db.prepare('SELECT id FROM properties WHERE is_portfolio = 1').all()
+  for (const p of properties) {
+    const settingsRows = db.prepare('SELECT expense_type, method FROM property_expense_settings WHERE property_id = ?').all(p.id)
+    const methodOf = Object.fromEntries(settingsRows.map(s => [s.expense_type, s.method]))
+    const reimbRows = db.prepare('SELECT expense_type, status FROM property_expense_reimbursements WHERE property_id = ? AND year = ?').all(p.id, curYear)
+    const reimbOf = Object.fromEntries(reimbRows.map(r => [r.expense_type, r]))
+
+    for (const type of EXPENSE_TYPES) {
+      if (reimbOf[type]?.status === 'reimbursed') continue   // already settled for the year
+      const method = methodOf[type] === 'installments' ? 'installments' : 'direct'
+      const actual = actualToDate(p.id, type, curYear, throughMonth)
+      const collected = method === 'installments' ? collectedToDate(p.id, type, curYear, throughMonth) : 0
+      const net = actual - collected
+      if (net > 0) { acc[type].count += 1; acc[type].outstanding += net }
+    }
   }
   res.json(acc)
 })
