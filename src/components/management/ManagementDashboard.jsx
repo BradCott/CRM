@@ -132,6 +132,7 @@ function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
 
   const taxReimb = reimbSummary?.tax       || { count: 0, outstanding: 0 }
   const insReimb = reimbSummary?.insurance || { count: 0, outstanding: 0 }
+  const camReimb = reimbSummary?.cam       || { count: 0, outstanding: 0 }
 
   const filteredProperties = search.trim()
     ? properties.filter(p => {
@@ -153,10 +154,11 @@ function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
         <StatCard icon={Receipt}       label="Maintenance YTD"      value={fmt(maintenance_spend_ytd)} color="slate" />
       </div>
       {/* Stats bar — row 2 */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <StatCard icon={CalendarClock} label="Tax Due (6 months)"              value={tax_due_6mo}           color={tax_due_6mo > 0 ? 'amber' : 'green'}  note="unpaid tax bills" />
         <StatCard icon={DollarSign}    label="Awaiting Tax Reimbursement"       value={fmt(taxReimb.outstanding)} color={taxReimb.outstanding > 0 ? 'amber' : 'green'} note={`${taxReimb.count} open · owed by tenants`} />
         <StatCard icon={DollarSign}    label="Awaiting Insurance Reimbursement" value={fmt(insReimb.outstanding)} color={insReimb.outstanding > 0 ? 'amber' : 'green'} note={`${insReimb.count} open · owed by tenants`} />
+        <StatCard icon={DollarSign}    label="Awaiting CAM Reimbursement"       value={fmt(camReimb.outstanding)} color={camReimb.outstanding > 0 ? 'amber' : 'green'} note={`${camReimb.count} open · owed by tenants`} />
       </div>
 
       {/* Alert banners (compact) */}

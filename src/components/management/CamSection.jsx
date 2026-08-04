@@ -29,6 +29,7 @@ export default function CamSection({ propertyId }) {
   const [parsed, setParsed]     = useState(false)
   const [error, setError]       = useState(null)
   const [busyId, setBusyId]     = useState(null)
+  const [batch, setBatch]       = useState(null) // { done, total } while processing multiple files
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -76,6 +77,36 @@ export default function CamSection({ propertyId }) {
         ? 'Auto-read isn’t available here — your invoice is still attached, just enter the details manually.'
         : 'Couldn’t auto-read this invoice — your file is still attached, just enter the details manually.')
     } finally { setParsing(false) }
+  }
+
+  // Multiple files dropped at once → parse each and create one invoice per file,
+  // attaching the file. Skips the single-file review step for speed.
+  async function onFiles(files) {
+    if (files.length === 1) return onFile(files[0])
+    setError(null); setParsed(false); setFile(null)
+    let created = 0
+    const failed = []
+    setBatch({ done: 0, total: files.length })
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]
+      let data = {}
+      try { data = await parseCamInvoice(propertyId, f) } catch { data = {} }
+      try {
+        await uploadCamInvoice(propertyId, f, {
+          vendor:       data.vendor       || '',
+          description:  data.description  || '',
+          amount:       data.amount       ?? '',
+          invoice_date: data.invoice_date || '',
+          paid_date:    data.paid_date    || '',
+          notes:        '',
+        })
+        created++
+      } catch (e) { failed.push(`${f.name}: ${e.message}`) }
+      setBatch({ done: i + 1, total: files.length })
+    }
+    setBatch(null)
+    if (failed.length) setError(`Added ${created} of ${files.length}. Failed: ${failed.join('; ')}`)
+    await load()
   }
 
   async function addInvoice() {
@@ -154,10 +185,12 @@ export default function CamSection({ propertyId }) {
         <div className="mt-3">
           <DropZone
             onFile={onFile}
+            onFiles={onFiles}
+            multiple
             accept=".pdf,image/*"
-            busy={parsing}
-            label={parsing ? 'Reading invoice…' : file ? `Attached: ${file.name}` : 'Drop the invoice PDF/image — we’ll auto-read the details'}
-            hint={parsing ? 'Extracting vendor, amount and date with AI' : 'Or click to browse. You can still edit anything it reads.'}
+            busy={parsing || !!batch}
+            label={batch ? `Processing ${batch.done} of ${batch.total}…` : parsing ? 'Reading invoice…' : file ? `Attached: ${file.name}` : 'Drop one or more invoice PDFs/images — we’ll auto-read the details'}
+            hint={batch ? 'Creating an invoice per file with the extracted details' : parsing ? 'Extracting vendor, amount and date with AI' : 'Or click to browse. Drop multiple files to add them all at once.'}
           />
           {parsed && !parsing && (
             <p className="text-[11px] text-emerald-600 mt-1.5">Auto-filled from the invoice — review the fields above before saving.</p>

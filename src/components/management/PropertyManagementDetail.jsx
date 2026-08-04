@@ -392,6 +392,7 @@ function InsuranceSection({ propertyId }) {
   const [parsedFile, setParsedFile]       = useState(null)   // the uploaded PDF, kept to auto-attach as the policy doc
   const [paidReceiptFor, setPaidReceiptFor] = useState(null) // insurance id to prompt a proof-of-payment upload
   const [receiptBusy, setReceiptBusy]     = useState(false)
+  const [batch, setBatch]                 = useState(null)    // { done, total } while processing multiple files
   const fileInputRef                      = useRef(null)
 
   const load = useCallback(async () => {
@@ -440,8 +441,7 @@ function InsuranceSection({ propertyId }) {
     processInsuranceFile(file)
   }
 
-  async function handleSaveExtracted() {
-    const d = extractedData
+  function buildInsurancePayload(d) {
     const extraLines = []
     if (d.named_insured)              extraLines.push(`Named Insured: ${d.named_insured}`)
     if (d.property_address)           extraLines.push(`Property Address: ${d.property_address}`)
@@ -454,7 +454,7 @@ function InsuranceSection({ propertyId }) {
     if (d.year_built)                 extraLines.push(`Year Built: ${d.year_built}`)
     if (d.valuation_method)           extraLines.push(`Valuation Method: ${d.valuation_method}`)
 
-    const payload = {
+    return {
       carrier:          d.insurance_company  || '',
       policy_number:    d.policy_number      || '',
       premium:          parseAmount(d.premium),
@@ -470,10 +470,12 @@ function InsuranceSection({ propertyId }) {
         ? JSON.stringify(d.premium_items.filter(i => i && (i.label || i.amount)))
         : null,
     }
+  }
 
+  async function handleSaveExtracted() {
     setSaving(true)
     try {
-      const created = await createInsurance(propertyId, payload)
+      const created = await createInsurance(propertyId, buildInsurancePayload(extractedData))
       // Attach the parsed PDF as the policy document so it's ready for the
       // tenant reimbursement email.
       if (created?.id && parsedFile) {
@@ -487,6 +489,29 @@ function InsuranceSection({ propertyId }) {
     } finally {
       setSaving(false)
     }
+  }
+
+  // Multiple files dropped at once → parse each and create one policy per file,
+  // attaching the PDF. Skips the single-file review modal for speed.
+  async function processInsuranceFiles(files) {
+    if (files.length === 1) return processInsuranceFile(files[0])
+    setParseError(null)
+    let created = 0
+    const failed = []
+    setBatch({ done: 0, total: files.length })
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]
+      try {
+        const data = await uploadInsurancePdf(propertyId, f)
+        const rec = await createInsurance(propertyId, buildInsurancePayload(data))
+        if (rec?.id) { try { await uploadInsuranceDoc(rec.id, f, 'Policy') } catch (_) {} }
+        created++
+      } catch (e) { failed.push(`${f.name}: ${e.message}`) }
+      setBatch({ done: i + 1, total: files.length })
+    }
+    setBatch(null)
+    if (failed.length) setParseError(`Added ${created} of ${files.length}. Failed: ${failed.join('; ')}`)
+    await load()
   }
 
   const set = f => e => setForm(prev => ({
@@ -575,10 +600,12 @@ function InsuranceSection({ propertyId }) {
       {/* Drag-and-drop upload area */}
       <DropZone
         onFile={processInsuranceFile}
+        onFiles={processInsuranceFiles}
+        multiple
         accept=".pdf,image/*"
-        busy={uploading}
-        label={uploading ? 'Parsing policy…' : 'Drop an insurance policy PDF/image — we’ll auto-read the details'}
-        hint={uploading ? 'Extracting policy details with AI' : 'Or click to browse. You can still edit anything it reads.'}
+        busy={uploading || !!batch}
+        label={batch ? `Processing ${batch.done} of ${batch.total}…` : uploading ? 'Parsing policy…' : 'Drop one or more insurance policy PDFs/images — we’ll auto-read the details'}
+        hint={batch ? 'Creating a policy per file with the extracted details' : uploading ? 'Extracting policy details with AI' : 'Or click to browse. Drop multiple files to add them all at once.'}
       />
 
       {loading ? <p className="text-sm text-slate-400">Loading…</p> : (
@@ -878,6 +905,7 @@ function TaxesSection({ propertyId }) {
   const [parsedFile, setParsedFile]       = useState(null) // uploaded bill, kept to auto-attach on save
   const [docsByTax, setDocsByTax]         = useState({})    // { taxId: [documents] }
   const [busyPaid, setBusyPaid]           = useState(null)  // tax id whose paid toggle is in flight
+  const [batch, setBatch]                 = useState(null)  // { done, total } while processing multiple files
   const fileInputRef                      = useRef(null)
 
   const load = useCallback(async () => {
@@ -940,9 +968,8 @@ function TaxesSection({ propertyId }) {
     processTaxFile(file)
   }
 
-  async function handleSaveExtracted() {
-    const d = extractedData
-    const payload = {
+  function buildTaxPayload(d) {
+    return {
       tax_year:         parseInt(String(d.tax_year || '').replace(/[^\d]/g, ''), 10) || new Date().getFullYear(),
       due_date:         toYMD(d.due_date),
       amount:           parseAmount(d.amount),
@@ -952,9 +979,12 @@ function TaxesSection({ propertyId }) {
       taxing_authority: d.taxing_authority || '',
       notes:            '',
     }
+  }
+
+  async function handleSaveExtracted() {
     setSaving(true)
     try {
-      const created = await createTax(propertyId, payload)
+      const created = await createTax(propertyId, buildTaxPayload(extractedData))
       // Attach the parsed bill to the tax record.
       if (created?.id && parsedFile) {
         try { await uploadTaxDoc(created.id, parsedFile, 'Tax Bill') } catch (_) {}
@@ -967,6 +997,29 @@ function TaxesSection({ propertyId }) {
     } finally {
       setSaving(false)
     }
+  }
+
+  // Multiple files dropped at once → parse each and create one tax record per
+  // file, attaching the bill. Skips the single-file review modal for speed.
+  async function processTaxFiles(files) {
+    if (files.length === 1) return processTaxFile(files[0])
+    setParseError(null)
+    let created = 0
+    const failed = []
+    setBatch({ done: 0, total: files.length })
+    for (let i = 0; i < files.length; i++) {
+      const f = files[i]
+      try {
+        const data = await uploadTaxPdf(propertyId, f)
+        const rec = await createTax(propertyId, buildTaxPayload(data))
+        if (rec?.id) { try { await uploadTaxDoc(rec.id, f, 'Tax Bill') } catch (_) {} }
+        created++
+      } catch (e) { failed.push(`${f.name}: ${e.message}`) }
+      setBatch({ done: i + 1, total: files.length })
+    }
+    setBatch(null)
+    if (failed.length) setParseError(`Added ${created} of ${files.length}. Failed: ${failed.join('; ')}`)
+    await load()
   }
 
   async function handleSave(e) {
@@ -1037,10 +1090,12 @@ function TaxesSection({ propertyId }) {
       {/* Drag-and-drop upload area */}
       <DropZone
         onFile={processTaxFile}
+        onFiles={processTaxFiles}
+        multiple
         accept=".pdf,image/*"
-        busy={uploading}
-        label={uploading ? 'Parsing bill…' : 'Drop a tax bill PDF/image — we’ll auto-read the details'}
-        hint={uploading ? 'Extracting tax year, amount and dates with AI' : 'Or click to browse. You can still edit anything it reads.'}
+        busy={uploading || !!batch}
+        label={batch ? `Processing ${batch.done} of ${batch.total}…` : uploading ? 'Parsing bill…' : 'Drop one or more tax bill PDFs/images — we’ll auto-read the details'}
+        hint={batch ? 'Creating a tax record per file with the extracted details' : uploading ? 'Extracting tax year, amount and dates with AI' : 'Or click to browse. Drop multiple files to add them all at once.'}
       />
 
       {loading ? <p className="text-sm text-slate-400">Loading…</p> : (
