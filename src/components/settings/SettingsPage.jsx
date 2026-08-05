@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle, Download, Database, Mail } from 'lucide-react'
-import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, syncGmailNow, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl, getEmailFrom, setEmailFrom, getSenderStatus, disconnectSender } from '../../api/client'
+import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle, Download, Database, Mail, Loader2, Trash2, PenLine } from 'lucide-react'
+import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, syncGmailNow, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl, getEmailFrom, setEmailFrom, getSenderStatus, disconnectSender, getHwSignatures, addHwSignature, setDefaultHwSignature, deleteHwSignature } from '../../api/client'
 import Button from '../ui/Button'
 
 // Preset "From" addresses for outbound app email. Sending as management@
@@ -444,9 +444,80 @@ export default function SettingsPage() {
             </div>
           </Card>
 
+          {/* Handwritten mail signatures */}
+          <SignaturesCard />
+
         </div>
       </div>
     </div>
+  )
+}
+
+function SignaturesCard() {
+  const [sigs, setSigs]   = useState(null)
+  const [label, setLabel] = useState('')
+  const [sigId, setSigId] = useState('')
+  const [busy, setBusy]   = useState(false)
+  const [err, setErr]     = useState(null)
+
+  const load = () => getHwSignatures().then(setSigs).catch(() => setSigs([]))
+  useEffect(() => { load() }, [])
+
+  async function add() {
+    if (!label.trim() || !sigId.trim()) return
+    setBusy(true); setErr(null)
+    try { await addHwSignature({ label: label.trim(), sig_id: sigId.trim() }); setLabel(''); setSigId(''); await load() }
+    catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+  async function makeDefault(id) { try { await setDefaultHwSignature(id); await load() } catch (e) { setErr(e.message) } }
+  async function remove(id) { if (!confirm('Remove this signature?')) return; try { await deleteHwSignature(id); await load() } catch (e) { setErr(e.message) } }
+
+  return (
+    <Card title="Handwritten Mail Signatures" subtitle="Choose whose signature goes on mail campaigns. Add a person's Handwrytten signature ID so Brad or Cole can pick it when sending.">
+      <div className="space-y-4">
+        {sigs === null ? (
+          <div className="flex items-center gap-2 text-sm text-slate-400"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+        ) : sigs.length === 0 ? (
+          <p className="text-sm text-slate-400">No signatures yet — add one below.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200">
+            {sigs.map(s => (
+              <li key={s.id} className="flex items-center gap-3 px-4 py-2.5">
+                <PenLine className="w-4 h-4 text-slate-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-800">{s.label}
+                    {s.is_default ? <span className="ml-2 text-[10px] font-semibold uppercase text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full">Default</span> : null}
+                  </p>
+                  <p className="text-[11px] text-slate-400 font-mono">ID {s.sig_id}</p>
+                </div>
+                {!s.is_default && (
+                  <button onClick={() => makeDefault(s.id)} className="text-xs text-blue-600 hover:text-blue-800 shrink-0">Make default</button>
+                )}
+                <button onClick={() => remove(s.id)} className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3">
+          <p className="text-xs font-semibold text-slate-600 mb-2">Add a signature</p>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <input value={label} onChange={e => setLabel(e.target.value)} placeholder="Name (e.g. Cole)"
+              className="flex-1 text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <input value={sigId} onChange={e => setSigId(e.target.value)} placeholder="Handwrytten signature ID"
+              className="flex-1 text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <button onClick={add} disabled={busy || !label.trim() || !sigId.trim()}
+              className="text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg disabled:opacity-50 shrink-0">
+              {busy ? 'Adding…' : 'Add'}
+            </button>
+          </div>
+          {err && <p className="text-xs text-red-600 mt-2">{err}</p>}
+          <p className="text-[11px] text-slate-400 mt-2">
+            The signature ID comes from your Handwrytten account (each saved signature has one — it's the code in the <code className="bg-slate-100 px-1 rounded">&lt;sig:XXXX&gt;</code> tag). Create Cole's signature in Handwrytten, then paste its ID here.
+          </p>
+        </div>
+      </div>
+    </Card>
   )
 }
 

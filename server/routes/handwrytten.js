@@ -2,6 +2,7 @@ import express from 'express'
 import * as XLSX from 'xlsx'
 import db from '../db.js'
 import { addressKey, REMAIL_BLACKOUT_MONTHS } from '../utils/addressKey.js'
+import { sigSuffix } from '../utils/hwSignature.js'
 
 const router  = express.Router()
 
@@ -81,9 +82,39 @@ function resolveMergeFields(template, person, property) {
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-/** GET /api/handwrytten/cards — returns the hardcoded Knox 1 custom card */
-router.get('/cards', (_req, res) => {
-  res.json([{ id: 192789, name: 'Knox 1', cover: null, isCustom: true }])
+/** GET /api/handwrytten/cards — the account's custom cards (Knox templates). */
+router.get('/cards', async (_req, res) => {
+  try {
+    const data  = await hwGet('/cards/list?category_id=27')   // 27 = "My Custom Cards"
+    const cards = (data?.cards || []).map(c => ({ id: c.id, name: c.name, cover: c.cover_url || c.cover || null, isCustom: true }))
+    if (cards.length) return res.json(cards)
+  } catch (e) { console.warn('[Handwrytten] custom cards fetch failed:', e.message) }
+  res.json([{ id: 192789, name: 'Knox 1', cover: null, isCustom: true }])   // fallback
+})
+
+// ── Signature registry ────────────────────────────────────────────────────────
+router.get('/signatures', (_req, res) => {
+  res.json(db.prepare(`SELECT id, label, sig_id, is_default FROM handwrytten_signatures ORDER BY sort, id`).all())
+})
+router.post('/signatures', (req, res) => {
+  const label  = String(req.body?.label || '').trim()
+  const sig_id = String(req.body?.sig_id || '').trim()
+  if (!label || !sig_id) return res.status(400).json({ error: 'label and sig_id are required' })
+  const makeDefault = !!req.body?.is_default || !db.prepare(`SELECT 1 FROM handwrytten_signatures LIMIT 1`).get()
+  if (makeDefault) db.prepare(`UPDATE handwrytten_signatures SET is_default = 0`).run()
+  const r = db.prepare(`INSERT INTO handwrytten_signatures (label, sig_id, is_default) VALUES (?, ?, ?)`).run(label, sig_id, makeDefault ? 1 : 0)
+  res.status(201).json(db.prepare(`SELECT id, label, sig_id, is_default FROM handwrytten_signatures WHERE id = ?`).get(r.lastInsertRowid))
+})
+router.patch('/signatures/:id/default', (req, res) => {
+  const row = db.prepare(`SELECT id FROM handwrytten_signatures WHERE id = ?`).get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'Signature not found' })
+  db.prepare(`UPDATE handwrytten_signatures SET is_default = 0`).run()
+  db.prepare(`UPDATE handwrytten_signatures SET is_default = 1 WHERE id = ?`).run(req.params.id)
+  res.json({ ok: true })
+})
+router.delete('/signatures/:id', (req, res) => {
+  db.prepare(`DELETE FROM handwrytten_signatures WHERE id = ?`).run(req.params.id)
+  res.json({ ok: true })
 })
 
 /** GET /api/handwrytten/fonts — fetches available handwriting fonts */
@@ -218,7 +249,7 @@ router.get('/campaigns', (req, res) => {
 
 /** POST /api/handwrytten/send — send a single letter */
 router.post('/send', async (req, res) => {
-  const { contact_id, property_id, message, card_id, font } = req.body
+  const { contact_id, property_id, message, card_id, font, sig_id } = req.body
   const userId = req.user?.id
 
   if (!contact_id || !message) {
@@ -280,7 +311,7 @@ router.post('/send', async (req, res) => {
   const firstName = nameParts[0] || 'Friend'
   const lastName  = nameParts.slice(1).join(' ') || ''
 
-  const finalMessage = resolvedMessage + ' <sig:1427BC offset=1>'
+  const finalMessage = resolvedMessage + sigSuffix(db, sig_id)
 
   console.log(`[Handwrytten] send — firstName: "${firstName}" lastName: "${lastName}" | message: ${finalMessage}`)
 
@@ -337,10 +368,10 @@ router.post('/send', async (req, res) => {
  * Not recorded in send history; it's a proof, not a campaign recipient.
  */
 router.post('/send-proof', async (req, res) => {
-  const { message, card_id, font } = req.body
+  const { message, card_id, font, sig_id } = req.body
   if (!message) return res.status(400).json({ error: 'message is required' })
 
-  const finalMessage = message + ' <sig:1427BC offset=1>'
+  const finalMessage = message + sigSuffix(db, sig_id)
   try {
     const hwResult = await hwPost('/orders/singleStepOrder', {
       card_id:              card_id || '',
@@ -372,7 +403,7 @@ router.post('/send-proof', async (req, res) => {
 
 /** POST /api/handwrytten/send-bulk — send letters to many contacts */
 router.post('/send-bulk', async (req, res) => {
-  const { recipients, message, card_id, font, campaign_name } = req.body
+  const { recipients, message, card_id, font, campaign_name, sig_id } = req.body
   const userId = req.user?.id
 
   // recipients: [{ contact_id, property_id? }, ...]
@@ -460,7 +491,7 @@ router.post('/send-bulk', async (req, res) => {
       `).get(contact_id)
     }
 
-    const resolvedMessage = resolveMergeFields(message, person, property) + ' <sig:1427BC offset=1>'
+    const resolvedMessage = resolveMergeFields(message, person, property) + sigSuffix(db, sig_id)
 
     // Insert pending record
     const insertRes = db.prepare(`
@@ -558,13 +589,13 @@ router.post('/send-bulk', async (req, res) => {
 // Returns the raw API responses so we can confirm the format/payment before
 // replacing the per-letter sender. Records nothing unless the batch succeeds.
 router.post('/send-basket', async (req, res) => {
-  const { recipients, message, card_id, font } = req.body
+  const { recipients, message, card_id, font, sig_id } = req.body
   const userId = req.user?.id
   if (!Array.isArray(recipients) || recipients.length === 0) return res.status(400).json({ error: 'recipients array is required' })
   if (!message) return res.status(400).json({ error: 'message is required' })
 
   // Build one address entry (with its merged message) per recipient
-  const SIG = ' <sig:1427BC offset=1>'
+  const SIG = sigSuffix(db, sig_id)
   const addresses = []
   const sendMeta  = []
   const skipped   = []
@@ -793,7 +824,7 @@ router.get('/drips/:id/queue', (req, res) => {
  * DNC contacts are filtered out server-side as a safety net.
  */
 router.post('/drips', (req, res) => {
-  const { name, recipients, message, card_id, font, batch_size, interval_days, filters } = req.body
+  const { name, recipients, message, card_id, font, batch_size, interval_days, filters, sig_id } = req.body
   const userId = req.user?.id
 
   if (!Array.isArray(recipients) || recipients.length === 0) {
@@ -834,12 +865,12 @@ router.post('/drips', (req, res) => {
     const dripRes = db.prepare(`
       INSERT INTO handwrytten_drips
         (name, message_template, card_id, font, filters, batch_size, interval_days,
-         status, total_count, next_run_at, created_by_user_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, datetime('now'), ?)
+         status, total_count, next_run_at, created_by_user_id, sig_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, datetime('now'), ?, ?)
     `).run(
       name || null, message, card_id || null, font || null,
       filters ? JSON.stringify(filters) : null,
-      batchN, intervalN, clean.length, userId || null,
+      batchN, intervalN, clean.length, userId || null, sig_id || null,
     )
     const dripId = dripRes.lastInsertRowid
     const insQ = db.prepare(`

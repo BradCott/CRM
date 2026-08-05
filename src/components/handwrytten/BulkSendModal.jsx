@@ -3,6 +3,7 @@ import { X, Mail, Loader2, CheckCircle, AlertCircle, ChevronRight, Users, Search
 import {
   getHandwryttenCards,
   getHandwryttenFonts,
+  getHwSignatures,
   sendHandwryttenBulk,
   sendHandwryttenProof,
   downloadHandwryttenBulkFile,
@@ -25,7 +26,6 @@ const DEFAULT_TEMPLATE =
   `Call, text, or email anytime.`
 
 const CHAR_MAX  = 500   // Handwrytten card limit (applies to the final, merged message + signature)
-const SIG_SUFFIX = ' <sig:1427BC offset=1>'   // appended server-side to every letter
 const COST_LOW  = 3.00
 const COST_HIGH = 4.00
 
@@ -287,8 +287,10 @@ export default function BulkSendModal({ onClose, onDone }) {
   const [message,       setMessage]       = useState(DEFAULT_TEMPLATE)
   const [cards,         setCards]         = useState([])
   const [fonts,         setFonts]         = useState([])
+  const [signatures,    setSignatures]    = useState([])
   const [selectedCard,  setSelectedCard]  = useState(null)
   const [selectedFont,  setSelectedFont]  = useState(null)
+  const [selectedSig,   setSelectedSig]   = useState(null)   // handwrytten_signatures.id
   const [loadingMeta,   setLoadingMeta]   = useState(false)
   const [sendCopyToSelf, setSendCopyToSelf] = useState(false)   // also mail a proof to me
 
@@ -308,24 +310,34 @@ export default function BulkSendModal({ onClose, onDone }) {
   useEffect(() => {
     if (step !== 'preview' || cards.length > 0) return
     setLoadingMeta(true)
-    Promise.all([getHandwryttenCards(), getHandwryttenFonts()])
-      .then(([cd, fd]) => {
+    Promise.all([getHandwryttenCards(), getHandwryttenFonts(), getHwSignatures().catch(() => [])])
+      .then(([cd, fd, sg]) => {
         const cardList = Array.isArray(cd) ? cd : cd?.cards || cd?.data || []
         const fontList = Array.isArray(fd) ? fd : fd?.fonts || fd?.data || []
+        const sigList  = Array.isArray(sg) ? sg : []
         setCards(cardList)
         setFonts(fontList)
+        setSignatures(sigList)
         const defCard = cardList.find(c => (c.name || '').toLowerCase().includes('knox 1')) || cardList[0] || null
         const defFont = fontList.find(f =>
           (f.label || '').toLowerCase().includes('jokester') ||
           (f.label || '').toLowerCase().includes('jarrod') ||
           (f.label || '').toLowerCase().includes('jared')
         ) || fontList[0] || null
+        const defSig = sigList.find(s => s.is_default) || sigList[0] || null
         setSelectedCard(defCard?.id ?? null)
         setSelectedFont(defFont?.label ?? null)
+        setSelectedSig(defSig?.id ?? null)
       })
       .catch(() => {})
       .finally(() => setLoadingMeta(false))
   }, [step, cards.length])
+
+  // Live signature tag (for character counting), derived from the chosen signature.
+  const sigSuffix = useMemo(() => {
+    const s = signatures.find(x => x.id === selectedSig)
+    return ` <sig:${s?.sig_id || '1427BC'} offset=1>`
+  }, [signatures, selectedSig])
 
   // ── Build recipient list ───────────────────────────────────────────────────
   const buildRecipients = useCallback(async () => {
@@ -506,7 +518,7 @@ export default function BulkSendModal({ onClose, onDone }) {
     const proofMessage = sample
       ? applyMerge(message, sample, { tenant_brand_name: sample.tenant, city: sample.property_city, state: sample.property_state })
       : message
-    try { await sendHandwryttenProof({ message: proofMessage, card_id: selectedCard, font: selectedFont }) }
+    try { await sendHandwryttenProof({ message: proofMessage, card_id: selectedCard, font: selectedFont, sig_id: selectedSig }) }
     catch (e) { console.warn('Proof-to-self send failed:', e.message) }
   }
 
@@ -521,6 +533,7 @@ export default function BulkSendModal({ onClose, onDone }) {
         message,
         card_id: selectedCard,
         font:    selectedFont,
+        sig_id:  selectedSig,
       })
       await maybeSendProof()
       setSendResult(result)
@@ -543,6 +556,7 @@ export default function BulkSendModal({ onClose, onDone }) {
         message,
         card_id:       selectedCard,
         font:          selectedFont,
+        sig_id:        selectedSig,
         batch_size:    Math.max(1, parseInt(batchSize, 10) || 50),
         interval_days: Math.max(1, parseInt(intervalDays, 10) || 1),
         filters:       { states: filterStates, tenant: filterTenant, ownerTypes: filterOwnerTypes },
@@ -565,11 +579,11 @@ export default function BulkSendModal({ onClose, onDone }) {
     const lengths = sample.length
       ? sample.map(r => applyMerge(message, r, {
           tenant_brand_name: r.tenant, city: r.property_city, state: r.property_state,
-        }).length + SIG_SUFFIX.length)
-      : [message.length + SIG_SUFFIX.length]
+        }).length + sigSuffix.length)
+      : [message.length + sigSuffix.length]
     const max = Math.max(...lengths)
     return { finalMaxLen: max, overBy: Math.max(0, max - CHAR_MAX) }
-  }, [message, recipients])
+  }, [message, recipients, sigSuffix])
 
   const overLimit = finalMaxLen > CHAR_MAX
 
@@ -1016,11 +1030,21 @@ export default function BulkSendModal({ onClose, onDone }) {
 
               {/* Signature */}
               <div>
-                <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5 block">Signature (from)</label>
-                <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700">
-                  Brad Cottam
-                </div>
-                <p className="text-xs text-slate-400 mt-1">This is the name that appears as the sender on every letter.</p>
+                <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5 block">Signature</label>
+                {signatures.length > 0 ? (
+                  <select
+                    value={selectedSig ?? ''}
+                    onChange={e => setSelectedSig(e.target.value ? Number(e.target.value) : null)}
+                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {signatures.map(s => <option key={s.id} value={s.id}>{s.label}{s.is_default ? ' (default)' : ''}</option>)}
+                  </select>
+                ) : (
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-400">
+                    No signatures set up — add one in Settings → Handwritten Mail.
+                  </div>
+                )}
+                <p className="text-xs text-slate-400 mt-1">Whose handwritten signature appears at the bottom of every letter. Manage signatures in Settings.</p>
               </div>
 
               {/* Send a proof copy to yourself */}

@@ -571,6 +571,10 @@ export const markExpenseReimbursed    = (propId, type, year, status) =>
 // Handwrytten
 export const getHandwryttenCards      = ()          => req('GET', '/handwrytten/cards')
 export const getHandwryttenFonts      = ()          => req('GET', '/handwrytten/fonts')
+export const getHwSignatures          = ()          => req('GET',   '/handwrytten/signatures')
+export const addHwSignature           = (data)      => req('POST',  '/handwrytten/signatures', data)
+export const setDefaultHwSignature    = (id)        => req('PATCH', `/handwrytten/signatures/${id}/default`)
+export const deleteHwSignature        = (id)        => req('DELETE',`/handwrytten/signatures/${id}`)
 export const sendHandwryttenLetter    = (data)      => req('POST', '/handwrytten/send', data)
 export const sendHandwryttenBulk      = (data)      => req('POST', '/handwrytten/send-bulk', data)
 export const sendHandwryttenProof     = (data)      => req('POST', '/handwrytten/send-proof', data)

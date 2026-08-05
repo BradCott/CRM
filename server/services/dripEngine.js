@@ -5,10 +5,10 @@
 
 import db from '../db.js'
 import { addressKey, REMAIL_BLACKOUT_MONTHS } from '../utils/addressKey.js'
+import { sigSuffix } from '../utils/hwSignature.js'
 
 const HW_BASE = 'https://api.handwrytten.com/v2'
 const HW_KEY  = process.env.HANDWRYTTEN_API_KEY
-const SIG_SUFFIX = ' <sig:1427BC offset=1>'
 
 // Was this address already mailed within the blackout window? A drip runs over
 // weeks, so re-check at send time — another campaign may have mailed it since it
@@ -100,7 +100,7 @@ async function sendQueued(drip, qrow) {
       WHERE p.id = ?`).get(qrow.property_id)
   }
 
-  const resolvedMessage = resolveMergeFields(drip.message_template, person, property) + SIG_SUFFIX
+  const resolvedMessage = resolveMergeFields(drip.message_template, person, property) + sigSuffix(db, drip.sig_id)
 
   const insertRes = db.prepare(`
     INSERT INTO handwrytten_sends
