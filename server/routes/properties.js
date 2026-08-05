@@ -377,7 +377,8 @@ router.put('/:id', (req, res) => {
         lease_type=?,lease_start=?,lease_end=?,annual_rent=?,rent_bumps=?,renewal_options=?,
         noi=?,cap_rate=?,list_price=?,taxes=?,insurance=?,
         roof_year=?,hvac_year=?,parking_lot=?,notes=?,sf_id=?,fee_pct=?,listing_status=?,fee_amount=?,
-        purchase_price=?,dd_end_date=?,close_date=?,is_portfolio=?
+        purchase_price=?,dd_end_date=?,close_date=?,is_portfolio=?,
+        display_name=COALESCE(?, display_name)
       WHERE id=?
     `).run(
       f.address, f.city||null, f.state||null, f.zip||null,
@@ -395,6 +396,7 @@ router.put('/:id', (req, res) => {
       f.fee_amount != null ? f.fee_amount : null,
       f.purchase_price||null, f.dd_end_date||null, f.close_date||null,
       f.is_portfolio ? 1 : 0,
+      f.display_name !== undefined ? (String(f.display_name).trim() || null) : null,
       propId
     )
     console.log('[PUT /api/properties/:id] changes:', result.changes, '| lastInsertRowid:', result.lastInsertRowid)

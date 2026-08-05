@@ -452,6 +452,7 @@ export const getCallNotes        = (propId)      => req('GET',   `/management/${
 export const addCallNote         = (propId, note) => req('POST',  `/management/${propId}/call-notes`, { note })
 export const deleteCallNote      = (id)          => req('DELETE', `/management/call-notes/${id}`)
 export const updatePropertyDash  = (propId, data) => req('PATCH', `/management/${propId}/dash`, data)
+export const updatePropertyDisplayName = (propId, display_name) => req('PATCH', `/management/${propId}/display-name`, { display_name })
 export const propertyPhotoUrl    = (propId)      => `${BASE}/management/${propId}/photo`
 export async function uploadPropertyPhoto(propId, file) {
   const fd = new FormData()

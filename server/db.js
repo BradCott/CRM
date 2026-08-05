@@ -850,6 +850,10 @@ const migrations = [
   // labeled tax_year Y-1 is the one actually paid (and recovered) during year Y.
   // Shifts which tax_year the reconciliation prefill + dashboard net pull from.
   `ALTER TABLE property_expense_settings ADD COLUMN tax_arrears INTEGER NOT NULL DEFAULT 0`,
+
+  // Optional friendly label shown on the Property Management widgets in place of
+  // the raw street address (e.g. "Sherwin — Peoria"). Falls back to address when blank.
+  `ALTER TABLE properties ADD COLUMN display_name TEXT`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

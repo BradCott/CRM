@@ -1,12 +1,12 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Building2, ClipboardList, AlertTriangle, Shield, Receipt,
   ChevronRight, CheckCircle2, Loader2, RefreshCw,
   LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown,
-  CalendarClock, RefreshCcw, Search, X, DollarSign,
+  CalendarClock, RefreshCcw, Search, X, DollarSign, Pencil, Check, ListFilter,
 } from 'lucide-react'
-import { getManagementDashboard, completeTask, getAllManagementTasks, getReimbursementSummary } from '../../api/client'
+import { getManagementDashboard, completeTask, getAllManagementTasks, getReimbursementSummary, updatePropertyDisplayName } from '../../api/client'
 import InsurancePage from '../insurance/InsurancePage'
 import ReimbursementsView from './ReimbursementsView'
 
@@ -63,9 +63,88 @@ function StatCard({ icon: Icon, label, value, color = 'blue', note }) {
   )
 }
 
+// ── Inline property-name editor ─────────────────────────────────────────────────
+// Shows the property's friendly name (display_name, falling back to the street
+// address). A pencil flips it into an input that saves to the display_name field.
+
+function InlineName({ property, onSaved, to, className = '', inputClassName = '' }) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue]     = useState('')
+  const [saving, setSaving]   = useState(false)
+  const inputRef = useRef(null)
+
+  const display = property.display_name || property.address
+
+  function startEdit(e) {
+    e.preventDefault(); e.stopPropagation()
+    setValue(property.display_name || '')
+    setEditing(true)
+  }
+
+  useEffect(() => { if (editing) inputRef.current?.focus() }, [editing])
+
+  async function save(e) {
+    e?.preventDefault(); e?.stopPropagation()
+    const next = value.trim()
+    if (next === (property.display_name || '')) { setEditing(false); return }
+    setSaving(true)
+    try {
+      await updatePropertyDisplayName(property.id, next)
+      onSaved?.(property.id, next || null)
+      setEditing(false)
+    } catch (err) {
+      alert('Could not rename: ' + err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  function cancel(e) {
+    e?.preventDefault(); e?.stopPropagation()
+    setEditing(false)
+  }
+
+  if (editing) {
+    return (
+      <span className="flex items-center gap-1" onClick={e => { e.preventDefault(); e.stopPropagation() }}>
+        <input
+          ref={inputRef}
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => { if (e.key === 'Enter') save(e); if (e.key === 'Escape') cancel(e) }}
+          placeholder={property.address}
+          disabled={saving}
+          className={`min-w-0 flex-1 px-1.5 py-0.5 text-sm border border-blue-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 ${inputClassName}`}
+        />
+        <button onClick={save} disabled={saving} className="shrink-0 text-green-600 hover:text-green-700 p-0.5" title="Save">
+          {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+        </button>
+        <button onClick={cancel} disabled={saving} className="shrink-0 text-slate-400 hover:text-slate-600 p-0.5" title="Cancel">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </span>
+    )
+  }
+
+  return (
+    <span className={`group/name inline-flex items-center gap-1 min-w-0 ${className}`}>
+      {to
+        ? <Link to={to} className="truncate hover:underline">{display}</Link>
+        : <span className="truncate">{display}</span>}
+      <button
+        onClick={startEdit}
+        className="shrink-0 text-slate-300 hover:text-blue-500 opacity-0 group-hover/name:opacity-100 transition-opacity p-0.5"
+        title="Rename"
+      >
+        <Pencil className="w-3 h-3" />
+      </button>
+    </span>
+  )
+}
+
 // ── Property card ─────────────────────────────────────────────────────────────
 
-function PropertyCard({ property, counts = {} }) {
+function PropertyCard({ property, counts = {}, onRenamed }) {
   return (
     <Link
       to={`/management/${property.id}`}
@@ -73,11 +152,11 @@ function PropertyCard({ property, counts = {} }) {
     >
       <div className="flex items-start justify-between gap-2 mb-3">
         <div className="min-w-0">
-          <p className="text-sm font-semibold text-slate-900 group-hover:text-blue-700 transition-colors leading-snug truncate">
-            {property.address}
-          </p>
+          <div className="text-sm font-semibold text-slate-900 group-hover:text-blue-700 transition-colors leading-snug">
+            <InlineName property={property} onSaved={onRenamed} />
+          </div>
           <p className="text-xs text-slate-500 mt-0.5 truncate">
-            {[property.city, property.state].filter(Boolean).join(', ')}
+            {[property.address, property.city, property.state].filter(Boolean).join(', ')}
           </p>
         </div>
         <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-blue-400 shrink-0 mt-0.5 transition-colors" />
@@ -120,9 +199,11 @@ function PropertyCard({ property, counts = {} }) {
 
 function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
   const [propView, setPropView] = useState('cards') // 'cards' | 'list'
+  const [renames, setRenames]   = useState({})      // optimistic display_name overrides { [id]: name|null }
+  const [filterState,  setFilterState]  = useState('') // list-view: filter by state
+  const [filterTenant, setFilterTenant] = useState('') // list-view: filter by tenant
 
   const {
-    properties = [],
     task_counts = {},
     overdue_tasks = [],
     insurance_expiring = [],
@@ -130,17 +211,38 @@ function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
     tax_due_6mo = 0,
   } = data
 
+  const properties = (data.properties || []).map(p =>
+    p.id in renames ? { ...p, display_name: renames[p.id] } : p
+  )
+
+  const handleRenamed = useCallback((id, name) => {
+    setRenames(prev => ({ ...prev, [id]: name }))
+  }, [])
+
   const taxReimb = reimbSummary?.tax       || { count: 0, outstanding: 0 }
   const insReimb = reimbSummary?.insurance || { count: 0, outstanding: 0 }
   const camReimb = reimbSummary?.cam       || { count: 0, outstanding: 0 }
 
-  const filteredProperties = search.trim()
+  const searchedProperties = search.trim()
     ? properties.filter(p => {
         const q = search.trim().toLowerCase()
-        return [p.address, p.city, p.state, p.tenant_brand_name, p.owner_name, p.policy_numbers]
+        return [p.display_name, p.address, p.city, p.state, p.tenant_brand_name, p.owner_name, p.policy_numbers]
           .some(v => String(v || '').toLowerCase().includes(q))
       })
     : properties
+
+  // Dropdown options for the list-view filters (derived from the full portfolio).
+  const stateOptions  = [...new Set(properties.map(p => p.state).filter(Boolean))].sort()
+  const tenantOptions = [...new Set(properties.map(p => p.tenant_brand_name).filter(Boolean))].sort()
+
+  // List view layers state/tenant dropdown filters on top of the search box.
+  const filteredProperties = propView === 'list'
+    ? searchedProperties.filter(p =>
+        (!filterState  || p.state === filterState) &&
+        (!filterTenant || p.tenant_brand_name === filterTenant))
+    : searchedProperties
+
+  const listFiltersActive = !!(filterState || filterTenant)
 
   const totalRent = properties.reduce((s, p) => s + (p.annual_rent || 0), 0)
 
@@ -208,11 +310,44 @@ function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
           </div>
         </div>
 
+        {/* List-view filter bar */}
+        {propView === 'list' && (
+          <div className="flex items-center flex-wrap gap-2 mb-3">
+            <span className="text-xs font-medium text-slate-400 flex items-center gap-1.5">
+              <ListFilter className="w-3.5 h-3.5" /> Filter
+            </span>
+            <select
+              value={filterState}
+              onChange={e => setFilterState(e.target.value)}
+              className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+            >
+              <option value="">All states</option>
+              {stateOptions.map(s => <option key={s} value={s}>{s}</option>)}
+            </select>
+            <select
+              value={filterTenant}
+              onChange={e => setFilterTenant(e.target.value)}
+              className="text-sm border border-slate-200 rounded-lg px-2.5 py-1.5 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+            >
+              <option value="">All tenants</option>
+              {tenantOptions.map(t => <option key={t} value={t}>{t}</option>)}
+            </select>
+            {listFiltersActive && (
+              <button
+                onClick={() => { setFilterState(''); setFilterTenant('') }}
+                className="flex items-center gap-1 text-xs text-slate-500 hover:text-slate-700 px-2 py-1"
+              >
+                <X className="w-3.5 h-3.5" /> Clear
+              </button>
+            )}
+          </div>
+        )}
+
         {filteredProperties.length === 0 ? (
           <div className="bg-white border border-dashed border-slate-200 rounded-xl p-10 text-center">
             <Building2 className="w-8 h-8 text-slate-200 mx-auto mb-2" />
-            {search
-              ? <p className="text-sm text-slate-400">No properties match &ldquo;{search}&rdquo;.</p>
+            {search || listFiltersActive
+              ? <p className="text-sm text-slate-400">No properties match your filters.</p>
               : <><p className="text-sm text-slate-400">No portfolio properties yet.</p>
                   <p className="text-xs text-slate-400 mt-1">Add properties from Knox Portfolio and mark them as portfolio.</p></>
             }
@@ -221,7 +356,7 @@ function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
           /* Cards grid */
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {filteredProperties.map(p => (
-              <PropertyCard key={p.id} property={p} counts={task_counts[p.id] || {}} />
+              <PropertyCard key={p.id} property={p} counts={task_counts[p.id] || {}} onRenamed={handleRenamed} />
             ))}
           </div>
         ) : (
@@ -231,7 +366,8 @@ function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
               <thead>
                 <tr className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wide border-b border-slate-200">
                   <th className="px-4 py-3 text-left">Property</th>
-                  <th className="px-4 py-3 text-left">City, State</th>
+                  <th className="px-4 py-3 text-left">City</th>
+                  <th className="px-4 py-3 text-left">State</th>
                   <th className="px-4 py-3 text-left">Tenant</th>
                   <th className="px-4 py-3 text-center">Overdue</th>
                   <th className="px-4 py-3 text-center">Due Soon</th>
@@ -245,14 +381,15 @@ function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
                   return (
                     <tr key={p.id} className="border-t border-slate-100 hover:bg-blue-50/40 transition-colors">
                       <td className="px-4 py-3">
-                        <Link
-                          to={`/management/${p.id}`}
-                          className="font-medium text-blue-700 hover:underline"
-                        >
-                          {p.address}
-                        </Link>
+                        <div className="font-medium text-blue-700">
+                          <InlineName property={p} onSaved={handleRenamed} to={`/management/${p.id}`} />
+                        </div>
+                        <p className="text-xs text-slate-400 truncate">
+                          {[p.address, p.city, p.state].filter(Boolean).join(', ') || '—'}
+                        </p>
                       </td>
-                      <td className="px-4 py-3 text-slate-500">{[p.city, p.state].filter(Boolean).join(', ') || '—'}</td>
+                      <td className="px-4 py-3 text-slate-500">{p.city || '—'}</td>
+                      <td className="px-4 py-3 text-slate-500">{p.state || '—'}</td>
                       <td className="px-4 py-3 text-slate-500">{p.tenant_brand_name || '—'}</td>
                       <td className="px-4 py-3 text-center">
                         {c.overdue > 0

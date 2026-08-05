@@ -314,7 +314,7 @@ router.get('/dashboard', (req, res) => {
   const in90     = addDays(todayStr, 90)
 
   const portfolioProps = db.prepare(`
-    SELECT p.id, p.address, p.city, p.state, t.name AS tenant_brand_name,
+    SELECT p.id, p.address, p.display_name, p.city, p.state, t.name AS tenant_brand_name,
            p.lease_end, p.annual_rent, p.purchase_price,
            o.name AS owner_name,
            (SELECT GROUP_CONCAT(pi.policy_number, ' ')
@@ -1334,6 +1334,16 @@ router.patch('/:propertyId/dash', (req, res) => {
     prop.id,
   )
   res.json({ ok: true })
+})
+
+// Rename the property's display label (shown on the dashboard widgets). Blank
+// clears it, so the widgets fall back to the street address.
+router.patch('/:propertyId/display-name', (req, res) => {
+  const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(req.params.propertyId)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+  const display_name = String(req.body?.display_name ?? '').trim() || null
+  db.prepare('UPDATE properties SET display_name = ? WHERE id = ?').run(display_name, prop.id)
+  res.json({ ok: true, display_name })
 })
 
 // Upload / replace the property photo.
