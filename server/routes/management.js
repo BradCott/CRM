@@ -5,6 +5,7 @@ import { mkdirSync, writeFileSync, readFileSync, createReadStream, existsSync, u
 import db, { DATA_DIR } from '../db.js'
 import { PDFDocument } from 'pdf-lib'
 import { sendMail } from '../services/mailer.js'
+import { FIELD_META, WHITELIST, mapExtracted } from '../utils/extractedFields.js'
 
 const router  = Router()
 const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
@@ -314,7 +315,7 @@ router.get('/dashboard', (req, res) => {
   const in90     = addDays(todayStr, 90)
 
   const portfolioProps = db.prepare(`
-    SELECT p.id, p.address, p.display_name, p.city, p.state, t.name AS tenant_brand_name,
+    SELECT p.id, p.address, p.display_name, p.display_subtitle, p.city, p.state, t.name AS tenant_brand_name,
            p.lease_end, p.annual_rent, p.purchase_price,
            o.name AS owner_name,
            (SELECT GROUP_CONCAT(pi.policy_number, ' ')
@@ -438,6 +439,144 @@ router.get('/dashboard', (req, res) => {
     tax_reimburse_pending:       taxReimbursePending || 0,
     ins_reimburse_pending:       insReimbursePending || 0,
   })
+})
+
+// ── Dashboard widget drill-down ───────────────────────────────────────────────
+// GET /dashboard/breakdown?metric=<metric>
+// Returns the per-property rows behind a dashboard stat card, computed with the
+// SAME logic as the card itself so the rows always reconcile with the headline
+// number. `column` describes how to render the per-row value.
+router.get('/dashboard/breakdown', (req, res) => {
+  const metric = String(req.query.metric || '')
+  const todayStr = today()
+  const in90  = addDays(todayStr, 90)
+  const in180 = addDays(todayStr, 180)
+
+  // Shared property-identity columns for the drill-down rows.
+  const PROP_COLS = `
+    p.id AS property_id, p.address, p.display_name, p.display_subtitle,
+    p.city, p.state, t.name AS tenant_brand_name
+  `
+
+  const respond = (label, column, rows) => res.json({ metric, label, column, rows })
+
+  switch (metric) {
+    case 'properties': {
+      const rows = db.prepare(`
+        SELECT ${PROP_COLS}, p.annual_rent AS value
+        FROM properties p
+        LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+        WHERE p.is_portfolio = 1
+        ORDER BY p.annual_rent DESC NULLS LAST, p.address
+      `).all()
+      return respond('Portfolio Properties', { label: 'Annual Rent', type: 'currency' }, rows)
+    }
+
+    case 'overdue_tasks': {
+      // One row per property, value = number of overdue tasks (sums to the card).
+      const rows = db.prepare(`
+        SELECT ${PROP_COLS},
+               COUNT(*) AS value,
+               MIN(pt.due_date) AS sub
+        FROM property_tasks pt
+        JOIN properties p ON p.id = pt.property_id
+        LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+        WHERE p.is_portfolio = 1
+          AND pt.completed_at IS NULL
+          AND pt.due_date IS NOT NULL
+          AND pt.due_date < ?
+        GROUP BY p.id
+        ORDER BY value DESC, sub
+      `).all(todayStr)
+      return respond('Overdue Tasks', { label: 'Overdue', type: 'count', subLabel: 'Oldest due', subType: 'date' }, rows)
+    }
+
+    case 'insurance_expiring': {
+      // One row per expiring policy (card counts policies, not properties).
+      const rows = db.prepare(`
+        SELECT ${PROP_COLS},
+               pi.expiry_date AS value,
+               pi.carrier AS sub
+        FROM property_insurance pi
+        JOIN properties p ON p.id = pi.property_id
+        LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+        WHERE p.is_portfolio = 1
+          AND pi.expiry_date IS NOT NULL
+          AND pi.expiry_date >= ? AND pi.expiry_date <= ?
+        ORDER BY pi.expiry_date
+      `).all(todayStr, in90)
+      return respond('Insurance Expiring', { label: 'Expires', type: 'date', subLabel: 'Carrier', subType: 'text' }, rows)
+    }
+
+    case 'maintenance_ytd': {
+      const rows = db.prepare(`
+        SELECT ${PROP_COLS}, SUM(pm.cost) AS value
+        FROM property_maintenance pm
+        JOIN properties p ON p.id = pm.property_id
+        LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+        WHERE p.is_portfolio = 1
+          AND pm.date >= date('now', '-365 days')
+        GROUP BY p.id
+        HAVING SUM(pm.cost) > 0
+        ORDER BY value DESC
+      `).all()
+      return respond('Maintenance (last 365 days)', { label: 'Spend', type: 'currency' }, rows)
+    }
+
+    case 'tax_due_6mo': {
+      // One row per property with an unpaid tax bill due within 6 months;
+      // value = total unpaid due (rows count reconciles with the card count).
+      const rows = db.prepare(`
+        SELECT ${PROP_COLS},
+               SUM(pt.amount) AS value,
+               MIN(pt.due_date) AS sub
+        FROM property_taxes pt
+        JOIN properties p ON p.id = pt.property_id
+        LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+        WHERE p.is_portfolio = 1
+          AND pt.paid_date IS NULL
+          AND pt.due_date IS NOT NULL
+          AND pt.due_date <= ?
+        GROUP BY p.id
+        ORDER BY sub
+      `).all(in180)
+      return respond('Tax Due (6 months)', { label: 'Amount Due', type: 'currency', subLabel: 'Earliest due', subType: 'date' }, rows)
+    }
+
+    case 'tax':
+    case 'insurance':
+    case 'cam': {
+      // Net outstanding per property, mirroring /reimbursements/summary.
+      const now = new Date()
+      const curYear = now.getFullYear()
+      const throughMonth = now.getMonth() + 1
+      const props = db.prepare(`
+        SELECT ${PROP_COLS}
+        FROM properties p
+        LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+        WHERE p.is_portfolio = 1
+      `).all()
+      const rows = []
+      for (const p of props) {
+        const setting = db.prepare('SELECT method FROM property_expense_settings WHERE property_id = ? AND expense_type = ?').get(p.property_id, metric)
+        const reimb = db.prepare('SELECT status FROM property_expense_reimbursements WHERE property_id = ? AND expense_type = ? AND year = ?').get(p.property_id, metric, curYear)
+        if (reimb?.status === 'reimbursed') continue
+        const method = setting?.method === 'installments' ? 'installments' : 'direct'
+        const actual = actualToDate(p.property_id, metric, curYear, throughMonth)
+        const collected = method === 'installments' ? collectedToDate(p.property_id, metric, curYear, throughMonth) : 0
+        const net = actual - collected
+        if (net > 0) rows.push({ ...p, value: net })
+      }
+      rows.sort((a, b) => b.value - a.value)
+      const label = metric === 'tax' ? 'Awaiting Tax Reimbursement'
+        : metric === 'insurance' ? 'Awaiting Insurance Reimbursement'
+        : 'Awaiting CAM Reimbursement'
+      return respond(label, { label: 'Outstanding', type: 'currency' }, rows)
+    }
+
+    default:
+      return res.status(400).json({ error: `Unknown metric: ${metric}` })
+  }
 })
 
 // ── All tasks across all portfolio properties ─────────────────────────────────
@@ -777,6 +916,86 @@ Extract exact values as they appear in the document. For dollar amounts include 
   } catch (err) {
     console.error('[management] insurance upload parse error:', err.message)
     res.status(422).json({ error: 'Could not parse insurance document: ' + err.message })
+  }
+})
+
+// POST /:propertyId/marketing/parse — parse a marketing package / offering
+// memorandum / flyer (usually uploaded while the property is still in the
+// pipeline stage) to seed the basic property details. Returns extracted JSON for
+// the review-and-confirm auto-fill flow; does NOT save anything on its own.
+router.post('/:propertyId/marketing/parse', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+
+  const mediaType = req.file.mimetype || 'application/pdf'
+  const prompt = `You are extracting the basic property details from a commercial real estate marketing package / offering memorandum / property flyer. Return ONLY a valid JSON object with these exact fields — no explanation, no markdown:
+
+{
+  "address": "",
+  "city": "",
+  "state": "",
+  "zip": "",
+  "tenant": "",
+  "building_size": "",
+  "land_area": "",
+  "year_built": "",
+  "property_type": "",
+  "construction_type": "",
+  "lease_type": "",
+  "lease_start": "",
+  "lease_end": "",
+  "annual_rent": "",
+  "rent_bumps": "",
+  "renewal_options": "",
+  "noi": "",
+  "cap_rate": "",
+  "list_price": ""
+}
+
+For tenant: the operating tenant/brand at the property (e.g. "Sherwin-Williams").
+For building_size: rentable square feet as a bare number (no "SF" or commas).
+For land_area: the lot/land size as it appears (e.g. "1.25 acres" or "54,450 SF").
+For year_built: the 4-digit year the building was constructed.
+For property_type: e.g. "Retail", "Industrial", "Office", "Medical".
+For lease_type: e.g. "NNN", "NN", "Absolute Net", "Modified Gross".
+For lease_start / lease_end: format YYYY-MM-DD. Use the lease commencement and expiration dates.
+For annual_rent: the current annual base rent as a bare number (no $ or commas). If only a monthly figure is given, convert to annual.
+For rent_bumps: a short description of the rent escalations (e.g. "10% every 5 years").
+For renewal_options: e.g. "Four 5-year options".
+For noi: net operating income as a bare number.
+For cap_rate: the capitalization rate as a bare number (e.g. 6.25 for 6.25%).
+For list_price: the asking / offering price as a bare number.
+Extract exact values as they appear. Use "" for anything not found in the document.`
+
+  try {
+    let pdfBuffer = req.file.buffer
+    if (mediaType === 'application/pdf') {
+      // Trim to the first 20 pages to stay under Anthropic's limits. Marketing
+      // PDFs are often "encrypted" with permission flags (no password); pdf-lib
+      // can't copy pages out of those, so if trimming fails we fall back to
+      // sending the original PDF straight to Claude (its processor handles them).
+      try {
+        const srcDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true })
+        const total  = srcDoc.getPageCount()
+        if (total > 20) {
+          const trimDoc = await PDFDocument.create()
+          const pages   = await trimDoc.copyPages(srcDoc, [...Array(20).keys()])
+          pages.forEach(p => trimDoc.addPage(p))
+          pdfBuffer = Buffer.from(await trimDoc.save())
+          console.log(`[management] marketing PDF truncated from ${total} to 20 pages`)
+        }
+      } catch (trimErr) {
+        console.warn('[management] marketing PDF trim skipped (sending original):', trimErr.message)
+      }
+    }
+
+    const result = await callClaude(pdfBuffer, mediaType, prompt)
+    const raw  = result.content[0].text.trim()
+    const json = raw.replace(/^```json\s*/i, '').replace(/\s*```$/, '')
+    const data = JSON.parse(json)
+    res.json(data)
+  } catch (err) {
+    console.error('[management] marketing parse error:', err.message)
+    res.status(422).json({ error: 'Could not parse marketing package: ' + err.message })
   }
 })
 
@@ -1344,6 +1563,103 @@ router.patch('/:propertyId/display-name', (req, res) => {
   const display_name = String(req.body?.display_name ?? '').trim() || null
   db.prepare('UPDATE properties SET display_name = ? WHERE id = ?').run(display_name, prop.id)
   res.json({ ok: true, display_name })
+})
+
+// Edit the property's display subtitle (shown under the name on the widgets).
+// Blank clears it, so the widgets fall back to the auto address/city/state line.
+router.patch('/:propertyId/display-subtitle', (req, res) => {
+  const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(req.params.propertyId)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+  const display_subtitle = String(req.body?.display_subtitle ?? '').trim() || null
+  db.prepare('UPDATE properties SET display_subtitle = ? WHERE id = ?').run(display_subtitle, prop.id)
+  res.json({ ok: true, display_subtitle })
+})
+
+// ── Auto-fill from documents ────────────────────────────────────────────────
+// The parse endpoints (insurance/tax/lease/settlement/marketing) each return raw
+// extracted JSON. These two routes turn that into a review-and-confirm auto-fill:
+//   1) extract-diff   → normalize + map to property columns, return current vs
+//                       proposed for every field the doc supplied.
+//   2) apply-extracted → write only the fields the user approved (overwrite),
+//                       auto-creating the tenant brand when a new name is given.
+
+// POST /:propertyId/extract-diff  body: { docType, data }
+// Returns { fields: [{ key, label, type, current, proposed }], tenant }.
+router.post('/:propertyId/extract-diff', (req, res) => {
+  const prop = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.propertyId)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+
+  const { docType, data } = req.body || {}
+  let mapped
+  try {
+    mapped = mapExtracted(docType, data)
+  } catch (err) {
+    return res.status(400).json({ error: err.message })
+  }
+
+  const fields = Object.entries(mapped.fields)
+    .filter(([key]) => key !== 'tenant_brand_id')
+    .map(([key, proposed]) => ({
+      key,
+      label: FIELD_META[key]?.label || key,
+      type:  FIELD_META[key]?.type  || 'text',
+      current: prop[key] ?? null,
+      proposed,
+    }))
+
+  // Tenant is handled specially: resolve the extracted name to an existing brand
+  // (case-insensitive) or flag it as new so the client can show "will create".
+  let tenant = null
+  if (mapped.tenantName) {
+    const existing = db.prepare('SELECT id, name FROM tenant_brands WHERE name = ? COLLATE NOCASE')
+      .get(mapped.tenantName)
+    const currentName = prop.tenant_brand_id
+      ? (db.prepare('SELECT name FROM tenant_brands WHERE id = ?').get(prop.tenant_brand_id)?.name || null)
+      : null
+    tenant = {
+      name: mapped.tenantName,
+      existingId: existing?.id || null,
+      isNew: !existing,
+      current: currentName,
+    }
+  }
+
+  res.json({ docType, fields, tenant })
+})
+
+// PATCH /:propertyId/apply-extracted  body: { fields: {col: value}, tenantName? }
+// Writes only whitelisted columns. If tenantName is provided, finds or creates
+// the matching tenant brand and links it via tenant_brand_id.
+router.patch('/:propertyId/apply-extracted', (req, res) => {
+  const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(req.params.propertyId)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+
+  const incoming = req.body?.fields || {}
+  const tenantName = String(req.body?.tenantName ?? '').trim()
+
+  const sets = []
+  const vals = []
+  for (const [col, value] of Object.entries(incoming)) {
+    if (!WHITELIST.has(col)) continue
+    sets.push(`${col} = ?`)
+    vals.push(value === '' ? null : value)
+  }
+
+  let tenant_brand_id = null
+  if (tenantName) {
+    const existing = db.prepare('SELECT id FROM tenant_brands WHERE name = ? COLLATE NOCASE').get(tenantName)
+    tenant_brand_id = existing
+      ? existing.id
+      : db.prepare('INSERT INTO tenant_brands (name) VALUES (?)').run(tenantName).lastInsertRowid
+    sets.push('tenant_brand_id = ?')
+    vals.push(tenant_brand_id)
+  }
+
+  if (!sets.length) return res.status(400).json({ error: 'No fields to apply' })
+
+  vals.push(prop.id)
+  db.prepare(`UPDATE properties SET ${sets.join(', ')} WHERE id = ?`).run(...vals)
+  res.json({ ok: true, applied: sets.length, tenant_brand_id })
 })
 
 // Upload / replace the property photo.

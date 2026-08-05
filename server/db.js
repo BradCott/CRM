@@ -854,6 +854,10 @@ const migrations = [
   // Optional friendly label shown on the Property Management widgets in place of
   // the raw street address (e.g. "Sherwin — Peoria"). Falls back to address when blank.
   `ALTER TABLE properties ADD COLUMN display_name TEXT`,
+
+  // Optional custom subtitle shown under the display name on the widgets. Falls
+  // back to the auto "address, city, state" line when blank.
+  `ALTER TABLE properties ADD COLUMN display_subtitle TEXT`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

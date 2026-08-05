@@ -453,6 +453,15 @@ export const addCallNote         = (propId, note) => req('POST',  `/management/$
 export const deleteCallNote      = (id)          => req('DELETE', `/management/call-notes/${id}`)
 export const updatePropertyDash  = (propId, data) => req('PATCH', `/management/${propId}/dash`, data)
 export const updatePropertyDisplayName = (propId, display_name) => req('PATCH', `/management/${propId}/display-name`, { display_name })
+export const updatePropertyDisplaySubtitle = (propId, display_subtitle) => req('PATCH', `/management/${propId}/display-subtitle`, { display_subtitle })
+// Auto-fill property from documents (review-and-confirm)
+export const getExtractDiff      = (propId, docType, data) => req('POST', `/management/${propId}/extract-diff`, { docType, data })
+export const applyExtracted      = (propId, fields, tenantName) => req('PATCH', `/management/${propId}/apply-extracted`, { fields, tenantName })
+export async function parseMarketingPackage(propId, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return req('POST', `/management/${propId}/marketing/parse`, fd)
+}
 export const propertyPhotoUrl    = (propId)      => `${BASE}/management/${propId}/photo`
 export async function uploadPropertyPhoto(propId, file) {
   const fd = new FormData()
@@ -510,6 +519,7 @@ export const getAllReimbursements     = (params = {}) => {
   return req('GET', `/management/reimbursements${qs ? `?${qs}` : ''}`)
 }
 export const getReimbursementSummary  = ()            => req('GET',    `/management/reimbursements/summary`)
+export const getDashboardBreakdown     = (metric)      => req('GET',    `/management/dashboard/breakdown?metric=${encodeURIComponent(metric)}`)
 export const getPropertyReimbursements = (propId)     => req('GET',    `/management/${propId}/reimbursements`)
 export const createReimbursement      = (propId, data) => req('POST',   `/management/${propId}/reimbursements`, data)
 export const updateReimbursement      = (id, data)     => req('PUT',    `/management/reimbursements/${id}`, data)

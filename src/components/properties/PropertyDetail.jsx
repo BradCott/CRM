@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   X, Pencil, Building2, MapPin, Phone, Mail, FileText,
   AlertCircle, CalendarDays, Wrench, User, TrendingUp, Landmark, CheckCircle2, ExternalLink,
+  Sparkles, Loader2, Receipt,
 } from 'lucide-react'
-import { getProperty, togglePortfolio, clearOwnershipReview } from '../../api/client'
+import { getProperty, togglePortfolio, clearOwnershipReview, parseMarketingPackage, parseSettlementPdf } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import Button from '../ui/Button'
 import SendLetterModal from '../handwrytten/SendLetterModal'
+import ExtractedFieldsModal from '../management/ExtractedFieldsModal'
 
 const PIPELINE_STAGES = [
   { key: 'loi',             label: 'LOI' },
@@ -37,6 +39,21 @@ function fmt$(v) {
 }
 function fmtPct(v) { return v ? `${Number(v).toFixed(2)}%` : null }
 function fmtSqft(v) { return v ? `${Number(v).toLocaleString()} sf` : null }
+// land_area may be stored as a bare number or a string like "0.59 Acres";
+// parse out the numeric portion so we never render "NaN".
+function fmtAcres(v) {
+  if (v == null || v === '') return null
+  const n = parseFloat(String(v).replace(/,/g, ''))
+  return Number.isFinite(n) ? `${n.toLocaleString()} acres` : null
+}
+// Dates are stored ISO (YYYY-MM-DD); render US-style MM/DD/YYYY without
+// timezone drift (parse the parts directly rather than through Date()).
+function fmtDate(v) {
+  if (!v) return null
+  const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (m) return `${m[2]}/${m[3]}/${m[1]}`
+  return v
+}
 
 function leaseMonths(leaseEnd) {
   if (!leaseEnd) return null
@@ -72,11 +89,36 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
   const [pipelineStage, setPipelineStage] = useState('loi')
   const [pipelineWorking, setPipelineWorking] = useState(false)
 
+  // Auto-fill from documents (Offering Memorandum → property details, Settlement
+  // Statement → sale price/date). Parses the PDF, then opens a review-and-confirm
+  // modal that overwrites only the fields you approve.
+  const [busyDoc, setBusyDoc]   = useState(null)   // 'marketing' | 'settlement' while parsing
+  const [dragDoc, setDragDoc]   = useState(null)   // 'marketing' | 'settlement' — drop target being hovered
+  const [docError, setDocError] = useState(null)
+  const [autoFill, setAutoFill] = useState(null)   // { docType, data }
+  const omInputRef  = useRef(null)
+  const settInputRef = useRef(null)
+
   useEffect(() => {
     if (!propertyId) return
     setData(null)
     getProperty(propertyId).then(setData).catch(console.error)
   }, [propertyId])
+
+  async function handleDocFile(docType, file) {
+    if (!file) return
+    setBusyDoc(docType); setDocError(null)
+    try {
+      const data = docType === 'settlement'
+        ? await parseSettlementPdf(file)
+        : await parseMarketingPackage(propertyId, file)
+      setAutoFill({ docType, data })
+    } catch (err) {
+      setDocError(err.message)
+    } finally {
+      setBusyDoc(null)
+    }
+  }
 
   async function handlePortfolioToggle() {
     if (!data || toggling) return
@@ -209,6 +251,58 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
       {/* ── Body ───────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
 
+        {/* Auto-fill from documents */}
+        <div className="px-6 pt-4 pb-3 border-b border-slate-100 bg-slate-50/60">
+          <div className="flex items-center gap-1.5 mb-2">
+            <Sparkles className="w-3.5 h-3.5 text-blue-500" />
+            <span className="text-xs font-semibold text-slate-600">Auto-fill from documents</span>
+          </div>
+          <div className="flex items-stretch gap-2">
+            <button
+              onClick={() => busyDoc || omInputRef.current?.click()}
+              disabled={!!busyDoc}
+              onDragOver={e => { e.preventDefault(); if (!busyDoc) setDragDoc('marketing') }}
+              onDragLeave={e => { e.preventDefault(); setDragDoc(d => d === 'marketing' ? null : d) }}
+              onDrop={e => { e.preventDefault(); setDragDoc(null); if (!busyDoc) handleDocFile('marketing', e.dataTransfer.files?.[0]) }}
+              className={`flex-1 flex flex-col items-center justify-center gap-1 px-3 py-3 rounded-lg text-xs font-semibold border-2 border-dashed transition-colors disabled:opacity-60 ${
+                dragDoc === 'marketing'
+                  ? 'border-blue-400 bg-blue-50 text-blue-700'
+                  : 'border-blue-200 bg-white text-blue-700 hover:bg-blue-50'
+              }`}
+            >
+              {busyDoc === 'marketing'
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Reading…</>
+                : <><FileText className="w-4 h-4" /> Offering Memorandum<span className="text-[10px] font-normal text-slate-400">drop PDF or click</span></>}
+            </button>
+            <button
+              onClick={() => busyDoc || settInputRef.current?.click()}
+              disabled={!!busyDoc}
+              onDragOver={e => { e.preventDefault(); if (!busyDoc) setDragDoc('settlement') }}
+              onDragLeave={e => { e.preventDefault(); setDragDoc(d => d === 'settlement' ? null : d) }}
+              onDrop={e => { e.preventDefault(); setDragDoc(null); if (!busyDoc) handleDocFile('settlement', e.dataTransfer.files?.[0]) }}
+              className={`flex-1 flex flex-col items-center justify-center gap-1 px-3 py-3 rounded-lg text-xs font-semibold border-2 border-dashed transition-colors disabled:opacity-60 ${
+                dragDoc === 'settlement'
+                  ? 'border-emerald-400 bg-emerald-50 text-emerald-700'
+                  : 'border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50'
+              }`}
+            >
+              {busyDoc === 'settlement'
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Reading…</>
+                : <><Receipt className="w-4 h-4" /> Settlement Statement<span className="text-[10px] font-normal text-slate-400">drop PDF or click</span></>}
+            </button>
+          </div>
+          <p className="text-[11px] text-slate-400 mt-1.5">
+            OM fills property details (tenant, size, lease, price). Settlement fills the sale price &amp; date.
+          </p>
+          {docError && (
+            <div className="mt-2 flex items-start gap-1.5 text-[11px] text-red-600">
+              <AlertCircle className="w-3.5 h-3.5 mt-px shrink-0" /> {docError}
+            </div>
+          )}
+          <input ref={omInputRef}   type="file" accept=".pdf" className="hidden" onChange={e => { handleDocFile('marketing', e.target.files?.[0]); e.target.value = '' }} />
+          <input ref={settInputRef} type="file" accept=".pdf" className="hidden" onChange={e => { handleDocFile('settlement', e.target.files?.[0]); e.target.value = '' }} />
+        </div>
+
         {/* Location */}
         <Section icon={MapPin} title="Property Address">
           <Grid2>
@@ -225,7 +319,7 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
             <Field label="Property Type"    value={data.property_type} />
             <Field label="Construction"     value={data.construction_type} />
             <Field label="Building Size"    value={fmtSqft(data.building_size)} />
-            <Field label="Land Area"        value={data.land_area ? `${Number(data.land_area).toLocaleString()} sf` : null} />
+            <Field label="Land Area"        value={fmtAcres(data.land_area)} />
             <Field label="Year Built"       value={data.year_built} />
             <Field label="Year Purchased"   value={data.year_purchased} />
           </Grid2>
@@ -235,9 +329,9 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
         <Section icon={CalendarDays} title="Lease">
           <Grid2>
             <Field label="Lease Type"      value={data.lease_type} />
-            <Field label="Lease Start"     value={data.lease_start} />
+            <Field label="Lease Start"     value={fmtDate(data.lease_start)} />
             <Field label="Lease End"       value={data.lease_end
-              ? <span>{data.lease_end}{lm != null && <span className={`ml-2 text-xs font-medium ${leaseColor(lm)}`}>{leaseLabel(lm)}</span>}</span>
+              ? <span>{fmtDate(data.lease_end)}{lm != null && <span className={`ml-2 text-xs font-medium ${leaseColor(lm)}`}>{leaseLabel(lm)}</span>}</span>
               : null}
             />
             <Field label="Annual Rent"     value={fmt$(data.annual_rent)} />
@@ -296,7 +390,7 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
             <Grid2>
               <Field label="Bank / Lender"      value={data.bank} />
               <Field label="Interest Rate"       value={data.interest_rate ? `${data.interest_rate}%` : null} />
-              <Field label="Maturity Date"       value={data.maturity_date} />
+              <Field label="Maturity Date"       value={fmtDate(data.maturity_date)} />
               <Field label="Outstanding Debt"    value={fmt$(data.outstanding_debt)} />
               <Field label="Total Debt Payment"  value={fmt$(data.total_debt_pmt)} />
               <Field label="Interest Payment"    value={fmt$(data.interest_pmt)} />
@@ -313,7 +407,7 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
               <Field label="Broker"         value={data.ins_broker} />
               <Field label="Policy Number"  value={data.policy_number} />
               <Field label="Account Number" value={data.account_number} />
-              <Field label="Expires"        value={data.insurance_exp} />
+              <Field label="Expires"        value={fmtDate(data.insurance_exp)} />
             </Grid2>
           </Section>
         )}
@@ -428,6 +522,17 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
         {/* Bottom padding */}
         <div className="h-8" />
       </div>
+
+      {/* Auto-fill review modal */}
+      {autoFill && (
+        <ExtractedFieldsModal
+          propertyId={propertyId}
+          docType={autoFill.docType}
+          data={autoFill.data}
+          onApplied={() => getProperty(propertyId).then(setData).catch(() => {})}
+          onClose={() => setAutoFill(null)}
+        />
+      )}
 
       {/* Send Letter modal */}
       {showLetterModal && data.owner_id && (

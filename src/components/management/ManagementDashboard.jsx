@@ -5,8 +5,9 @@ import {
   ChevronRight, CheckCircle2, Loader2, RefreshCw,
   LayoutGrid, List, ArrowUpDown, ArrowUp, ArrowDown,
   CalendarClock, RefreshCcw, Search, X, DollarSign, Pencil, Check, ListFilter,
+  ArrowLeft,
 } from 'lucide-react'
-import { getManagementDashboard, completeTask, getAllManagementTasks, getReimbursementSummary, updatePropertyDisplayName } from '../../api/client'
+import { getManagementDashboard, completeTask, getAllManagementTasks, getReimbursementSummary, updatePropertyDisplayName, updatePropertyDisplaySubtitle, getDashboardBreakdown } from '../../api/client'
 import InsurancePage from '../insurance/InsurancePage'
 import ReimbursementsView from './ReimbursementsView'
 
@@ -41,7 +42,7 @@ const TASK_TYPE_COLORS = {
 
 // ── Stat card ─────────────────────────────────────────────────────────────────
 
-function StatCard({ icon: Icon, label, value, color = 'blue', note }) {
+function StatCard({ icon: Icon, label, value, color = 'blue', note, onClick }) {
   const bg = {
     blue:  'bg-blue-50   text-blue-600',
     red:   'bg-red-50    text-red-600',
@@ -49,8 +50,14 @@ function StatCard({ icon: Icon, label, value, color = 'blue', note }) {
     green: 'bg-green-50  text-green-600',
     slate: 'bg-slate-100 text-slate-600',
   }
+  const clickable = typeof onClick === 'function'
   return (
-    <div className="bg-white rounded-xl border border-slate-200 p-4 flex items-center gap-4">
+    <div
+      onClick={onClick}
+      className={`bg-white rounded-xl border border-slate-200 p-4 flex items-center gap-4 ${
+        clickable ? 'cursor-pointer hover:border-blue-300 hover:shadow-sm transition-all' : ''
+      }`}
+    >
       <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${bg[color]}`}>
         <Icon className="w-5 h-5" />
       </div>
@@ -63,21 +70,123 @@ function StatCard({ icon: Icon, label, value, color = 'blue', note }) {
   )
 }
 
-// ── Inline property-name editor ─────────────────────────────────────────────────
-// Shows the property's friendly name (display_name, falling back to the street
-// address). A pencil flips it into an input that saves to the display_name field.
+// ── Widget drill-down (in-page breakdown) ─────────────────────────────────────
 
-function InlineName({ property, onSaved, to, className = '', inputClassName = '' }) {
+function propTitle(r) { return r.display_name || r.address }
+function propSubtitle(r) {
+  return r.display_subtitle || [r.address, r.city, r.state].filter(Boolean).join(', ')
+}
+
+function BreakdownView({ metric, fallbackLabel, onBack }) {
+  const [data, setData]   = useState(null)
+  const [loading, setLoad] = useState(true)
+  const [error, setError] = useState(null)
+
+  useEffect(() => {
+    let alive = true
+    setLoad(true); setError(null)
+    getDashboardBreakdown(metric)
+      .then(d => { if (alive) setData(d) })
+      .catch(e => { if (alive) setError(e.message) })
+      .finally(() => { if (alive) setLoad(false) })
+    return () => { alive = false }
+  }, [metric])
+
+  const col  = data?.column || { label: 'Value', type: 'text' }
+  const rows = data?.rows || []
+
+  function renderVal(v, type) {
+    if (v == null || v === '') return '—'
+    if (type === 'currency') return fmt(v)
+    if (type === 'date')     return fmtDate(v)
+    if (type === 'count')    return v
+    return v
+  }
+
+  // Column total (only meaningful for numeric columns).
+  const total = ['currency', 'count'].includes(col.type)
+    ? rows.reduce((s, r) => s + (Number(r.value) || 0), 0)
+    : rows.length
+
+  return (
+    <div className="space-y-4">
+      <button onClick={onBack} className="flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800">
+        <ArrowLeft className="w-4 h-4" /> Back to dashboard
+      </button>
+
+      <div className="flex items-center justify-between">
+        <h2 className="text-base font-bold text-slate-900">{data?.label || fallbackLabel}</h2>
+        <p className="text-xs text-slate-400">
+          {loading ? 'Loading…' : `${rows.length} propert${rows.length === 1 ? 'y' : 'ies'}`}
+        </p>
+      </div>
+
+      {loading ? (
+        <div className="flex items-center justify-center py-12"><Loader2 className="w-5 h-5 animate-spin text-slate-400" /></div>
+      ) : error ? (
+        <div className="flex items-center gap-2 text-sm text-red-600"><AlertTriangle className="w-4 h-4" /> {error}</div>
+      ) : rows.length === 0 ? (
+        <div className="bg-white border border-dashed border-slate-200 rounded-xl p-10 text-center">
+          <Building2 className="w-8 h-8 text-slate-200 mx-auto mb-2" />
+          <p className="text-sm text-slate-400">Nothing here right now.</p>
+        </div>
+      ) : (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-slate-50 text-xs font-semibold text-slate-500 uppercase tracking-wide border-b border-slate-200">
+                <th className="px-4 py-3 text-left">Property</th>
+                <th className="px-4 py-3 text-left">Tenant</th>
+                {col.subLabel && <th className="px-4 py-3 text-left">{col.subLabel}</th>}
+                <th className="px-4 py-3 text-right">{col.label}</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(r => (
+                <tr key={r.property_id} className="border-t border-slate-100 hover:bg-blue-50/40 transition-colors">
+                  <td className="px-4 py-3">
+                    <Link to={`/management/${r.property_id}`} className="font-medium text-blue-700 hover:underline">
+                      {propTitle(r)}
+                    </Link>
+                    <p className="text-xs text-slate-400 truncate">{propSubtitle(r)}</p>
+                  </td>
+                  <td className="px-4 py-3 text-slate-500">{r.tenant_brand_name || '—'}</td>
+                  {col.subLabel && <td className="px-4 py-3 text-slate-500">{renderVal(r.sub, col.subType)}</td>}
+                  <td className="px-4 py-3 text-right font-semibold text-slate-900">{renderVal(r.value, col.type)}</td>
+                </tr>
+              ))}
+            </tbody>
+            {['currency', 'count'].includes(col.type) && (
+              <tfoot>
+                <tr className="border-t border-slate-200 bg-slate-50 font-semibold text-slate-700">
+                  <td className="px-4 py-3" colSpan={col.subLabel ? 3 : 2}>Total</td>
+                  <td className="px-4 py-3 text-right">{renderVal(total, col.type)}</td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Inline editable text ────────────────────────────────────────────────────────
+// Shows `display`; a hover pencil flips it into an input. `raw` is the currently
+// stored custom value (empty when falling back), `onSave(next)` persists it.
+// Used for both the property display name and the subtitle on the widgets.
+
+function InlineEdit({ raw, display, placeholder, onSave, to, title = 'Edit', className = '', inputClassName = '' }) {
   const [editing, setEditing] = useState(false)
   const [value, setValue]     = useState('')
   const [saving, setSaving]   = useState(false)
   const inputRef = useRef(null)
 
-  const display = property.display_name || property.address
-
   function startEdit(e) {
     e.preventDefault(); e.stopPropagation()
-    setValue(property.display_name || '')
+    // Seed with what's currently shown (the custom value, or the fallback text)
+    // so it can be edited in place rather than retyped from scratch.
+    setValue(raw || display || '')
     setEditing(true)
   }
 
@@ -86,14 +195,14 @@ function InlineName({ property, onSaved, to, className = '', inputClassName = ''
   async function save(e) {
     e?.preventDefault(); e?.stopPropagation()
     const next = value.trim()
-    if (next === (property.display_name || '')) { setEditing(false); return }
+    // No-op if unchanged from either the stored value or the seeded fallback text.
+    if (next === (raw || '') || next === (display || '')) { setEditing(false); return }
     setSaving(true)
     try {
-      await updatePropertyDisplayName(property.id, next)
-      onSaved?.(property.id, next || null)
+      await onSave(next)
       setEditing(false)
     } catch (err) {
-      alert('Could not rename: ' + err.message)
+      alert('Could not save: ' + err.message)
     } finally {
       setSaving(false)
     }
@@ -112,9 +221,9 @@ function InlineName({ property, onSaved, to, className = '', inputClassName = ''
           value={value}
           onChange={e => setValue(e.target.value)}
           onKeyDown={e => { if (e.key === 'Enter') save(e); if (e.key === 'Escape') cancel(e) }}
-          placeholder={property.address}
+          placeholder={placeholder}
           disabled={saving}
-          className={`min-w-0 flex-1 px-1.5 py-0.5 text-sm border border-blue-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 ${inputClassName}`}
+          className={`min-w-0 flex-1 px-1.5 py-0.5 border border-blue-300 rounded bg-white focus:outline-none focus:ring-2 focus:ring-blue-400 ${inputClassName}`}
         />
         <button onClick={save} disabled={saving} className="shrink-0 text-green-600 hover:text-green-700 p-0.5" title="Save">
           {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
@@ -127,14 +236,14 @@ function InlineName({ property, onSaved, to, className = '', inputClassName = ''
   }
 
   return (
-    <span className={`group/name inline-flex items-center gap-1 min-w-0 ${className}`}>
+    <span className={`group/edit inline-flex items-center gap-1 min-w-0 ${className}`}>
       {to
         ? <Link to={to} className="truncate hover:underline">{display}</Link>
         : <span className="truncate">{display}</span>}
       <button
         onClick={startEdit}
-        className="shrink-0 text-slate-300 hover:text-blue-500 opacity-0 group-hover/name:opacity-100 transition-opacity p-0.5"
-        title="Rename"
+        className="shrink-0 text-slate-300 hover:text-blue-500 opacity-0 group-hover/edit:opacity-100 transition-opacity p-0.5"
+        title={title}
       >
         <Pencil className="w-3 h-3" />
       </button>
@@ -142,9 +251,14 @@ function InlineName({ property, onSaved, to, className = '', inputClassName = ''
   )
 }
 
+// Auto subtitle when no custom one is set: "address, city, state".
+function autoSubtitle(p) {
+  return [p.address, p.city, p.state].filter(Boolean).join(', ')
+}
+
 // ── Property card ─────────────────────────────────────────────────────────────
 
-function PropertyCard({ property, counts = {}, onRenamed }) {
+function PropertyCard({ property, counts = {}, onOverride }) {
   return (
     <Link
       to={`/management/${property.id}`}
@@ -153,11 +267,31 @@ function PropertyCard({ property, counts = {}, onRenamed }) {
       <div className="flex items-start justify-between gap-2 mb-3">
         <div className="min-w-0">
           <div className="text-sm font-semibold text-slate-900 group-hover:text-blue-700 transition-colors leading-snug">
-            <InlineName property={property} onSaved={onRenamed} />
+            <InlineEdit
+              raw={property.display_name}
+              display={property.display_name || property.address}
+              placeholder={property.address}
+              title="Rename"
+              inputClassName="text-sm"
+              onSave={async next => {
+                await updatePropertyDisplayName(property.id, next)
+                onOverride?.(property.id, { display_name: next || null })
+              }}
+            />
           </div>
-          <p className="text-xs text-slate-500 mt-0.5 truncate">
-            {[property.address, property.city, property.state].filter(Boolean).join(', ')}
-          </p>
+          <div className="text-xs text-slate-500 mt-0.5">
+            <InlineEdit
+              raw={property.display_subtitle}
+              display={property.display_subtitle || autoSubtitle(property)}
+              placeholder={autoSubtitle(property)}
+              title="Edit subtitle"
+              inputClassName="text-xs"
+              onSave={async next => {
+                await updatePropertyDisplaySubtitle(property.id, next)
+                onOverride?.(property.id, { display_subtitle: next || null })
+              }}
+            />
+          </div>
         </div>
         <ChevronRight className="w-4 h-4 text-slate-300 group-hover:text-blue-400 shrink-0 mt-0.5 transition-colors" />
       </div>
@@ -197,9 +331,9 @@ function PropertyCard({ property, counts = {}, onRenamed }) {
 
 // ── Properties view ───────────────────────────────────────────────────────────
 
-function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
+function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch, onDrill }) {
   const [propView, setPropView] = useState('cards') // 'cards' | 'list'
-  const [renames, setRenames]   = useState({})      // optimistic display_name overrides { [id]: name|null }
+  const [overrides, setOverrides] = useState({})    // optimistic edits { [id]: { display_name?, display_subtitle? } }
   const [filterState,  setFilterState]  = useState('') // list-view: filter by state
   const [filterTenant, setFilterTenant] = useState('') // list-view: filter by tenant
 
@@ -212,11 +346,11 @@ function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
   } = data
 
   const properties = (data.properties || []).map(p =>
-    p.id in renames ? { ...p, display_name: renames[p.id] } : p
+    overrides[p.id] ? { ...p, ...overrides[p.id] } : p
   )
 
-  const handleRenamed = useCallback((id, name) => {
-    setRenames(prev => ({ ...prev, [id]: name }))
+  const handleOverride = useCallback((id, patch) => {
+    setOverrides(prev => ({ ...prev, [id]: { ...prev[id], ...patch } }))
   }, [])
 
   const taxReimb = reimbSummary?.tax       || { count: 0, outstanding: 0 }
@@ -226,7 +360,7 @@ function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
   const searchedProperties = search.trim()
     ? properties.filter(p => {
         const q = search.trim().toLowerCase()
-        return [p.display_name, p.address, p.city, p.state, p.tenant_brand_name, p.owner_name, p.policy_numbers]
+        return [p.display_name, p.display_subtitle, p.address, p.city, p.state, p.tenant_brand_name, p.owner_name, p.policy_numbers]
           .some(v => String(v || '').toLowerCase().includes(q))
       })
     : properties
@@ -250,17 +384,17 @@ function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
     <div className="space-y-5">
       {/* Stats bar — row 1 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard icon={Building2}     label="Portfolio Properties" value={properties.length}         color="blue"  note={fmt(totalRent) + '/yr rent'} />
-        <StatCard icon={AlertTriangle} label="Overdue Tasks"        value={overdue_tasks.length}      color={overdue_tasks.length > 0 ? 'red' : 'green'} />
-        <StatCard icon={Shield}        label="Insurance Expiring"   value={insurance_expiring.length} color={insurance_expiring.length > 0 ? 'amber' : 'green'} note="next 90 days" />
-        <StatCard icon={Receipt}       label="Maintenance YTD"      value={fmt(maintenance_spend_ytd)} color="slate" />
+        <StatCard icon={Building2}     label="Portfolio Properties" value={properties.length}         color="blue"  note={fmt(totalRent) + '/yr rent'} onClick={() => onDrill('properties', 'Portfolio Properties')} />
+        <StatCard icon={AlertTriangle} label="Overdue Tasks"        value={overdue_tasks.length}      color={overdue_tasks.length > 0 ? 'red' : 'green'} onClick={() => onDrill('overdue_tasks', 'Overdue Tasks')} />
+        <StatCard icon={Shield}        label="Insurance Expiring"   value={insurance_expiring.length} color={insurance_expiring.length > 0 ? 'amber' : 'green'} note="next 90 days" onClick={() => onDrill('insurance_expiring', 'Insurance Expiring')} />
+        <StatCard icon={Receipt}       label="Maintenance YTD"      value={fmt(maintenance_spend_ytd)} color="slate" onClick={() => onDrill('maintenance_ytd', 'Maintenance (last 365 days)')} />
       </div>
       {/* Stats bar — row 2 */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <StatCard icon={CalendarClock} label="Tax Due (6 months)"              value={tax_due_6mo}           color={tax_due_6mo > 0 ? 'amber' : 'green'}  note="unpaid tax bills" />
-        <StatCard icon={DollarSign}    label="Awaiting Tax Reimbursement"       value={fmt(taxReimb.outstanding)} color={taxReimb.outstanding > 0 ? 'amber' : 'green'} note={`${taxReimb.count} open · owed by tenants`} />
-        <StatCard icon={DollarSign}    label="Awaiting Insurance Reimbursement" value={fmt(insReimb.outstanding)} color={insReimb.outstanding > 0 ? 'amber' : 'green'} note={`${insReimb.count} open · owed by tenants`} />
-        <StatCard icon={DollarSign}    label="Awaiting CAM Reimbursement"       value={fmt(camReimb.outstanding)} color={camReimb.outstanding > 0 ? 'amber' : 'green'} note={`${camReimb.count} open · owed by tenants`} />
+        <StatCard icon={CalendarClock} label="Tax Due (6 months)"              value={tax_due_6mo}           color={tax_due_6mo > 0 ? 'amber' : 'green'}  note="unpaid tax bills" onClick={() => onDrill('tax_due_6mo', 'Tax Due (6 months)')} />
+        <StatCard icon={DollarSign}    label="Awaiting Tax Reimbursement"       value={fmt(taxReimb.outstanding)} color={taxReimb.outstanding > 0 ? 'amber' : 'green'} note={`${taxReimb.count} open · owed by tenants`} onClick={() => onDrill('tax', 'Awaiting Tax Reimbursement')} />
+        <StatCard icon={DollarSign}    label="Awaiting Insurance Reimbursement" value={fmt(insReimb.outstanding)} color={insReimb.outstanding > 0 ? 'amber' : 'green'} note={`${insReimb.count} open · owed by tenants`} onClick={() => onDrill('insurance', 'Awaiting Insurance Reimbursement')} />
+        <StatCard icon={DollarSign}    label="Awaiting CAM Reimbursement"       value={fmt(camReimb.outstanding)} color={camReimb.outstanding > 0 ? 'amber' : 'green'} note={`${camReimb.count} open · owed by tenants`} onClick={() => onDrill('cam', 'Awaiting CAM Reimbursement')} />
       </div>
 
       {/* Alert banners (compact) */}
@@ -356,7 +490,7 @@ function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
           /* Cards grid */
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
             {filteredProperties.map(p => (
-              <PropertyCard key={p.id} property={p} counts={task_counts[p.id] || {}} onRenamed={handleRenamed} />
+              <PropertyCard key={p.id} property={p} counts={task_counts[p.id] || {}} onOverride={handleOverride} />
             ))}
           </div>
         ) : (
@@ -382,11 +516,32 @@ function PropertiesView({ data, reimbSummary, onRefresh, search, setSearch }) {
                     <tr key={p.id} className="border-t border-slate-100 hover:bg-blue-50/40 transition-colors">
                       <td className="px-4 py-3">
                         <div className="font-medium text-blue-700">
-                          <InlineName property={p} onSaved={handleRenamed} to={`/management/${p.id}`} />
+                          <InlineEdit
+                            raw={p.display_name}
+                            display={p.display_name || p.address}
+                            placeholder={p.address}
+                            title="Rename"
+                            to={`/management/${p.id}`}
+                            inputClassName="text-sm"
+                            onSave={async next => {
+                              await updatePropertyDisplayName(p.id, next)
+                              handleOverride(p.id, { display_name: next || null })
+                            }}
+                          />
                         </div>
-                        <p className="text-xs text-slate-400 truncate">
-                          {[p.address, p.city, p.state].filter(Boolean).join(', ') || '—'}
-                        </p>
+                        <div className="text-xs text-slate-400">
+                          <InlineEdit
+                            raw={p.display_subtitle}
+                            display={p.display_subtitle || autoSubtitle(p)}
+                            placeholder={autoSubtitle(p)}
+                            title="Edit subtitle"
+                            inputClassName="text-xs"
+                            onSave={async next => {
+                              await updatePropertyDisplaySubtitle(p.id, next)
+                              handleOverride(p.id, { display_subtitle: next || null })
+                            }}
+                          />
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-slate-500">{p.city || '—'}</td>
                       <td className="px-4 py-3 text-slate-500">{p.state || '—'}</td>
@@ -677,6 +832,9 @@ export default function ManagementDashboard() {
   const [error, setError]     = useState(null)
   const [view, setView]       = useState('properties') // 'properties' | 'all-tasks' | 'insurance' | 'reimbursements'
   const [search, setSearch]   = useState('')
+  const [drill, setDrill]     = useState(null)          // { metric, label } when a stat card is opened
+
+  const handleDrill = useCallback((metric, label) => setDrill({ metric, label }), [])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -733,7 +891,7 @@ export default function ManagementDashboard() {
       {/* View tabs */}
       <div className="flex items-center gap-1 px-6 py-2 border-b border-slate-200 bg-white shrink-0">
         <button
-          onClick={() => setView('properties')}
+          onClick={() => { setView('properties'); setDrill(null) }}
           className={`flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-medium transition-colors ${
             view === 'properties' ? 'bg-blue-50 text-blue-700' : 'text-slate-600 hover:bg-slate-100'
           }`}
@@ -771,8 +929,8 @@ export default function ManagementDashboard() {
           <DollarSign className="w-3.5 h-3.5" /> Reimbursements
         </button>
 
-        {/* Search — right-aligned, only visible on the Properties tab */}
-        {view === 'properties' && (
+        {/* Search — right-aligned, only visible on the Properties tab (not while drilled in) */}
+        {view === 'properties' && !drill && (
           <div className="relative ml-auto w-72">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
             <input
@@ -796,7 +954,13 @@ export default function ManagementDashboard() {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        {view === 'properties'     && <div className="p-6"><PropertiesView data={data} reimbSummary={reimbSummary} onRefresh={load} search={search} setSearch={setSearch} /></div>}
+        {view === 'properties' && (
+          <div className="p-6">
+            {drill
+              ? <BreakdownView metric={drill.metric} fallbackLabel={drill.label} onBack={() => setDrill(null)} />
+              : <PropertiesView data={data} reimbSummary={reimbSummary} onRefresh={load} search={search} setSearch={setSearch} onDrill={handleDrill} />}
+          </div>
+        )}
         {view === 'all-tasks'      && <div className="p-6"><AllTasksView /></div>}
         {view === 'insurance'      && <InsurancePage />}
         {view === 'reimbursements' && <ReimbursementsView />}
