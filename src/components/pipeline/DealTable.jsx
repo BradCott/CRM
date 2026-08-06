@@ -1,6 +1,6 @@
 import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Settings2, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle, XCircle, Link2 } from 'lucide-react'
+import { Settings2, Trash2, ChevronUp, ChevronDown, ChevronsUpDown, CheckCircle, XCircle, Link2, ArrowUpRight } from 'lucide-react'
 import ColumnCustomizer, {
   buildPanelCols, loadSavedCols, detectPreset, saveColsToStorage,
 } from '../ui/ColumnCustomizer'
@@ -370,6 +370,14 @@ export default function DealTable({ deals, onDelete, onCellSave, onCloseDeal, on
                 {/* Actions cell */}
                 <td className="px-3 py-3 pr-6 border-b border-slate-100">
                   <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* Open deal detail */}
+                    <button
+                      onClick={e => { e.stopPropagation(); navigate(`/pipeline/${deal.id}`) }}
+                      title="Open deal — returns calculator"
+                      className="flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800 border border-blue-200 bg-blue-50 hover:bg-blue-100 px-2 py-0.5 rounded transition-colors"
+                    >
+                      Open <ArrowUpRight className="w-3 h-3" />
+                    </button>
                     {/* Linked property */}
                     {deal.property_id && deal.property_address ? (
                       <button

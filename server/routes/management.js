@@ -93,7 +93,7 @@ const LEASE_CATEGORIES = [
 // together. `docs` is [{ buffer, mediaType, name, doc_type }]. Uses a stronger
 // model + larger budget than the quick insurance extractor. Returns a parsed
 // object.
-async function abstractLease(docs) {
+export async function abstractLease(docs) {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set')
   if (!docs.length) throw new Error('No lease documents to abstract')
@@ -924,10 +924,9 @@ Extract exact values as they appear in the document. For dollar amounts include 
 // memorandum / flyer (usually uploaded while the property is still in the
 // pipeline stage) to seed the basic property details. Returns extracted JSON for
 // the review-and-confirm auto-fill flow; does NOT save anything on its own.
-router.post('/:propertyId/marketing/parse', upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
-
-  const mediaType = req.file.mimetype || 'application/pdf'
+// Parse a marketing package / OM buffer into the basic property-detail JSON.
+// Shared by the property auto-fill route and the pipeline deal parser.
+export async function parseMarketingBuffer(buffer, mediaType = 'application/pdf') {
   const prompt = `You are extracting the basic property details from a commercial real estate marketing package / offering memorandum / property flyer. Return ONLY a valid JSON object with these exact fields — no explanation, no markdown:
 
 {
@@ -967,32 +966,37 @@ For cap_rate: the capitalization rate as a bare number (e.g. 6.25 for 6.25%).
 For list_price: the asking / offering price as a bare number.
 Extract exact values as they appear. Use "" for anything not found in the document.`
 
-  try {
-    let pdfBuffer = req.file.buffer
-    if (mediaType === 'application/pdf') {
-      // Trim to the first 20 pages to stay under Anthropic's limits. Marketing
-      // PDFs are often "encrypted" with permission flags (no password); pdf-lib
-      // can't copy pages out of those, so if trimming fails we fall back to
-      // sending the original PDF straight to Claude (its processor handles them).
-      try {
-        const srcDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true })
-        const total  = srcDoc.getPageCount()
-        if (total > 20) {
-          const trimDoc = await PDFDocument.create()
-          const pages   = await trimDoc.copyPages(srcDoc, [...Array(20).keys()])
-          pages.forEach(p => trimDoc.addPage(p))
-          pdfBuffer = Buffer.from(await trimDoc.save())
-          console.log(`[management] marketing PDF truncated from ${total} to 20 pages`)
-        }
-      } catch (trimErr) {
-        console.warn('[management] marketing PDF trim skipped (sending original):', trimErr.message)
+  let pdfBuffer = buffer
+  if (mediaType === 'application/pdf') {
+    // Trim to the first 20 pages to stay under Anthropic's limits. Marketing
+    // PDFs are often "encrypted" with permission flags (no password); pdf-lib
+    // can't copy pages out of those, so if trimming fails we fall back to
+    // sending the original PDF straight to Claude (its processor handles them).
+    try {
+      const srcDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true })
+      const total  = srcDoc.getPageCount()
+      if (total > 20) {
+        const trimDoc = await PDFDocument.create()
+        const pages   = await trimDoc.copyPages(srcDoc, [...Array(20).keys()])
+        pages.forEach(p => trimDoc.addPage(p))
+        pdfBuffer = Buffer.from(await trimDoc.save())
+        console.log(`[management] marketing PDF truncated from ${total} to 20 pages`)
       }
+    } catch (trimErr) {
+      console.warn('[management] marketing PDF trim skipped (sending original):', trimErr.message)
     }
+  }
 
-    const result = await callClaude(pdfBuffer, mediaType, prompt)
-    const raw  = result.content[0].text.trim()
-    const json = raw.replace(/^```json\s*/i, '').replace(/\s*```$/, '')
-    const data = JSON.parse(json)
+  const result = await callClaude(pdfBuffer, mediaType, prompt)
+  const raw  = result.content[0].text.trim()
+  const json = raw.replace(/^```json\s*/i, '').replace(/\s*```$/, '')
+  return JSON.parse(json)
+}
+
+router.post('/:propertyId/marketing/parse', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  try {
+    const data = await parseMarketingBuffer(req.file.buffer, req.file.mimetype || 'application/pdf')
     res.json(data)
   } catch (err) {
     console.error('[management] marketing parse error:', err.message)

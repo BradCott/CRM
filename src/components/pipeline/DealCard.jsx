@@ -1,5 +1,5 @@
 import { Draggable } from '@hello-pangea/dnd'
-import { MapPin, Calendar, Pencil, Trash2, DollarSign, Link2 } from 'lucide-react'
+import { MapPin, Calendar, Pencil, Trash2, DollarSign, Link2, ArrowUpRight } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { formatCurrency, formatDate } from '../../utils/formatters'
 
@@ -40,6 +40,13 @@ export default function DealCard({ deal, index, onEdit, onDelete, onLink }) {
               </span>
             )}
             <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
+              <button
+                onClick={e => { e.stopPropagation(); navigate(`/pipeline/${deal.id}`) }}
+                title="Open deal — returns calculator"
+                className="w-6 h-6 rounded flex items-center justify-center text-slate-400 hover:text-blue-700 hover:bg-blue-50"
+              >
+                <ArrowUpRight className="w-3.5 h-3.5" />
+              </button>
               <button
                 onClick={e => { e.stopPropagation(); onLink?.(deal) }}
                 title={deal.property_id ? 'Linked to market property' : 'Link to market property'}

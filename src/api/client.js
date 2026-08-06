@@ -92,6 +92,14 @@ export const markPropertySold      = (id, data)  => req('PATCH', `/properties/${
 
 // Deals
 export const getDeals       = ()       => req('GET',    '/deals')
+export const getDeal        = (id)     => req('GET',    `/deals/${id}`)
+export const updateDealField = (id, column, value) => req('PATCH', `/deals/${id}/field`, { column, value })
+export async function parseDealDoc(id, docType, files) {
+  const fd = new FormData()
+  fd.append('docType', docType)
+  for (const f of files) fd.append('files', f)
+  return req('POST', `/deals/${id}/parse`, fd)   // { deal, applied }
+}
 export const getDroppedDeals = ()      => req('GET',    '/deals/dropped')
 export const createDeal     = (data)   => req('POST',   '/deals', data)
 export const updateDeal     = (id, d)  => req('PUT',    `/deals/${id}`, d)

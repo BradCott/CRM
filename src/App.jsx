@@ -6,6 +6,7 @@ import PeoplePage       from './components/people/PeoplePage'
 import TenantContactsPage from './components/people/TenantContactsPage'
 import ExtensionPage     from './components/settings/ExtensionPage'
 import PipelinePage     from './components/pipeline/PipelinePage'
+import DealDetailPage   from './components/pipeline/DealDetailPage'
 import PropertiesPage   from './components/properties/PropertiesPage'
 import ImportPage       from './components/import/ImportPage'
 import ReportsPage      from './components/reports/ReportsPage'
@@ -100,6 +101,7 @@ export default function App() {
               <Route path="/extension"  element={<ExtensionPage />} />
               <Route path="/properties" element={<PropertiesPage />} />
               <Route path="/pipeline"   element={<PipelinePage />} />
+              <Route path="/pipeline/:dealId" element={<DealDetailPage />} />
               <Route path="/reports"    element={<ReportsPage />} />
 
               {/* Admin + Full Agent only */}
