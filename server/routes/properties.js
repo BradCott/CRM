@@ -22,8 +22,20 @@ function resolveOwner(f) {
   return Number(r.lastInsertRowid)
 }
 
+// Displayed cap rate = the actual going-in cap on our basis: NOI ÷ what we
+// actually paid (purchase price), rounded to 2 decimals. Falls back to the
+// stored (OM / asking) cap rate until we have BOTH a purchase price and an NOI.
+// The original stored value stays available as `stated_cap_rate`.
+const CAP_RATE_EXPR = `CASE
+    WHEN CAST(p.noi AS REAL) > 0 AND CAST(p.purchase_price AS REAL) > 0
+    THEN ROUND(CAST(p.noi AS REAL) * 100.0 / CAST(p.purchase_price AS REAL), 2)
+    ELSE p.cap_rate END`
+// Emitted right after p.* so the derived `cap_rate` alias overrides the raw column.
+const CAP_RATE_COLS = `p.cap_rate AS stated_cap_rate, ${CAP_RATE_EXPR} AS cap_rate`
+
 const BASE_SELECT = `
   SELECT p.*,
+    ${CAP_RATE_COLS},
     t.name AS tenant_brand_name,
     op.name         AS operator_name,
     op.is_corporate AS operator_is_corporate,
@@ -44,6 +56,25 @@ const BASE_SELECT = `
   LEFT JOIN people o ON o.id = p.owner_id
 `
 
+// Full single-property shape: BASE_SELECT (incl. operator + tenant + derived cap
+// rate) plus the extra owner columns the detail panel's Owner section needs. Used
+// for every single-row response (GET /:id and the inline PATCH endpoints) so the
+// panel's `data` always has a complete, stable shape after any edit.
+const FULL_PROPERTY_SELECT = BASE_SELECT.replace(
+  'FROM properties p',
+  `, o.role      AS owner_role,
+    o.last_name  AS owner_last_name,
+    o.phone2     AS owner_phone2,
+    o.mobile     AS owner_mobile,
+    o.email2     AS owner_email2,
+    o.address2   AS owner_address2,
+    o.city2      AS owner_city2,
+    o.state2     AS owner_state2,
+    o.zip2       AS owner_zip2,
+    o.notes      AS owner_notes,
+    o.sub_label  AS owner_sub_label
+  FROM properties p`)
+
 // Safe whitelist: column key → SQL expression for ORDER BY
 const SORT_MAP = {
   address:        'p.address',
@@ -57,7 +88,7 @@ const SORT_MAP = {
   lease_start:    'p.lease_start',
   lease_end:      'p.lease_end',
   days_remaining: 'p.lease_end',
-  cap_rate:       'CAST(p.cap_rate AS REAL)',
+  cap_rate:       CAP_RATE_EXPR,
   noi:            'CAST(p.noi AS REAL)',
   annual_rent:    'CAST(p.annual_rent AS REAL)',
   list_price:     'CAST(p.list_price AS REAL)',
@@ -279,34 +310,7 @@ router.get('/check-duplicate', (req, res) => {
 })
 
 router.get('/:id', (req, res) => {
-  const row = db.prepare(`
-    SELECT p.*,
-      t.name AS tenant_brand_name,
-      o.name         AS owner_name,
-      o.role         AS owner_role,
-      o.first_name   AS owner_first_name,
-      o.last_name    AS owner_last_name,
-      o.phone        AS owner_phone,
-      o.phone2       AS owner_phone2,
-      o.mobile       AS owner_mobile,
-      o.email        AS owner_email,
-      o.email2       AS owner_email2,
-      o.address      AS owner_address,
-      o.city         AS owner_city,
-      o.state        AS owner_state,
-      o.zip          AS owner_zip,
-      o.address2     AS owner_address2,
-      o.city2        AS owner_city2,
-      o.state2       AS owner_state2,
-      o.zip2         AS owner_zip2,
-      o.do_not_contact AS owner_do_not_contact,
-      o.notes        AS owner_notes,
-      o.sub_label    AS owner_sub_label
-    FROM properties p
-    LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
-    LEFT JOIN people o ON o.id = p.owner_id
-    WHERE p.id = ?
-  `).get(req.params.id)
+  const row = db.prepare(`${FULL_PROPERTY_SELECT} WHERE p.id = ?`).get(req.params.id)
   if (!row) return res.status(404).json({ error: 'Not found' })
 
   const deals = db.prepare(`SELECT * FROM deals WHERE property_id = ? ORDER BY id DESC`).all(req.params.id)
@@ -410,6 +414,91 @@ router.put('/:id', (req, res) => {
   } catch (err) {
     console.error('[PUT /api/properties/:id] SQL error:', err.message)
     res.status(500).json({ error: err.message || 'Failed to update property' })
+  }
+})
+
+// Columns editable one-at-a-time via inline click-to-edit in the detail panel,
+// mapped to a coercion type. Deliberately excludes derived/relational/auto
+// columns (cap_rate is derived from NOI÷purchase price; fee is auto; tenant/
+// operator/owner are relational; timestamps/geo/drive are system-managed).
+const EDITABLE_FIELDS = {
+  address:'text', city:'text', state:'text', zip:'text',
+  property_type:'text', construction_type:'text',
+  building_size:'real', land_area:'real', year_built:'int', year_purchased:'int',
+  lease_type:'text', lease_start:'date', lease_end:'date',
+  annual_rent:'real', rent_bumps:'text', renewal_options:'text',
+  noi:'real', list_price:'real', purchase_price:'real', estimated_value:'real',
+  expense:'real', taxes:'real', insurance:'real',
+  roof_year:'int', hvac_year:'int', parking_lot:'text',
+  bank:'text', interest_rate:'real', maturity_date:'date', outstanding_debt:'real',
+  total_debt_pmt:'real', interest_pmt:'real', principal_pmt:'real', rtd_ratio:'real',
+  ins_broker:'text', policy_number:'text', account_number:'text', insurance_exp:'date',
+  store_number:'text', qb_account:'text', store_manager:'text', district_manager:'text',
+  notes:'text',
+}
+
+function coerceField(type, raw) {
+  if (raw == null) return null
+  if (type === 'text' || type === 'date') { const s = String(raw).trim(); return s || null }
+  if (type === 'int')  { const n = parseInt(String(raw).replace(/[^0-9.\-]/g, ''), 10); return Number.isFinite(n) ? n : null }
+  const n = parseFloat(String(raw).replace(/[^0-9.\-]/g, '')) // 'real'
+  return Number.isFinite(n) ? n : null
+}
+
+// PATCH /api/properties/:id/field  body: { column, value } — update a single
+// whitelisted column. Only touches the one column, so it never clobbers other
+// fields (e.g. values just auto-filled from an OM / settlement statement).
+router.patch('/:id/field', (req, res) => {
+  const propId = parseInt(req.params.id, 10)
+  const { column, value } = req.body || {}
+  const type = EDITABLE_FIELDS[column]
+  if (!type) return res.status(400).json({ error: `Field "${column}" is not editable` })
+  try {
+    const coerced = coerceField(type, value)
+    const result = db.prepare(`UPDATE properties SET ${column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(coerced, propId)
+    if (result.changes === 0) return res.status(404).json({ error: `Property ${propId} not found` })
+    const row = db.prepare(`${FULL_PROPERTY_SELECT} WHERE p.id = ?`).get(propId)
+    res.json(row)
+  } catch (err) {
+    console.error('[PATCH /api/properties/:id/field] SQL error:', err.message)
+    res.status(500).json({ error: err.message || 'Failed to update field' })
+  }
+})
+
+// Relational inline edits: link the property to a tenant brand, operator, or
+// owner (people) record. Pass `id` to select an existing record, `name` to
+// find-or-create by name, or neither/blank to clear the link.
+const RELATION_MAP = {
+  tenant:   { column: 'tenant_brand_id', table: 'tenant_brands', insert: name => db.prepare('INSERT INTO tenant_brands (name) VALUES (?)').run(name) },
+  operator: { column: 'operator_id',     table: 'operators',     insert: name => db.prepare('INSERT INTO operators (name) VALUES (?)').run(name) },
+  owner:    { column: 'owner_id',        table: 'people',        insert: name => db.prepare("INSERT INTO people (name, role) VALUES (?, 'owner')").run(name) },
+}
+
+// PATCH /api/properties/:id/relation  body: { relation, id?, name? }
+router.patch('/:id/relation', (req, res) => {
+  const propId = parseInt(req.params.id, 10)
+  const { relation, id, name } = req.body || {}
+  const cfg = RELATION_MAP[relation]
+  if (!cfg) return res.status(400).json({ error: `Unknown relation "${relation}"` })
+  try {
+    let fkId = null
+    if (id != null && id !== '') {
+      fkId = parseInt(id, 10)
+      if (!Number.isFinite(fkId)) return res.status(400).json({ error: 'Invalid id' })
+    } else {
+      const nm = String(name ?? '').trim()
+      if (nm) {
+        const existing = db.prepare(`SELECT id FROM ${cfg.table} WHERE name = ? COLLATE NOCASE`).get(nm)
+        fkId = existing ? existing.id : Number(cfg.insert(nm).lastInsertRowid)
+      }
+    }
+    const result = db.prepare(`UPDATE properties SET ${cfg.column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(fkId, propId)
+    if (result.changes === 0) return res.status(404).json({ error: `Property ${propId} not found` })
+    const row = db.prepare(`${FULL_PROPERTY_SELECT} WHERE p.id = ?`).get(propId)
+    res.json(row)
+  } catch (err) {
+    console.error('[PATCH /api/properties/:id/relation] SQL error:', err.message)
+    res.status(500).json({ error: err.message || 'Failed to update relation' })
   }
 })
 

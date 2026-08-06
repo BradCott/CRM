@@ -69,6 +69,10 @@ export const getPropertyStates = ()     => req('GET',    '/properties/states')
 export const getProperty     = (id)     => req('GET',    `/properties/${id}`)
 export const createProperty  = (data)   => req('POST',   '/properties', data)
 export const updateProperty  = (id, d)  => req('PUT',    `/properties/${id}`, d)
+export const updatePropertyField = (id, column, value) => req('PATCH', `/properties/${id}/field`, { column, value })
+// relation ∈ 'tenant' | 'operator' | 'owner'. Pass {id} to link an existing record,
+// {name} to find-or-create by name, or {} to clear the link.
+export const updatePropertyRelation = (id, relation, payload) => req('PATCH', `/properties/${id}/relation`, { relation, ...payload })
 export const deleteProperty        = (id)     => req('DELETE', `/properties/${id}`)
 export const getPropertyDriveDocs  = (id, rematch = false) => req('GET', `/properties/${id}/drive-docs${rematch ? '?rematch=1' : ''}`)
 // Fetch a Drive file's bytes and wrap it as a File, so it can be fed to the

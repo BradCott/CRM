@@ -3,11 +3,13 @@ import { useNavigate } from 'react-router-dom'
 import {
   X, Pencil, Building2, MapPin, Phone, Mail, FileText,
   AlertCircle, CalendarDays, Wrench, User, TrendingUp, Landmark, CheckCircle2, ExternalLink,
-  Sparkles, Loader2, Receipt,
+  Sparkles, Loader2, Receipt, Check, Plus,
 } from 'lucide-react'
-import { getProperty, togglePortfolio, clearOwnershipReview, parseMarketingPackage, parseSettlementPdf } from '../../api/client'
+import {
+  getProperty, togglePortfolio, clearOwnershipReview, parseMarketingPackage, parseSettlementPdf,
+  updatePropertyField, updatePropertyRelation, getTenantBrands, getOperators, getAllPeople,
+} from '../../api/client'
 import { useApp } from '../../context/AppContext'
-import Button from '../ui/Button'
 import SendLetterModal from '../handwrytten/SendLetterModal'
 import ExtractedFieldsModal from '../management/ExtractedFieldsModal'
 
@@ -99,11 +101,47 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
   const omInputRef  = useRef(null)
   const settInputRef = useRef(null)
 
+  // Inline single-field editing: click a cell → edit in place → save just that
+  // one column (never touches the others, so auto-filled data always sticks).
+  const [savingField, setSavingField] = useState(null)
+  const [saveError, setSaveError]     = useState(null)
+
   useEffect(() => {
     if (!propertyId) return
     setData(null)
     getProperty(propertyId).then(setData).catch(console.error)
   }, [propertyId])
+
+  async function saveField(column, value) {
+    setSavingField(column); setSaveError(null)
+    setData(d => ({ ...d, [column]: value }))          // optimistic
+    try {
+      const row = await updatePropertyField(propertyId, column, value)
+      setData(row)                                     // authoritative (refreshes derived cap rate, fee, etc.)
+      onPortfolioChange?.()                            // let the parent list reflect the edit
+    } catch (err) {
+      setSaveError(err.message)
+      getProperty(propertyId).then(setData).catch(() => {})   // revert to server truth
+    } finally {
+      setSavingField(null)
+    }
+  }
+
+  // Link the property to a tenant brand / operator / owner. payload is {id} to
+  // pick an existing record, {name} to find-or-create, or {} to clear.
+  async function saveRelation(relation, payload) {
+    setSavingField(relation); setSaveError(null)
+    try {
+      const row = await updatePropertyRelation(propertyId, relation, payload)
+      setData(row)
+      onPortfolioChange?.()
+    } catch (err) {
+      setSaveError(err.message)
+      getProperty(propertyId).then(setData).catch(() => {})
+    } finally {
+      setSavingField(null)
+    }
+  }
 
   async function handleDocFile(docType, file) {
     if (!file) return
@@ -219,9 +257,6 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
             >
               <TrendingUp className="w-3.5 h-3.5" /> Add to Pipeline
             </button>
-            <Button variant="ghost" size="sm" onClick={() => onEdit(data)}>
-              <Pencil className="w-3.5 h-3.5 mr-1" /> Edit
-            </Button>
             <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100">
               <X className="w-4 h-4" />
             </button>
@@ -250,6 +285,14 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
 
       {/* ── Body ───────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
+
+        {saveError && (
+          <div className="mx-6 mt-3 flex items-start gap-1.5 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
+            <AlertCircle className="w-3.5 h-3.5 mt-px shrink-0" />
+            <span className="flex-1">Couldn’t save: {saveError}</span>
+            <button onClick={() => setSaveError(null)} className="text-red-400 hover:text-red-700 font-bold leading-none">✕</button>
+          </div>
+        )}
 
         {/* Auto-fill from documents */}
         <div className="px-6 pt-4 pb-3 border-b border-slate-100 bg-slate-50/60">
@@ -303,40 +346,54 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
           <input ref={settInputRef} type="file" accept=".pdf" className="hidden" onChange={e => { handleDocFile('settlement', e.target.files?.[0]); e.target.value = '' }} />
         </div>
 
+        {/* Tenant & Operator */}
+        <Section icon={User} title="Tenant & Operator">
+          <Grid2>
+            <RelationField
+              label="Tenant" relation="tenant" propertyId={propertyId}
+              currentId={data.tenant_brand_id} currentName={data.tenant_brand_name}
+              loadOptions={getTenantBrands} onCommit={saveRelation} saving={savingField === 'tenant'}
+            />
+            <RelationField
+              label="Operator / Franchisee" relation="operator" propertyId={propertyId}
+              currentId={data.operator_id} currentName={data.operator_name}
+              loadOptions={getOperators} onCommit={saveRelation} saving={savingField === 'operator'}
+            />
+          </Grid2>
+        </Section>
+
         {/* Location */}
         <Section icon={MapPin} title="Property Address">
           <Grid2>
-            <Field label="Street"  value={data.address} />
-            <Field label="City"    value={data.city} />
-            <Field label="State"   value={data.state} />
-            <Field label="ZIP"     value={data.zip} />
+            <EF label="Street"  field="address" value={data.address} save={saveField} saving={savingField} />
+            <EF label="City"    field="city"    value={data.city}    save={saveField} saving={savingField} />
+            <EF label="State"   field="state"   value={data.state}   save={saveField} saving={savingField} />
+            <EF label="ZIP"     field="zip"     value={data.zip}     save={saveField} saving={savingField} />
           </Grid2>
         </Section>
 
         {/* Building */}
         <Section icon={Building2} title="Building Info">
           <Grid2>
-            <Field label="Property Type"    value={data.property_type} />
-            <Field label="Construction"     value={data.construction_type} />
-            <Field label="Building Size"    value={fmtSqft(data.building_size)} />
-            <Field label="Land Area"        value={fmtAcres(data.land_area)} />
-            <Field label="Year Built"       value={data.year_built} />
-            <Field label="Year Purchased"   value={data.year_purchased} />
+            <EF label="Property Type"  field="property_type"     value={data.property_type}     save={saveField} saving={savingField} />
+            <EF label="Construction"   field="construction_type" value={data.construction_type} save={saveField} saving={savingField} />
+            <EF label="Building Size"  field="building_size"     value={data.building_size} type="sqft"  save={saveField} saving={savingField} />
+            <EF label="Land Area"      field="land_area"         value={data.land_area}     type="acres" save={saveField} saving={savingField} />
+            <EF label="Year Built"     field="year_built"        value={data.year_built}    type="int"   save={saveField} saving={savingField} />
+            <EF label="Year Purchased" field="year_purchased"    value={data.year_purchased} type="int"  save={saveField} saving={savingField} />
           </Grid2>
         </Section>
 
         {/* Lease */}
         <Section icon={CalendarDays} title="Lease">
           <Grid2>
-            <Field label="Lease Type"      value={data.lease_type} />
-            <Field label="Lease Start"     value={fmtDate(data.lease_start)} />
-            <Field label="Lease End"       value={data.lease_end
-              ? <span>{fmtDate(data.lease_end)}{lm != null && <span className={`ml-2 text-xs font-medium ${leaseColor(lm)}`}>{leaseLabel(lm)}</span>}</span>
-              : null}
-            />
-            <Field label="Annual Rent"     value={fmt$(data.annual_rent)} />
-            <Field label="Rent Bumps"      value={data.rent_bumps} />
-            <Field label="Renewal Options" value={data.renewal_options} />
+            <EF label="Lease Type"  field="lease_type"  value={data.lease_type} save={saveField} saving={savingField} />
+            <EF label="Lease Start" field="lease_start" value={data.lease_start} type="date" save={saveField} saving={savingField} />
+            <EF label="Lease End"   field="lease_end"   value={data.lease_end}   type="date" save={saveField} saving={savingField}
+              suffix={lm != null && <span className={`ml-2 text-xs font-medium ${leaseColor(lm)}`}>{leaseLabel(lm)}</span>} />
+            <EF label="Annual Rent"     field="annual_rent"     value={data.annual_rent} type="currency" save={saveField} saving={savingField} />
+            <EF label="Rent Bumps"      field="rent_bumps"      value={data.rent_bumps} save={saveField} saving={savingField} />
+            <EF label="Renewal Options" field="renewal_options" value={data.renewal_options} save={saveField} saving={savingField} />
           </Grid2>
         </Section>
 
@@ -344,13 +401,13 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
         <Section icon={TrendingUp} title="Financials">
           <Grid2>
             <Field label="Cap Rate"        value={fmtPct(data.cap_rate)} accent="emerald" />
-            <Field label="NOI"             value={fmt$(data.noi)} />
-            <Field label="List Price"      value={fmt$(data.list_price)} />
-            <Field label="Purchase Price"  value={fmt$(data.purchase_price)} />
-            <Field label="Estimated Value" value={fmt$(data.estimated_value)} />
-            <Field label="Expense"         value={fmt$(data.expense)} />
-            <Field label="Taxes"           value={fmt$(data.taxes)} />
-            <Field label="Insurance"       value={fmt$(data.insurance)} />
+            <EF label="NOI"             field="noi"             value={data.noi}             type="currency" save={saveField} saving={savingField} />
+            <EF label="List Price"      field="list_price"      value={data.list_price}      type="currency" save={saveField} saving={savingField} />
+            <EF label="Purchase Price"  field="purchase_price"  value={data.purchase_price}  type="currency" save={saveField} saving={savingField} />
+            <EF label="Estimated Value" field="estimated_value" value={data.estimated_value} type="currency" save={saveField} saving={savingField} />
+            <EF label="Expense"         field="expense"         value={data.expense}         type="currency" save={saveField} saving={savingField} />
+            <EF label="Taxes"           field="taxes"           value={data.taxes}           type="currency" save={saveField} saving={savingField} />
+            <EF label="Insurance"       field="insurance"       value={data.insurance}       type="currency" save={saveField} saving={savingField} />
             <Field label="Listing Status" value={
               data.listing_status === 'listed'           ? <span className="text-blue-700 font-semibold">Listed</span>
               : data.listing_status === 'under_contract' ? <span className="text-amber-700 font-semibold">Under Contract</span>
@@ -378,9 +435,9 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
         {/* Systems */}
         <Section icon={Wrench} title="Systems">
           <Grid2>
-            <Field label="Roof Year"   value={data.roof_year} />
-            <Field label="HVAC Year"   value={data.hvac_year} />
-            <Field label="Parking Lot" value={data.parking_lot} />
+            <EF label="Roof Year"   field="roof_year"   value={data.roof_year} type="int" save={saveField} saving={savingField} />
+            <EF label="HVAC Year"   field="hvac_year"   value={data.hvac_year} type="int" save={saveField} saving={savingField} />
+            <EF label="Parking Lot" field="parking_lot" value={data.parking_lot} save={saveField} saving={savingField} />
           </Grid2>
         </Section>
 
@@ -388,14 +445,14 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
         {(data.bank || data.outstanding_debt || data.interest_rate || data.maturity_date) && (
           <Section icon={TrendingUp} title="Debt & Financing">
             <Grid2>
-              <Field label="Bank / Lender"      value={data.bank} />
-              <Field label="Interest Rate"       value={data.interest_rate ? `${data.interest_rate}%` : null} />
-              <Field label="Maturity Date"       value={fmtDate(data.maturity_date)} />
-              <Field label="Outstanding Debt"    value={fmt$(data.outstanding_debt)} />
-              <Field label="Total Debt Payment"  value={fmt$(data.total_debt_pmt)} />
-              <Field label="Interest Payment"    value={fmt$(data.interest_pmt)} />
-              <Field label="Principal Payment"   value={fmt$(data.principal_pmt)} />
-              <Field label="RTD / DSCR Ratio"    value={data.rtd_ratio ? Number(data.rtd_ratio).toFixed(3) : null} />
+              <EF label="Bank / Lender"     field="bank"             value={data.bank} save={saveField} saving={savingField} />
+              <EF label="Interest Rate"     field="interest_rate"    value={data.interest_rate} type="percent" save={saveField} saving={savingField} />
+              <EF label="Maturity Date"     field="maturity_date"    value={data.maturity_date} type="date" save={saveField} saving={savingField} />
+              <EF label="Outstanding Debt"  field="outstanding_debt" value={data.outstanding_debt} type="currency" save={saveField} saving={savingField} />
+              <EF label="Total Debt Payment" field="total_debt_pmt"  value={data.total_debt_pmt} type="currency" save={saveField} saving={savingField} />
+              <EF label="Interest Payment"  field="interest_pmt"     value={data.interest_pmt} type="currency" save={saveField} saving={savingField} />
+              <EF label="Principal Payment" field="principal_pmt"    value={data.principal_pmt} type="currency" save={saveField} saving={savingField} />
+              <EF label="RTD / DSCR Ratio"  field="rtd_ratio"        value={data.rtd_ratio} type="number" save={saveField} saving={savingField} />
             </Grid2>
           </Section>
         )}
@@ -404,10 +461,10 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
         {(data.ins_broker || data.policy_number || data.insurance_exp) && (
           <Section icon={FileText} title="Insurance">
             <Grid2>
-              <Field label="Broker"         value={data.ins_broker} />
-              <Field label="Policy Number"  value={data.policy_number} />
-              <Field label="Account Number" value={data.account_number} />
-              <Field label="Expires"        value={fmtDate(data.insurance_exp)} />
+              <EF label="Broker"         field="ins_broker"     value={data.ins_broker} save={saveField} saving={savingField} />
+              <EF label="Policy Number"  field="policy_number"  value={data.policy_number} save={saveField} saving={savingField} />
+              <EF label="Account Number" field="account_number" value={data.account_number} save={saveField} saving={savingField} />
+              <EF label="Expires"        field="insurance_exp"  value={data.insurance_exp} type="date" save={saveField} saving={savingField} />
             </Grid2>
           </Section>
         )}
@@ -416,24 +473,29 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
         {(data.store_manager || data.district_manager || data.store_number || data.qb_account) && (
           <Section icon={User} title="Management">
             <Grid2>
-              <Field label="Store #"          value={data.store_number} />
-              <Field label="QB Account"       value={data.qb_account} />
-              <Field label="Store Manager"    value={data.store_manager} />
-              <Field label="District Manager" value={data.district_manager} />
+              <EF label="Store #"          field="store_number"     value={data.store_number} save={saveField} saving={savingField} />
+              <EF label="QB Account"       field="qb_account"       value={data.qb_account} save={saveField} saving={savingField} />
+              <EF label="Store Manager"    field="store_manager"    value={data.store_manager} save={saveField} saving={savingField} />
+              <EF label="District Manager" field="district_manager" value={data.district_manager} save={saveField} saving={savingField} />
             </Grid2>
           </Section>
         )}
 
         {/* Notes */}
-        {data.notes && (
-          <Section icon={FileText} title="Notes">
-            <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">{data.notes}</p>
-          </Section>
-        )}
+        <Section icon={FileText} title="Notes">
+          <EF label="" field="notes" value={data.notes} type="textarea" save={saveField} saving={savingField} placeholder="Add notes…" />
+        </Section>
 
         {/* Owner */}
-        {data.owner_name && (
-          <Section icon={User} title="Owner">
+        <Section icon={User} title="Owner">
+          <div className="mb-3">
+            <RelationField
+              label="Owner" relation="owner" propertyId={propertyId}
+              currentId={data.owner_id} currentName={data.owner_name}
+              loadOptions={getAllPeople} onCommit={saveRelation} saving={savingField === 'owner'}
+            />
+          </div>
+          {data.owner_name && (<>
             <div className="mb-3 flex items-center gap-2 flex-wrap">
               {/* Clickable owner name → people page */}
               {data.owner_id ? (
@@ -508,8 +570,8 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
                 <p className="text-sm text-slate-700 leading-relaxed whitespace-pre-line">{data.owner_notes}</p>
               </div>
             )}
-          </Section>
-        )}
+          </>)}
+        </Section>
 
         {(data.created_at || data.updated_at) && (
           <p className="px-1 pt-4 text-xs text-slate-400">
@@ -654,6 +716,182 @@ function Section({ icon: Icon, title, children }) {
 
 function Grid2({ children }) {
   return <div className="grid grid-cols-2 gap-x-6 gap-y-3">{children}</div>
+}
+
+// Format a raw column value for read-mode display, by editor type.
+function formatEditable(type, value) {
+  if (value == null || value === '') return null
+  switch (type) {
+    case 'currency': return fmt$(value)
+    case 'date':     return fmtDate(value)
+    case 'sqft':     return fmtSqft(value)
+    case 'acres':    return fmtAcres(value)
+    case 'percent':  return `${value}%`
+    default:         return value            // text / number / int / textarea
+  }
+}
+
+// EF — an inline click-to-edit field. Read mode shows the formatted value (or a
+// dash) and a pencil on hover; clicking swaps to the right input. Enter / blur
+// saves just this one column; Escape cancels. `save(column, value)` does the PATCH.
+function EF({ label, field, value, type = 'text', accent, suffix, placeholder, save, saving }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft]     = useState('')
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    if (editing) { inputRef.current?.focus(); inputRef.current?.select?.() }
+  }, [editing])
+
+  const isBusy = saving === field
+  const numeric = ['currency', 'number', 'sqft', 'acres', 'percent'].includes(type)
+
+  function begin() { if (isBusy) return; setDraft(value == null ? '' : String(value)); setEditing(true) }
+  function cancel() { setEditing(false) }
+  function commit() {
+    setEditing(false)
+    const next = draft.trim()
+    const orig = value == null ? '' : String(value)
+    if (next === orig) return
+    save(field, next === '' ? null : next)
+  }
+
+  const display = formatEditable(type, value)
+  const inputCls = 'w-full px-2 py-1 text-sm border border-blue-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400'
+
+  if (editing) {
+    return (
+      <div className={type === 'textarea' ? 'col-span-2' : ''}>
+        {label && <p className="text-xs text-slate-400 mb-0.5">{label}</p>}
+        {type === 'textarea' ? (
+          <textarea ref={inputRef} rows={3} value={draft} placeholder={placeholder}
+            onChange={e => setDraft(e.target.value)} onBlur={commit}
+            onKeyDown={e => { if (e.key === 'Escape') cancel() }}
+            className={inputCls + ' leading-relaxed resize-y'} />
+        ) : (
+          <input ref={inputRef}
+            type={type === 'date' ? 'date' : numeric && type !== 'text' ? 'number' : 'text'}
+            step={type === 'int' ? '1' : 'any'} value={draft} placeholder={placeholder}
+            onChange={e => setDraft(e.target.value)} onBlur={commit}
+            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') cancel() }}
+            className={inputCls} />
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <button type="button" onClick={begin} disabled={isBusy}
+      className={`group text-left w-full ${type === 'textarea' ? 'col-span-2' : ''}`}>
+      {label && <p className="text-xs text-slate-400 mb-0.5">{label}</p>}
+      <div className={`text-sm font-medium rounded px-1 -mx-1 min-h-[1.25rem] flex items-start gap-1 group-hover:bg-blue-50/60 transition-colors ${
+        display == null ? 'text-slate-300' : accent === 'emerald' ? 'text-emerald-700' : 'text-slate-800'
+      }`}>
+        <span className={type === 'textarea' ? 'whitespace-pre-line leading-relaxed flex-1' : 'flex-1'}>
+          {display == null ? (placeholder || '—') : display}{suffix}
+        </span>
+        {isBusy
+          ? <Loader2 className="w-3 h-3 text-blue-400 animate-spin shrink-0 mt-0.5" />
+          : <Pencil className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 shrink-0 mt-0.5" />}
+      </div>
+    </button>
+  )
+}
+
+// RelationField — inline picker for a linked record (tenant brand / operator /
+// owner). Click to open a searchable list of existing records; type a new name
+// and pick "Create …" to add one on the fly; "Clear" unlinks. Commits via
+// onCommit(relation, {id} | {name} | {}).
+function RelationField({ label, relation, propertyId, currentId, currentName, loadOptions, onCommit, saving }) {
+  const [open, setOpen]       = useState(false)
+  const [query, setQuery]     = useState('')
+  const [options, setOptions] = useState(null)   // null = not yet loaded
+  const [loading, setLoading] = useState(false)
+  const boxRef   = useRef(null)
+  const inputRef = useRef(null)
+
+  useEffect(() => {
+    if (!open) return
+    inputRef.current?.focus()
+    if (options == null && !loading) {
+      setLoading(true)
+      Promise.resolve(loadOptions())
+        .then(list => setOptions(Array.isArray(list) ? list : (list?.rows || [])))
+        .catch(() => setOptions([]))
+        .finally(() => setLoading(false))
+    }
+  }, [open])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!open) return
+    function onDoc(e) { if (boxRef.current && !boxRef.current.contains(e.target)) close() }
+    document.addEventListener('mousedown', onDoc)
+    return () => document.removeEventListener('mousedown', onDoc)
+  }, [open])
+
+  function close() { setOpen(false); setQuery('') }
+  async function choose(payload) { close(); await onCommit(relation, payload) }
+
+  const q = query.trim().toLowerCase()
+  const filtered = (options || []).filter(o => o.name?.toLowerCase().includes(q)).slice(0, 8)
+  const exact    = (options || []).some(o => o.name?.toLowerCase() === q)
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} disabled={saving} className="group text-left w-full">
+        <p className="text-xs text-slate-400 mb-0.5">{label}</p>
+        <div className={`text-sm font-medium rounded px-1 -mx-1 min-h-[1.25rem] flex items-center gap-1 group-hover:bg-blue-50/60 transition-colors ${currentName ? 'text-slate-800' : 'text-slate-300'}`}>
+          <span className="flex-1 truncate">{currentName || '—'}</span>
+          {saving
+            ? <Loader2 className="w-3 h-3 text-blue-400 animate-spin shrink-0" />
+            : <Pencil className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 shrink-0" />}
+        </div>
+      </button>
+    )
+  }
+
+  return (
+    <div ref={boxRef} className="relative">
+      <p className="text-xs text-slate-400 mb-0.5">{label}</p>
+      <input
+        ref={inputRef} value={query} placeholder="Search or type a new name…"
+        onChange={e => setQuery(e.target.value)}
+        onKeyDown={e => {
+          if (e.key === 'Escape') close()
+          if (e.key === 'Enter') {
+            if (filtered.length === 1) choose({ id: filtered[0].id })
+            else if (q && !exact) choose({ name: query.trim() })
+          }
+        }}
+        className="w-full px-2 py-1 text-sm border border-blue-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+      />
+      <div className="absolute z-50 mt-1 w-full max-h-60 overflow-y-auto bg-white border border-slate-200 rounded-lg shadow-xl py-1">
+        {loading && <div className="px-3 py-2 text-xs text-slate-400 flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Loading…</div>}
+        {!loading && filtered.map(o => (
+          <button key={o.id} type="button" onMouseDown={e => e.preventDefault()} onClick={() => choose({ id: o.id })}
+            className="w-full text-left px-3 py-1.5 text-sm text-slate-700 hover:bg-blue-50 flex items-center gap-2">
+            <span className="flex-1 truncate">{o.name}</span>
+            {o.id === currentId && <Check className="w-3.5 h-3.5 text-emerald-600 shrink-0" />}
+          </button>
+        ))}
+        {!loading && q && !exact && (
+          <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => choose({ name: query.trim() })}
+            className="w-full text-left px-3 py-1.5 text-sm text-blue-700 hover:bg-blue-50 flex items-center gap-2 border-t border-slate-100">
+            <Plus className="w-3.5 h-3.5 shrink-0" /> Create “{query.trim()}”
+          </button>
+        )}
+        {!loading && !q && filtered.length === 0 && (
+          <div className="px-3 py-2 text-xs text-slate-400">No records yet — type a name to create one.</div>
+        )}
+        {currentId && (
+          <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => choose({})}
+            className="w-full text-left px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-50 flex items-center gap-2 border-t border-slate-100">
+            <X className="w-3.5 h-3.5 shrink-0" /> Clear
+          </button>
+        )}
+      </div>
+    </div>
+  )
 }
 
 function Field({ label, value, accent }) {
