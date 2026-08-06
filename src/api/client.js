@@ -504,6 +504,8 @@ export async function uploadTaxDoc(taxId, file, docType) {
   const fd = new FormData(); fd.append('file', file); if (docType) fd.append('doc_type', docType)
   return req('POST', `/management/taxes/${taxId}/documents`, fd)
 }
+export const prepareTaxReimbursement = (taxId)      => req('GET',  `/management/taxes/${taxId}/reimbursement/prepare`)
+export const sendTaxReimbursement    = (taxId, data) => req('POST', `/management/taxes/${taxId}/reimbursement/send`, data)
 
 // Maintenance
 export const getPropertyMaintenance  = (propId)      => req('GET',    `/management/${propId}/maintenance`)

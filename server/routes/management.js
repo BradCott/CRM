@@ -16,6 +16,7 @@ const PHOTO_DIR = join(DATA_DIR, 'property-photos')
 // reimbursed us for an insurance premium. Kept in one place so the send,
 // mark-reimbursed, and dashboard code all match on it.
 const REIMB_CHECK_TITLE = 'Check insurance reimbursement status'
+const TAX_REIMB_CHECK_TITLE = 'Check tax reimbursement status'
 
 async function callClaude(buffer, mediaType, prompt) {
   const apiKey = process.env.ANTHROPIC_API_KEY
@@ -1206,6 +1207,85 @@ router.delete('/taxes/:id/documents/:docId', (req, res) => {
   if (d.file_path) { try { unlink(d.file_path, () => {}) } catch (_) {} }
   db.prepare(`DELETE FROM tax_documents WHERE id = ?`).run(req.params.docId)
   res.json({ ok: true })
+})
+
+// ── Tax reimbursement email (mirrors the insurance flow) ──────────────────────
+router.get('/taxes/:id/reimbursement/prepare', (req, res) => {
+  const tax = db.prepare(`
+    SELECT t.*, p.id AS property_id, p.address, p.city, p.state, p.tenant_brand_id, tb.name AS tenant_brand
+    FROM property_taxes t
+    JOIN properties p ON p.id = t.property_id
+    LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
+    WHERE t.id = ?
+  `).get(req.params.id)
+  if (!tax) return res.status(404).json({ error: 'Tax record not found' })
+
+  let contacts = []
+  if (tax.tenant_brand_id) {
+    contacts = db.prepare(`
+      SELECT id, name, email, title, tenant_roles, territory_states, territory_regions
+      FROM people
+      WHERE role='tenant_contact' AND email IS NOT NULL AND email<>''
+        AND tenant_brand_id IN (SELECT id FROM tenant_brands WHERE name = (SELECT name FROM tenant_brands WHERE id = ?))
+      ORDER BY name
+    `).all(tax.tenant_brand_id)
+    const st = (tax.state || '').toUpperCase()
+    contacts.sort((a, b) => ((a.territory_states || '').includes(`"${st}"`) ? 0 : 1) - ((b.territory_states || '').includes(`"${st}"`) ? 0 : 1))
+  }
+  const documents = db.prepare(`SELECT id, doc_type, file_name FROM tax_documents WHERE tax_id=? ORDER BY created_at DESC`).all(tax.id)
+
+  const loc = [tax.address, tax.city, tax.state].filter(Boolean).join(', ')
+  res.json({
+    property: { id: tax.property_id, address: tax.address }, loc,
+    tenant_brand: tax.tenant_brand,
+    tax_year: tax.tax_year,
+    amount: tax.paid_amount ?? tax.amount,
+    contacts, documents,
+    subject: `Property tax reimbursement request — ${tax.tenant_brand ? tax.tenant_brand + ' at ' : ''}${tax.address}`,
+  })
+})
+
+router.post('/taxes/:id/reimbursement/send', async (req, res) => {
+  const { to, cc, subject, body, documentIds } = req.body || {}
+  const recipients = Array.isArray(to) ? to.filter(Boolean) : (to ? [to] : [])
+  if (!recipients.length) return res.status(400).json({ error: 'At least one recipient is required' })
+  if (!subject || !body)  return res.status(400).json({ error: 'subject and body are required' })
+  const tax = db.prepare('SELECT id, property_id FROM property_taxes WHERE id = ?').get(req.params.id)
+  if (!tax) return res.status(404).json({ error: 'Tax record not found' })
+
+  const attachments = []
+  for (const docId of (Array.isArray(documentIds) ? documentIds : [])) {
+    const d = db.prepare(`SELECT file_name, file_path, mime FROM tax_documents WHERE id = ? AND tax_id = ?`).get(docId, tax.id)
+    if (d?.file_path && existsSync(d.file_path)) attachments.push({ filename: d.file_name, content: readFileSync(d.file_path), contentType: d.mime })
+  }
+
+  try {
+    await sendMail({
+      to: recipients.join(', '), cc: cc || undefined,
+      from: process.env.TAX_FROM || undefined,
+      replyTo: process.env.TAX_REPLY_TO || undefined,
+      subject, text: body, attachments,
+    })
+  } catch (e) {
+    console.error('[tax-reimbursement] send failed:', e.message)
+    return res.status(502).json({ error: `Send failed: ${e.message}` })
+  }
+
+  const stamp = new Date().toISOString().slice(0, 10)
+  db.prepare(`UPDATE properties SET notes = TRIM(COALESCE(notes,'') || CHAR(10) || ?) WHERE id = ?`)
+    .run(`[${stamp}] Property tax reimbursement request emailed to ${recipients.join(', ')} (${attachments.length} attachment${attachments.length === 1 ? '' : 's'}).`, tax.property_id)
+
+  // 45-day follow-up. property_tasks has no tax_id column, so dedupe by
+  // property + title (one open tax-reimbursement check per property). The
+  // "reimburs" title keeps it in the dashboard's tax-reimbursement rollup.
+  const openCheck = db.prepare(`SELECT id FROM property_tasks WHERE property_id = ? AND completed_at IS NULL AND title = ?`).get(tax.property_id, TAX_REIMB_CHECK_TITLE)
+  if (!openCheck) {
+    const due = addDays(today(), 45)
+    db.prepare(`INSERT INTO property_tasks (property_id, title, task_type, due_date, priority, notes) VALUES (?, ?, 'tax', ?, 'high', ?)`)
+      .run(tax.property_id, TAX_REIMB_CHECK_TITLE, due, `Tax reimbursement request emailed ${stamp} to ${recipients.join(', ')}. Confirm the tenant has paid us back, then mark it reimbursed or still in limbo.`)
+  }
+
+  res.json({ ok: true, sent_to: recipients, attachments: attachments.length, follow_up_on: addDays(today(), 45) })
 })
 
 // ── Maintenance ───────────────────────────────────────────────────────────────

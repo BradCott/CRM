@@ -4,6 +4,7 @@ import TenantNotifyButton from '../properties/TenantNotifyButton'
 import LeaseSection from './LeaseSection'
 import DashboardSection from './DashboardSection'
 import InsuranceReimbursement from './InsuranceReimbursement'
+import TaxReimbursement from './TaxReimbursement'
 import DropZone from '../ui/DropZone'
 import ReconciliationSection from './ReconciliationSection'
 import CamSection from './CamSection'
@@ -1197,23 +1198,8 @@ function TaxesSection({ propertyId }) {
 
                     {t.notes && <p className="mt-3 text-xs text-slate-500 whitespace-pre-line border-t border-slate-100 pt-2">{t.notes}</p>}
 
-                    {docs.length > 0 && (
-                      <div className="mt-3 flex flex-wrap gap-2 border-t border-slate-100 pt-2">
-                        {docs.map(d => (
-                          <a
-                            key={d.id}
-                            href={taxDocUrl(t.id, d.id)}
-                            target="_blank"
-                            rel="noreferrer"
-                            title={d.file_name}
-                            className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 transition-colors"
-                          >
-                            <FileText className="w-3.5 h-3.5" />
-                            {d.doc_type || 'Document'}
-                          </a>
-                        ))}
-                      </div>
-                    )}
+                    {/* Documents (tax bill / proof of payment) + email tenant for reimbursement */}
+                    <TaxReimbursement tax={t} />
                   </div>
                 )
               })}
