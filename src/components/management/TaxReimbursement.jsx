@@ -218,6 +218,7 @@ function ReimbursementModal({ taxId, onClose, onSent }) {
       const r = await sendTaxReimbursement(taxId, {
         to: to.split(',').map(s => s.trim()).filter(Boolean),
         cc: cc.trim() || undefined, subject, body, documentIds: [...selected],
+        installments: hasInsts ? insts.filter(i => i.selected).map(i => i.label || 'Payment') : undefined,
       })
       setSent(r); onSent?.()
     } catch (e) { setError(e.message) } finally { setSending(false) }

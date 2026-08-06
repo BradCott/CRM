@@ -1302,11 +1302,11 @@ router.get('/taxes/:id/reimbursement/prepare', (req, res) => {
 })
 
 router.post('/taxes/:id/reimbursement/send', async (req, res) => {
-  const { to, cc, subject, body, documentIds } = req.body || {}
+  const { to, cc, subject, body, documentIds, installments } = req.body || {}
   const recipients = Array.isArray(to) ? to.filter(Boolean) : (to ? [to] : [])
   if (!recipients.length) return res.status(400).json({ error: 'At least one recipient is required' })
   if (!subject || !body)  return res.status(400).json({ error: 'subject and body are required' })
-  const tax = db.prepare('SELECT id, property_id FROM property_taxes WHERE id = ?').get(req.params.id)
+  const tax = db.prepare('SELECT id, property_id, tax_year FROM property_taxes WHERE id = ?').get(req.params.id)
   if (!tax) return res.status(404).json({ error: 'Tax record not found' })
 
   const attachments = []
@@ -1327,21 +1327,39 @@ router.post('/taxes/:id/reimbursement/send', async (req, res) => {
     return res.status(502).json({ error: `Send failed: ${e.message}` })
   }
 
+  // Which installments this request covered (labels), if any.
+  const labels = Array.isArray(installments) ? installments.map(s => String(s).trim()).filter(Boolean) : []
+  const yr = tax.tax_year != null ? `${tax.tax_year} ` : ''
+  const forWhat = labels.length ? `${yr}${labels.join(' & ')}` : (yr ? yr.trim() : '').trim()
+
   const stamp = new Date().toISOString().slice(0, 10)
   db.prepare(`UPDATE properties SET notes = TRIM(COALESCE(notes,'') || CHAR(10) || ?) WHERE id = ?`)
-    .run(`[${stamp}] Property tax reimbursement request emailed to ${recipients.join(', ')} (${attachments.length} attachment${attachments.length === 1 ? '' : 's'}).`, tax.property_id)
+    .run(`[${stamp}] Property tax reimbursement${forWhat ? ` (${forWhat})` : ''} request emailed to ${recipients.join(', ')} (${attachments.length} attachment${attachments.length === 1 ? '' : 's'}).`, tax.property_id)
 
-  // 45-day follow-up. property_tasks has no tax_id column, so dedupe by
-  // property + title (one open tax-reimbursement check per property). The
-  // "reimburs" title keeps it in the dashboard's tax-reimbursement rollup.
-  const openCheck = db.prepare(`SELECT id FROM property_tasks WHERE property_id = ? AND completed_at IS NULL AND title = ?`).get(tax.property_id, TAX_REIMB_CHECK_TITLE)
-  if (!openCheck) {
-    const due = addDays(today(), 45)
-    db.prepare(`INSERT INTO property_tasks (property_id, title, task_type, due_date, priority, notes) VALUES (?, ?, 'tax', ?, 'high', ?)`)
-      .run(tax.property_id, TAX_REIMB_CHECK_TITLE, due, `Tax reimbursement request emailed ${stamp} to ${recipients.join(', ')}. Confirm the tenant has paid us back, then mark it reimbursed or still in limbo.`)
+  // 45-day follow-up, one per installment requested (so 1st half and 2nd half
+  // track separately). property_tasks has no tax_id column, so dedupe by
+  // property + a title that carries the year + installment. Every title contains
+  // "reimburs" so it stays in the dashboard's tax-reimbursement rollup.
+  const due = addDays(today(), 45)
+  const targets = labels.length ? labels.map(l => `${yr}${l}`) : [yr.trim()].filter(Boolean)
+  const openTask = (title, note) => {
+    const open = db.prepare(`SELECT id FROM property_tasks WHERE property_id = ? AND completed_at IS NULL AND title = ?`).get(tax.property_id, title)
+    if (!open) {
+      db.prepare(`INSERT INTO property_tasks (property_id, title, task_type, due_date, priority, notes) VALUES (?, ?, 'tax', ?, 'high', ?)`)
+        .run(tax.property_id, title, due, note)
+    }
+  }
+  if (targets.length) {
+    for (const t of targets) {
+      openTask(`${TAX_REIMB_CHECK_TITLE} — ${t}`,
+        `${t} tax reimbursement request emailed ${stamp} to ${recipients.join(', ')}. Confirm the tenant has paid us back, then mark it reimbursed or still in limbo.`)
+    }
+  } else {
+    openTask(TAX_REIMB_CHECK_TITLE,
+      `Tax reimbursement request emailed ${stamp} to ${recipients.join(', ')}. Confirm the tenant has paid us back, then mark it reimbursed or still in limbo.`)
   }
 
-  res.json({ ok: true, sent_to: recipients, attachments: attachments.length, follow_up_on: addDays(today(), 45) })
+  res.json({ ok: true, sent_to: recipients, attachments: attachments.length, follow_up_on: due })
 })
 
 // ── Maintenance ───────────────────────────────────────────────────────────────
