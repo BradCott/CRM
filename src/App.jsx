@@ -10,6 +10,7 @@ import PropertiesPage   from './components/properties/PropertiesPage'
 import ImportPage       from './components/import/ImportPage'
 import ReportsPage      from './components/reports/ReportsPage'
 import PortfolioPage    from './components/portfolio/PortfolioPage'
+import HistoricalTransactionsPage from './components/historical/HistoricalTransactionsPage'
 import InvestorsPage          from './components/investors/InvestorsPage'
 import InvestorProfilePage   from './components/investors/InvestorProfilePage'
 import DashboardPage    from './components/dashboard/DashboardPage'
@@ -103,6 +104,7 @@ export default function App() {
 
               {/* Admin + Full Agent only */}
               <Route path="/portfolio"   element={<RequireRole><PortfolioPage /></RequireRole>} />
+              <Route path="/historical"  element={<RequireRole><HistoricalTransactionsPage /></RequireRole>} />
               <Route path="/management"  element={<RequireRole><ManagementDashboard /></RequireRole>} />
               <Route path="/management/:propertyId" element={<RequireRole><PropertyManagementDetail /></RequireRole>} />
               <Route path="/insurance"  element={<RequireRole><InsurancePage /></RequireRole>} />

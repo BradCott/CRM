@@ -340,7 +340,7 @@ export default function PropertiesPage() {
   const load = useCallback(async (s, tenants, states, ops, needsReview, pg, col = 'address', dir = 'asc') => {
     setFetching(true)
     try {
-      const params = { portfolio: '0', limit: PAGE_SIZE, offset: pg * PAGE_SIZE, sortCol: col, sortDir: dir }
+      const params = { portfolio: '0', sold: '0', limit: PAGE_SIZE, offset: pg * PAGE_SIZE, sortCol: col, sortDir: dir }
       if (s)                    params.search = s
       if (tenants.length)       params.tenants = tenants.join(',')
       if (states.length)        params.states  = states.join(',')
@@ -355,7 +355,7 @@ export default function PropertiesPage() {
 
   // Export the current filtered view to CSV (cookie auth → direct download link)
   const handleExport = () => {
-    const params = { portfolio: '0', sortCol, sortDir }
+    const params = { portfolio: '0', sold: '0', sortCol, sortDir }
     if (search)             params.search = search
     if (tenantFilters.length) params.tenants = tenantFilters.join(',')
     if (stateFilters.length)  params.states  = stateFilters.join(',')
@@ -405,7 +405,7 @@ export default function PropertiesPage() {
   const selectAllMatching = async () => {
     setSelectingAll(true)
     try {
-      const params = { portfolio: '0', limit: 100000, offset: 0 }
+      const params = { portfolio: '0', sold: '0', limit: 100000, offset: 0 }
       if (search)              params.search = search
       if (tenantFilters.length) params.tenants = tenantFilters.join(',')
       if (stateFilters.length)  params.states  = stateFilters.join(',')

@@ -89,7 +89,7 @@ router.get('/reports', (req, res) => {
            (SELECT COUNT(*) FROM bank_connections bc WHERE bc.property_id = p.id) AS bank_count
     FROM properties p
     LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
-    WHERE p.is_portfolio = 1
+    WHERE p.is_portfolio = 1 AND (p.listing_status IS NULL OR p.listing_status <> 'sold')
     ORDER BY p.address ASC
   `).all()
 
@@ -137,7 +137,7 @@ router.get('/summary', (req, res) => {
     FROM properties p
     LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
     LEFT JOIN accounting_transactions tx ON tx.property_id = p.id AND tx.review_status = 'recorded'
-    WHERE p.is_portfolio = 1
+    WHERE p.is_portfolio = 1 AND (p.listing_status IS NULL OR p.listing_status <> 'sold')
     GROUP BY p.id
     ORDER BY p.address ASC
   `).all()
@@ -441,8 +441,9 @@ router.post('/:propertyId/sale-closeout', (req, res) => {
 
       if (b.mark_sold) {
         // Record the SALE date in sold_date — never clobber close_date, which is the
-        // ACQUISITION date used for preferred-return accrual.
-        db.prepare(`UPDATE properties SET listing_status = 'sold', sold_date = ? WHERE id = ?`).run(date, propertyId)
+        // ACQUISITION date used for preferred-return accrual. Also stamp the sale
+        // price so the Historical Transactions view has it without re-deriving.
+        db.prepare(`UPDATE properties SET listing_status = 'sold', sold_date = ?, sale_price = ? WHERE id = ?`).run(date, salePrice || null, propertyId)
       }
 
       const reserveLines = reserves.filter(r => num(r.amount) > 0).map(r => `  Reserve — ${r.label || 'Held'}: ${money(num(r.amount))}`)
@@ -504,7 +505,7 @@ router.post('/:propertyId/reverse-closeout', (req, res) => {
       const di = db.prepare(`DELETE FROM investor_distributions WHERE property_id = ? AND distribution_date = ? AND notes LIKE 'Sale close-out%'`).run(propertyId, date)
       db.prepare(`DELETE FROM property_journal_entries WHERE id = ?`).run(je.id)
       // Un-sell: clear the sold flag and sale date (close_date/acquisition untouched).
-      db.prepare(`UPDATE properties SET listing_status = NULL, sold_date = NULL WHERE id = ?`).run(propertyId)
+      db.prepare(`UPDATE properties SET listing_status = NULL, sold_date = NULL, sale_price = NULL WHERE id = ?`).run(propertyId)
       result = { transactions_deleted: tx.changes, distributions_deleted: di.changes, reversed_date: date }
     })
     run()

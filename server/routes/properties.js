@@ -169,6 +169,13 @@ function buildPropertyWhere(query) {
     params.push(query.portfolio === '1' ? 1 : 0)
   }
 
+  // Sold/historical filter. '1' = only sold; '0' = exclude sold (active only).
+  if (query.sold === '1') {
+    conditions.push(`p.listing_status = 'sold'`)
+  } else if (query.sold === '0') {
+    conditions.push(`(p.listing_status IS NULL OR p.listing_status <> 'sold')`)
+  }
+
   applyDateFilters(query, conditions, params)
 
   return { where: conditions.length ? `WHERE ${conditions.join(' AND ')}` : '', params }
@@ -307,6 +314,77 @@ router.get('/check-duplicate', (req, res) => {
     `SELECT id, address, city, state FROM properties WHERE addr_key = ? LIMIT 1`
   ).get(addrKey)
   res.json(row ? { exists: true, property: row } : { exists: false })
+})
+
+// Whole completed months between two YYYY-MM-DD dates.
+function monthsBetween(a, b) {
+  if (!a || !b) return null
+  const d1 = new Date(String(a).slice(0, 10) + 'T00:00:00Z')
+  const d2 = new Date(String(b).slice(0, 10) + 'T00:00:00Z')
+  if (isNaN(d1) || isNaN(d2)) return null
+  let m = (d2.getUTCFullYear() - d1.getUTCFullYear()) * 12 + (d2.getUTCMonth() - d1.getUTCMonth())
+  if (d2.getUTCDate() < d1.getUTCDate()) m--
+  return Math.max(0, m)
+}
+
+// XIRR via Newton's method. flows: [{ date, amount }] (negatives = money out).
+// Returns an annualized rate, or null if it can't be computed.
+function xirr(flows) {
+  const cf = (flows || [])
+    .filter(f => f.date && isFinite(f.amount) && f.amount !== 0)
+    .map(f => ({ t: new Date(String(f.date).slice(0, 10) + 'T00:00:00Z').getTime(), a: f.amount }))
+    .filter(f => isFinite(f.t))
+    .sort((x, y) => x.t - y.t)
+  if (cf.length < 2 || !cf.some(f => f.a < 0) || !cf.some(f => f.a > 0)) return null
+  const t0 = cf[0].t
+  const yrs = f => (f.t - t0) / (365 * 24 * 3600 * 1000)
+  const npv = r => cf.reduce((s, f) => s + f.a / Math.pow(1 + r, yrs(f)), 0)
+  let r = 0.1
+  for (let i = 0; i < 100; i++) {
+    const f0 = npv(r), d = (npv(r + 1e-6) - f0) / 1e-6
+    if (!isFinite(d) || Math.abs(d) < 1e-12) break
+    let rn = r - f0 / d
+    if (!isFinite(rn)) break
+    if (rn <= -0.9999) rn = -0.9999
+    if (Math.abs(rn - r) < 1e-7) { r = rn; break }
+    r = rn
+  }
+  return (isFinite(r) && Math.abs(npv(r)) < 1) ? r : null
+}
+
+// GET /api/properties/historical — sold deals with computed returns.
+router.get('/historical', (_req, res) => {
+  const props = db.prepare(`${BASE_SELECT} WHERE p.listing_status = 'sold' ORDER BY (p.sold_date IS NULL), p.sold_date DESC, p.id DESC`).all()
+  const saleTx    = db.prepare(`SELECT amount FROM accounting_transactions WHERE property_id = ? AND source = 'Sale' AND description = 'Sale Proceeds' ORDER BY id DESC LIMIT 1`)
+  const distStmt  = db.prepare(`SELECT amount, distribution_type AS type, distribution_date AS date FROM investor_distributions WHERE property_id = ?`)
+  const investedStmt = db.prepare(`SELECT COALESCE(SUM(contribution), 0) AS s FROM property_investors WHERE property_id = ?`)
+
+  const out = props.map(p => {
+    const buy  = p.purchase_price != null ? Number(p.purchase_price) : null
+    const sell = p.sale_price != null ? Number(p.sale_price) : (saleTx.get(p.id)?.amount ?? null)
+    const dists = distStmt.all(p.id)
+    const sumType = (t) => dists.filter(d => !t || d.type === t).reduce((s, d) => s + (Number(d.amount) || 0), 0)
+    const roc = sumType('Principal'), pref = sumType('Preferred Return'), profit = sumType('Profit')
+    const total_distributed = sumType()
+    const invested = Number(investedStmt.get(p.id).s) || 0
+    const hold_months = monthsBetween(p.close_date, p.sold_date)
+    const emx = invested > 0 ? total_distributed / invested : null
+    const gain = (sell != null && buy != null) ? sell - buy : null
+    const investor_gain = invested > 0 ? total_distributed - invested : null
+    const knox_fee = p.fee_amount != null ? Number(p.fee_amount) : null
+    const sponsor_gain = (dists.length || knox_fee != null) ? (knox_fee || 0) + profit : null
+    const irr = invested > 0 ? xirr([{ date: p.close_date, amount: -invested }, ...dists.map(d => ({ date: d.date, amount: Number(d.amount) || 0 }))]) : null
+    return {
+      id: p.id, address: p.address, city: p.city, state: p.state,
+      tenant_brand_name: p.tenant_brand_name, operator_name: p.operator_name,
+      close_date: p.close_date, sold_date: p.sold_date, hold_months,
+      buy, sell, gain,
+      invested, total_distributed, roc, pref, profit,
+      investor_gain, emx, irr, knox_fee, sponsor_gain,
+      has_returns: invested > 0 || dists.length > 0,
+    }
+  })
+  res.json(out)
 })
 
 router.get('/:id', (req, res) => {
@@ -508,6 +586,19 @@ router.patch('/:id/portfolio', (req, res) => {
   db.prepare(`UPDATE properties SET is_portfolio = ? WHERE id = ?`).run(is_portfolio ? 1 : 0, req.params.id)
   const row = db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id)
   res.json(row)
+})
+
+// PATCH /api/properties/:id/sold — quick "mark as sold" without the full close-out
+// waterfall. Moves the property to Historical Transactions. Pass sold: false to undo.
+router.patch('/:id/sold', (req, res) => {
+  const { sold = true, sold_date, sale_price } = req.body || {}
+  if (sold) {
+    db.prepare(`UPDATE properties SET listing_status = 'sold', sold_date = ?, sale_price = ? WHERE id = ?`)
+      .run(sold_date || new Date().toISOString().slice(0, 10), sale_price != null && sale_price !== '' ? Number(sale_price) : null, req.params.id)
+  } else {
+    db.prepare(`UPDATE properties SET listing_status = NULL, sold_date = NULL, sale_price = NULL WHERE id = ?`).run(req.params.id)
+  }
+  res.json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id))
 })
 
 // PATCH /api/properties/:id/ownership-review — set or clear needs_ownership_review flag

@@ -598,6 +598,9 @@ const migrations = [
   // Sale date (set at close-out). Kept separate so close_date stays the ACQUISITION
   // date used for preferred-return accrual.
   `ALTER TABLE properties ADD COLUMN sold_date            TEXT`,
+  // Gross sale price (set at close-out or via quick mark-sold). Powers the
+  // Historical Transactions returns view.
+  `ALTER TABLE properties ADD COLUMN sale_price           REAL`,
   // The cap-table row (property_investors.id) a distribution belongs to, so a single
   // global investor listed on multiple rows (e.g. Knox GP position + LP co-invest)
   // can have its GP carry and LP returns displayed separately.

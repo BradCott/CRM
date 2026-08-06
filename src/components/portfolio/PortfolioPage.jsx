@@ -129,7 +129,7 @@ export default function PortfolioPage() {
   const load = useCallback(async (s, tenant, state, pg) => {
     setFetching(true)
     try {
-      const params = { portfolio: '1', limit: PAGE_SIZE, offset: pg * PAGE_SIZE }
+      const params = { portfolio: '1', sold: '0', limit: PAGE_SIZE, offset: pg * PAGE_SIZE }
       if (s)      params.search = s
       if (tenant) params.tenant = tenant
       if (state)  params.state  = state

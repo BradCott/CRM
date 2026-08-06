@@ -1,7 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import {
   Users, KanbanSquare, Building2, Upload, FileSearch,
-  Landmark, TrendingUp, LayoutDashboard, Settings, BookOpen, ShieldCheck, LogOut, ClipboardList, Mail, Shield, Contact, Chrome,
+  Landmark, TrendingUp, LayoutDashboard, Settings, BookOpen, ShieldCheck, LogOut, ClipboardList, Mail, Shield, Contact, Chrome, History,
 } from 'lucide-react'
 import { useAuth } from '../../context/AuthContext'
 import knoxKC from '../../assets/Knox-KC.jpg'
@@ -13,6 +13,7 @@ const NAV = [
   { to: '/tenant-contacts', label: 'Tenant Contacts', icon: Contact,     roles: ['admin', 'full_agent', 'junior_agent'] },
   { to: '/properties', label: 'Market Properties', icon: Building2,       roles: ['admin', 'full_agent', 'junior_agent'] },
   { to: '/portfolio',   label: 'Knox Portfolio',      icon: Landmark,       roles: ['admin', 'full_agent'] },
+  { to: '/historical',  label: 'Historical Transactions', icon: History,    roles: ['admin', 'full_agent'] },
   { to: '/management', label: 'Property Management', icon: ClipboardList,  roles: ['admin', 'full_agent'] },
   { to: '/accounting', label: 'Accounting',          icon: BookOpen,       roles: ['admin', 'full_agent'] },
   { to: '/investors',  label: 'Investors',         icon: TrendingUp,      roles: ['admin', 'full_agent'] },

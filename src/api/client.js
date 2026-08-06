@@ -87,6 +87,8 @@ export const bulkDeleteProperties  = (ids)    => req('POST', '/properties/bulk-d
 export const prepareTenantNotify   = (id)     => req('GET',  `/properties/${id}/tenant-notify/prepare`)
 export const sendTenantNotify      = (id, d)  => req('POST', `/properties/${id}/tenant-notify/send`, d)
 export const togglePortfolio       = (id, val) => req('PATCH',  `/properties/${id}/portfolio`, { is_portfolio: val })
+export const getHistoricalTransactions = ()      => req('GET',   '/properties/historical')
+export const markPropertySold      = (id, data)  => req('PATCH', `/properties/${id}/sold`, data)
 
 // Deals
 export const getDeals       = ()       => req('GET',    '/deals')
