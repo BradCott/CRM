@@ -1170,6 +1170,60 @@ router.patch('/taxes/:id/paid', (req, res) => {
   res.json(db.prepare('SELECT * FROM property_taxes WHERE id = ?').get(req.params.id))
 })
 
+// ── Tax installments (1st half / 2nd half payments) ───────────────────────────
+// Keep the parent tax row's paid_amount/paid_date in sync from its installments,
+// and keep the reimbursement dollar-tracker in step.
+function syncTaxFromInstallments(taxId) {
+  const t = db.prepare('SELECT * FROM property_taxes WHERE id = ?').get(taxId)
+  if (!t) return
+  const rows = db.prepare('SELECT amount, paid_date FROM tax_installments WHERE tax_id = ?').all(taxId)
+  if (rows.length) {
+    const sum = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0)
+    const dates = rows.map(r => r.paid_date).filter(Boolean).sort()
+    const latest = dates.length ? dates[dates.length - 1] : null
+    db.prepare('UPDATE property_taxes SET paid_amount = ?, paid_date = ? WHERE id = ?').run(sum, latest, taxId)
+    if (latest) {
+      ensureReimbursementForSource({
+        propertyId: t.property_id, sourceType: 'tax', sourceId: t.id,
+        year: t.tax_year != null ? t.tax_year : new Date().getFullYear(), expenseAmount: sum,
+      })
+    }
+  } else {
+    // No installments left — clear the derived paid state.
+    db.prepare('UPDATE property_taxes SET paid_amount = NULL, paid_date = NULL WHERE id = ?').run(taxId)
+    removeUntouchedReimbursement('tax', t.id)
+  }
+}
+
+router.get('/taxes/:id/installments', (req, res) => {
+  res.json(db.prepare('SELECT id, label, amount, paid_date FROM tax_installments WHERE tax_id = ? ORDER BY paid_date, id').all(req.params.id))
+})
+router.post('/taxes/:id/installments', (req, res) => {
+  const tax = db.prepare('SELECT id FROM property_taxes WHERE id = ?').get(req.params.id)
+  if (!tax) return res.status(404).json({ error: 'Tax record not found' })
+  const { label, amount, paid_date } = req.body || {}
+  const r = db.prepare('INSERT INTO tax_installments (tax_id, label, amount, paid_date) VALUES (?, ?, ?, ?)')
+    .run(tax.id, String(label || '').slice(0, 60) || null, amount != null && amount !== '' ? Number(amount) : null, paid_date || null)
+  syncTaxFromInstallments(tax.id)
+  res.status(201).json(db.prepare('SELECT id, label, amount, paid_date FROM tax_installments WHERE id = ?').get(r.lastInsertRowid))
+})
+router.put('/taxes/installments/:iid', (req, res) => {
+  const inst = db.prepare('SELECT tax_id FROM tax_installments WHERE id = ?').get(req.params.iid)
+  if (!inst) return res.status(404).json({ error: 'Installment not found' })
+  const { label, amount, paid_date } = req.body || {}
+  db.prepare('UPDATE tax_installments SET label = ?, amount = ?, paid_date = ? WHERE id = ?')
+    .run(String(label || '').slice(0, 60) || null, amount != null && amount !== '' ? Number(amount) : null, paid_date || null, req.params.iid)
+  syncTaxFromInstallments(inst.tax_id)
+  res.json(db.prepare('SELECT id, label, amount, paid_date FROM tax_installments WHERE id = ?').get(req.params.iid))
+})
+router.delete('/taxes/installments/:iid', (req, res) => {
+  const inst = db.prepare('SELECT tax_id FROM tax_installments WHERE id = ?').get(req.params.iid)
+  if (!inst) return res.status(404).json({ error: 'Installment not found' })
+  db.prepare('DELETE FROM tax_installments WHERE id = ?').run(req.params.iid)
+  syncTaxFromInstallments(inst.tax_id)
+  res.json({ ok: true })
+})
+
 // ── Tax documents (the uploaded tax bill) ─────────────────────────────────────
 const TAX_DOCS_DIR = join(DATA_DIR, 'tax-docs')
 
@@ -1233,6 +1287,7 @@ router.get('/taxes/:id/reimbursement/prepare', (req, res) => {
     contacts.sort((a, b) => ((a.territory_states || '').includes(`"${st}"`) ? 0 : 1) - ((b.territory_states || '').includes(`"${st}"`) ? 0 : 1))
   }
   const documents = db.prepare(`SELECT id, doc_type, file_name FROM tax_documents WHERE tax_id=? ORDER BY created_at DESC`).all(tax.id)
+  const installments = db.prepare(`SELECT id, label, amount, paid_date FROM tax_installments WHERE tax_id=? ORDER BY paid_date, id`).all(tax.id)
 
   const loc = [tax.address, tax.city, tax.state].filter(Boolean).join(', ')
   res.json({
@@ -1240,6 +1295,7 @@ router.get('/taxes/:id/reimbursement/prepare', (req, res) => {
     tenant_brand: tax.tenant_brand,
     tax_year: tax.tax_year,
     amount: tax.paid_amount ?? tax.amount,
+    installments,
     contacts, documents,
     subject: `Property tax reimbursement request — ${tax.tenant_brand ? tax.tenant_brand + ' at ' : ''}${tax.address}`,
   })
@@ -2306,25 +2362,30 @@ function actualToDate(propertyId, expenseType, year, throughMonth) {
     return sum
   }
   if (expenseType === 'tax') {
-    const rows = db.prepare(
-      `SELECT paid_amount, amount, paid_date FROM property_taxes
-       WHERE property_id = ? AND tax_year = ? AND paid_date IS NOT NULL`
+    // Count a single payment, gated by month only within the viewing year; a
+    // payment made in an earlier calendar year has already happened (counts in
+    // full); one dated to a future year hasn't.
+    const countPayment = (amt, paidDate) => {
+      if (!/^\d{4}/.test(paidDate || '')) return 0
+      const py = parseInt(paidDate.slice(0, 4), 10)
+      if (py === year) { const m = monthOf(paidDate); if (m != null && m > throughMonth) return 0 }
+      else if (py > year) return 0
+      return Number(amt) || 0
+    }
+    const recs = db.prepare(
+      `SELECT id, paid_amount, amount, paid_date FROM property_taxes WHERE property_id = ? AND tax_year = ?`
     ).all(propertyId, taxYearFor(propertyId, year))
     let sum = 0
-    for (const r of rows) {
-      // Gate by month only within the viewing year; a payment made in an earlier
-      // calendar year (e.g. an arrears bill paid last December) has already
-      // happened, so it counts in full. A payment dated to a future year hasn't.
-      const py = /^\d{4}/.test(r.paid_date || '') ? parseInt(r.paid_date.slice(0, 4), 10) : null
-      if (py === year) {
-        const m = monthOf(r.paid_date)
-        if (m != null && m > throughMonth) continue
-      } else if (py != null && py > year) {
-        continue
+    for (const r of recs) {
+      // Prefer per-installment dates (1st half / 2nd half) so each payment is
+      // gated by when it was actually made; fall back to the record's paid_date.
+      const insts = db.prepare(`SELECT amount, paid_date FROM tax_installments WHERE tax_id = ?`).all(r.id)
+      if (insts.length) {
+        for (const it of insts) sum += countPayment(it.amount, it.paid_date)
+      } else if (r.paid_date) {
+        const amt = r.paid_amount != null ? r.paid_amount : (r.amount != null ? r.amount : 0)
+        sum += countPayment(amt, r.paid_date)
       }
-      const amt = r.paid_amount != null ? Number(r.paid_amount)
-                : r.amount != null ? Number(r.amount) : 0
-      sum += amt
     }
     return sum
   }

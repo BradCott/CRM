@@ -506,6 +506,11 @@ export async function uploadTaxDoc(taxId, file, docType) {
 }
 export const prepareTaxReimbursement = (taxId)      => req('GET',  `/management/taxes/${taxId}/reimbursement/prepare`)
 export const sendTaxReimbursement    = (taxId, data) => req('POST', `/management/taxes/${taxId}/reimbursement/send`, data)
+// Tax installments (1st half / 2nd half payments)
+export const getTaxInstallments   = (taxId)       => req('GET',    `/management/taxes/${taxId}/installments`)
+export const addTaxInstallment    = (taxId, data) => req('POST',   `/management/taxes/${taxId}/installments`, data)
+export const updateTaxInstallment = (iid, data)   => req('PUT',    `/management/taxes/installments/${iid}`, data)
+export const deleteTaxInstallment = (iid)         => req('DELETE', `/management/taxes/installments/${iid}`)
 
 // Maintenance
 export const getPropertyMaintenance  = (propId)      => req('GET',    `/management/${propId}/maintenance`)

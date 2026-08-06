@@ -846,6 +846,19 @@ const migrations = [
   )`,
   `CREATE INDEX IF NOT EXISTS idx_tax_docs ON tax_documents(tax_id)`,
 
+  // A tax bill can be paid in installments (e.g. 1st half / 2nd half). Each
+  // payment is logged here with its own amount + date; the parent property_taxes
+  // row's paid_amount/paid_date are kept in sync from these.
+  `CREATE TABLE IF NOT EXISTS tax_installments (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    tax_id     INTEGER NOT NULL REFERENCES property_taxes(id) ON DELETE CASCADE,
+    label      TEXT,
+    amount     REAL,
+    paid_date  TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_tax_installments ON tax_installments(tax_id)`,
+
   // Taxes paid in arrears: when set on a property's tax settings row, the bill
   // labeled tax_year Y-1 is the one actually paid (and recovered) during year Y.
   // Shifts which tax_year the reconciliation prefill + dashboard net pull from.

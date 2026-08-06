@@ -1198,8 +1198,8 @@ function TaxesSection({ propertyId }) {
 
                     {t.notes && <p className="mt-3 text-xs text-slate-500 whitespace-pre-line border-t border-slate-100 pt-2">{t.notes}</p>}
 
-                    {/* Documents (tax bill / proof of payment) + email tenant for reimbursement */}
-                    <TaxReimbursement tax={t} />
+                    {/* Payments (installments) + documents + email tenant for reimbursement */}
+                    <TaxReimbursement tax={t} onChange={load} />
                   </div>
                 )
               })}

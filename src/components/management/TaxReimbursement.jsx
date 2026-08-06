@@ -1,20 +1,31 @@
-// Tax record: document vault (tax bill / proof of payment) + "email tenant for
-// reimbursement" flow with those docs attached. Mirrors InsuranceReimbursement,
-// minus the premium line-item breakdown (a tax bill is a single amount).
+// Tax record: installment payments (1st half / 2nd half) + document vault +
+// "email tenant for reimbursement" with the tax bill & proof of payment attached.
+// Mirrors InsuranceReimbursement; the installments act like the premium line
+// items — pick which to request and the amount + email note update.
 import { useState, useEffect, useCallback } from 'react'
-import { FileText, Download, Trash2, Loader2, Mail, X, Check, AlertCircle, Send } from 'lucide-react'
+import { FileText, Download, Trash2, Loader2, Mail, X, Check, AlertCircle, Send, Plus, Coins } from 'lucide-react'
 import DropZone from '../ui/DropZone'
 import { ContactPicker } from './InsuranceReimbursement'
 import {
   getTaxDocuments, uploadTaxDoc, taxDocUrl, deleteTaxDoc,
   prepareTaxReimbursement, sendTaxReimbursement,
+  getTaxInstallments, addTaxInstallment, deleteTaxInstallment,
 } from '../../api/client'
 
+const parseAmt = (s) => { const n = parseFloat(String(s ?? '').replace(/[^0-9.\-]/g, '')); return isNaN(n) ? 0 : n }
 const money = (n) => (n == null ? 'the property taxes' : '$' + Math.round(Number(n)).toLocaleString())
-const reimbBody = (amountStr, loc, year) =>
+const fmtDate = (d) => d ? new Date(String(d).length === 10 ? d + 'T12:00:00' : d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''
+
+// "the 1st half and 2nd half of the 2025 real estate taxes"
+function describeWhat(labels, year) {
+  const yr = year ? year + ' ' : ''
+  if (labels && labels.length) return `the ${labels.join(' and ')} of the ${yr}real estate taxes`
+  return `the ${yr}real estate taxes`
+}
+const reimbBody = (amountStr, loc, year, labels) =>
 `Hello,
 
-Per your lease, we've paid the ${year ? year + ' ' : ''}real estate taxes for ${loc || 'the property'} and are requesting reimbursement of ${amountStr}.
+Per your lease, we've paid ${describeWhat(labels, year)} for ${loc || 'the property'} and are requesting reimbursement of ${amountStr}.
 
 Attached are the tax bill and our proof of payment for your records. Please remit reimbursement at your earliest convenience, and let us know if you need anything further.
 
@@ -28,14 +39,23 @@ const TINT = {
   Other: 'bg-slate-100 text-slate-600',
 }
 
-export default function TaxReimbursement({ tax }) {
+export default function TaxReimbursement({ tax, onChange }) {
   const taxId = tax.id
   const [docs, setDocs]         = useState([])
+  const [insts, setInsts]       = useState([])
   const [docType, setDocType]   = useState('Proof of Payment')
   const [uploading, setUp]      = useState(false)
   const [showEmail, setShowEmail] = useState(false)
+  // add-installment row
+  const [iLabel, setILabel] = useState('1st Half')
+  const [iAmount, setIAmount] = useState('')
+  const [iDate, setIDate] = useState('')
+  const [addingInst, setAddingInst] = useState(false)
 
-  const load = useCallback(async () => { try { setDocs(await getTaxDocuments(taxId)) } catch (_) {} }, [taxId])
+  const load = useCallback(async () => {
+    try { setDocs(await getTaxDocuments(taxId)) } catch (_) {}
+    try { setInsts(await getTaxInstallments(taxId)) } catch (_) {}
+  }, [taxId])
   useEffect(() => { load() }, [load])
 
   async function onFile(file) {
@@ -47,9 +67,58 @@ export default function TaxReimbursement({ tax }) {
     if (!window.confirm('Remove this document?')) return
     try { await deleteTaxDoc(taxId, id); await load() } catch (e) { alert(e.message) }
   }
+  async function addInst() {
+    if (!iAmount.trim()) return
+    setAddingInst(true)
+    try {
+      await addTaxInstallment(taxId, { label: iLabel.trim() || null, amount: parseAmt(iAmount), paid_date: iDate || null })
+      setIAmount(''); setIDate('')
+      setILabel(iLabel === '1st Half' ? '2nd Half' : iLabel)
+      await load(); onChange?.()
+    } catch (e) { alert(e.message) } finally { setAddingInst(false) }
+  }
+  async function delInst(id) {
+    try { await deleteTaxInstallment(id); await load(); onChange?.() } catch (e) { alert(e.message) }
+  }
+
+  const paidTotal = insts.reduce((s, i) => s + (Number(i.amount) || 0), 0)
 
   return (
     <div className="mt-4 pt-3 border-t border-slate-100">
+      {/* Installment payments */}
+      <div className="mb-3">
+        <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide mb-1.5 flex items-center gap-1.5"><Coins className="w-3.5 h-3.5" /> Payments</p>
+        {insts.length > 0 && (
+          <ul className="space-y-1 mb-2">
+            {insts.map(i => (
+              <li key={i.id} className="flex items-center gap-2 text-sm">
+                <span className="font-medium text-slate-700">{i.label || 'Payment'}</span>
+                <span className="tabular-nums text-slate-800">{money(i.amount)}</span>
+                {i.paid_date && <span className="text-xs text-slate-400">· {fmtDate(i.paid_date)}</span>}
+                <button onClick={() => delInst(i.id)} className="ml-auto text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+              </li>
+            ))}
+            <li className="text-xs text-slate-500 pt-1 border-t border-slate-100">Total paid: <span className="font-semibold tabular-nums">{money(paidTotal)}</span>{tax.amount ? ` of ${money(tax.amount)} billed` : ''}</li>
+          </ul>
+        )}
+        <div className="flex flex-wrap items-center gap-1.5">
+          <select value={iLabel} onChange={e => setILabel(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5 bg-white">
+            {['1st Half', '2nd Half', 'Full Payment', 'Supplemental'].map(l => <option key={l}>{l}</option>)}
+          </select>
+          <div className="relative">
+            <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">$</span>
+            <input value={iAmount} onChange={e => setIAmount(e.target.value)} placeholder="amount" className="w-24 text-xs border border-slate-200 rounded-lg pl-5 pr-2 py-1.5" />
+          </div>
+          <input type="date" value={iDate} onChange={e => setIDate(e.target.value)} className="text-xs border border-slate-200 rounded-lg px-2 py-1.5" />
+          <button onClick={addInst} disabled={addingInst || !iAmount.trim()}
+            className="inline-flex items-center gap-1 text-xs font-semibold px-2.5 py-1.5 rounded-lg bg-slate-800 text-white hover:bg-slate-900 disabled:opacity-50">
+            {addingInst ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />} Log payment
+          </button>
+        </div>
+        <p className="text-[11px] text-slate-400 mt-1">Log each installment (e.g. 1st half, 2nd half) as you pay it. This keeps the "paid" amount accurate and lets you request reimbursement per installment.</p>
+      </div>
+
+      {/* Documents & reimbursement */}
       <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
         <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Documents &amp; Reimbursement</p>
         <button onClick={() => setShowEmail(true)}
@@ -90,7 +159,8 @@ function ReimbursementModal({ taxId, onClose, onSent }) {
   const [to, setTo]           = useState('')
   const [cc, setCc]           = useState('')
   const [subject, setSubject] = useState('')
-  const [amount, setAmount]   = useState('')
+  const [amount, setAmount]   = useState('')      // used only when there are no installments
+  const [insts, setInsts]     = useState([])      // [{ id, label, amount, paid_date, selected }]
   const [body, setBody]       = useState('')
   const [bodyEdited, setBodyEdited] = useState(false)
   const [selected, setSel]    = useState(() => new Set())
@@ -109,22 +179,27 @@ function ReimbursementModal({ taxId, onClose, onSent }) {
         setTo(d.contacts?.[0]?.email || '')
         setDocs(d.documents || [])
         setSel(new Set((d.documents || []).map(x => x.id)))
-        const amt = d.amount != null ? String(Math.round(Number(d.amount))) : ''
-        setAmount(amt)
-        setBody(reimbBody(money(d.amount), d.loc, d.tax_year))
+        setInsts((d.installments || []).map(i => ({ ...i, selected: true })))
+        if (!(d.installments || []).length) setAmount(d.amount != null ? String(Math.round(Number(d.amount))) : '')
       })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false))
   }, [taxId])
 
-  // Keep the amount in the message in sync unless the body was hand-edited.
+  const hasInsts = insts.length > 0
+  const selectedLabels = insts.filter(i => i.selected).map(i => (i.label || 'payment').toLowerCase())
+  const selectedAmount = hasInsts
+    ? insts.filter(i => i.selected).reduce((s, i) => s + (Number(i.amount) || 0), 0)
+    : (amount === '' ? null : parseAmt(amount))
+
+  // Keep the message amount + installment wording in sync unless hand-edited.
   useEffect(() => {
     if (!data || bodyEdited) return
-    const n = amount === '' ? null : Number(String(amount).replace(/[^0-9.\-]/g, ''))
-    setBody(reimbBody(money(n), data.loc, data.tax_year))
-  }, [amount, data, bodyEdited])
+    setBody(reimbBody(money(selectedAmount), data.loc, data.tax_year, hasInsts ? selectedLabels : null))
+  }, [selectedAmount, data, bodyEdited, hasInsts, selectedLabels.join('|')])
 
-  const toggleDoc = (id) => setSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const toggleDoc  = (id)  => setSel(prev => { const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const toggleInst = (id)  => setInsts(prev => prev.map(i => i.id === id ? { ...i, selected: !i.selected } : i))
 
   async function onUploadDoc(file) {
     if (!file) return
@@ -180,15 +255,36 @@ function ReimbursementModal({ taxId, onClose, onSent }) {
                 <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Subject</label>
                 <input value={subject} onChange={e => setSubject(e.target.value)} className="w-full px-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" />
               </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Reimbursement amount</label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
-                  <input value={amount} onChange={e => setAmount(e.target.value)} placeholder="0"
-                    className="w-full pl-6 pr-3 py-2 text-sm border border-slate-200 rounded-lg tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500" />
+
+              {hasInsts ? (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">Which payments to request</label>
+                  <div className="rounded-xl border border-slate-200 divide-y divide-slate-100">
+                    {insts.map(i => (
+                      <label key={i.id} className="flex items-center gap-2.5 px-3 py-2 hover:bg-slate-50 cursor-pointer">
+                        <input type="checkbox" checked={i.selected} onChange={() => toggleInst(i.id)} className="w-4 h-4 accent-blue-600 shrink-0" />
+                        <span className="text-sm font-medium text-slate-700 flex-1">{i.label || 'Payment'}{i.paid_date ? ` · ${fmtDate(i.paid_date)}` : ''}</span>
+                        <span className="text-sm tabular-nums text-slate-800">{money(i.amount)}</span>
+                      </label>
+                    ))}
+                    <div className="flex items-center justify-end px-3 py-2 bg-slate-50">
+                      <span className="text-sm font-semibold text-blue-700 tabular-nums">Requesting {money(selectedAmount)}</span>
+                    </div>
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">Uncheck an installment to request just one half. The message updates automatically.</p>
                 </div>
-                <p className="text-[11px] text-slate-400 mt-1">Defaults to the tax paid. Adjust if you're only recovering part (e.g. a landlord-borne portion). The message updates automatically.</p>
-              </div>
+              ) : (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Reimbursement amount</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">$</span>
+                    <input value={amount} onChange={e => setAmount(e.target.value)} placeholder="0"
+                      className="w-full pl-6 pr-3 py-2 text-sm border border-slate-200 rounded-lg tabular-nums focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                  <p className="text-[11px] text-slate-400 mt-1">Defaults to the tax paid. If it's paid in installments, log them on the record and they'll appear here to pick from.</p>
+                </div>
+              )}
+
               <div>
                 <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1">Message</label>
                 <textarea value={body} onChange={e => { setBody(e.target.value); setBodyEdited(true) }} rows={9} className="w-full px-3 py-2.5 text-sm border border-slate-200 rounded-xl resize-y focus:outline-none focus:ring-2 focus:ring-blue-500" />
