@@ -622,6 +622,15 @@ const migrations = [
   // Gross sale price (set at close-out or via quick mark-sold). Powers the
   // Historical Transactions returns view.
   `ALTER TABLE properties ADD COLUMN sale_price           REAL`,
+  // Manually-entered returns for a historical deal (pre-CRM or a deal that never
+  // ran a full close-out). The Historical view uses these when close-out-derived
+  // numbers aren't available. hist_irr is a decimal (0.18 = 18%).
+  `ALTER TABLE properties ADD COLUMN hist_invested        REAL`,
+  `ALTER TABLE properties ADD COLUMN hist_returned        REAL`,
+  `ALTER TABLE properties ADD COLUMN hist_pref            REAL`,
+  `ALTER TABLE properties ADD COLUMN hist_sponsor_gain    REAL`,
+  `ALTER TABLE properties ADD COLUMN hist_irr             REAL`,
+  `ALTER TABLE properties ADD COLUMN hist_split           TEXT`,
   // The cap-table row (property_investors.id) a distribution belongs to, so a single
   // global investor listed on multiple rows (e.g. Knox GP position + LP co-invest)
   // can have its GP carry and LP returns displayed separately.

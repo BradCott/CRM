@@ -364,24 +364,39 @@ router.get('/historical', (_req, res) => {
     const sell = p.sale_price != null ? Number(p.sale_price) : (saleTx.get(p.id)?.amount ?? null)
     const dists = distStmt.all(p.id)
     const sumType = (t) => dists.filter(d => !t || d.type === t).reduce((s, d) => s + (Number(d.amount) || 0), 0)
-    const roc = sumType('Principal'), pref = sumType('Preferred Return'), profit = sumType('Profit')
-    const total_distributed = sumType()
-    const invested = Number(investedStmt.get(p.id).s) || 0
+    const roc = sumType('Principal'), profit = sumType('Profit')
+    const derivedPref = sumType('Preferred Return')
+    const derivedDist = sumType()
+    const derivedInvested = Number(investedStmt.get(p.id).s) || 0
+    const knox_fee = p.fee_amount != null ? Number(p.fee_amount) : null
+    const derivedSponsor = (dists.length || knox_fee != null) ? (knox_fee || 0) + profit : null
+    const derivedIrr = derivedInvested > 0
+      ? xirr([{ date: p.close_date, amount: -derivedInvested }, ...dists.map(d => ({ date: d.date, amount: Number(d.amount) || 0 }))])
+      : null
+
+    // Manual entry (hist_*) wins over derived, so pre-CRM / non-closed-out deals
+    // still show complete numbers.
+    const numOr = (m, d) => (m != null ? Number(m) : d)
+    const invested        = numOr(p.hist_invested, derivedInvested)
+    const total_distributed = numOr(p.hist_returned, derivedDist)
+    const pref            = numOr(p.hist_pref, derivedPref)
+    const sponsor_gain    = p.hist_sponsor_gain != null ? Number(p.hist_sponsor_gain) : derivedSponsor
+    const irr             = p.hist_irr != null ? Number(p.hist_irr) : derivedIrr
+
     const hold_months = monthsBetween(p.close_date, p.sold_date)
     const emx = invested > 0 ? total_distributed / invested : null
     const gain = (sell != null && buy != null) ? sell - buy : null
     const investor_gain = invested > 0 ? total_distributed - invested : null
-    const knox_fee = p.fee_amount != null ? Number(p.fee_amount) : null
-    const sponsor_gain = (dists.length || knox_fee != null) ? (knox_fee || 0) + profit : null
-    const irr = invested > 0 ? xirr([{ date: p.close_date, amount: -invested }, ...dists.map(d => ({ date: d.date, amount: Number(d.amount) || 0 }))]) : null
     return {
       id: p.id, address: p.address, city: p.city, state: p.state,
       tenant_brand_name: p.tenant_brand_name, operator_name: p.operator_name,
       close_date: p.close_date, sold_date: p.sold_date, hold_months,
-      buy, sell, gain,
+      buy, sell, gain, split: p.hist_split || null,
       invested, total_distributed, roc, pref, profit,
       investor_gain, emx, irr, knox_fee, sponsor_gain,
-      has_returns: invested > 0 || dists.length > 0,
+      // has_returns: does it have any returns figures to show (derived or manual)?
+      has_returns: invested > 0 || dists.length > 0 || p.hist_returned != null,
+      manual: p.hist_invested != null || p.hist_returned != null || p.hist_irr != null,
     }
   })
   res.json(out)
@@ -586,6 +601,66 @@ router.patch('/:id/portfolio', (req, res) => {
   db.prepare(`UPDATE properties SET is_portfolio = ? WHERE id = ?`).run(is_portfolio ? 1 : 0, req.params.id)
   const row = db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id)
   res.json(row)
+})
+
+// Map the historical returns form fields → property columns (+ value coercion).
+// irr comes in as a percent (18) and is stored as a decimal (0.18).
+function applyHistoricalFields(b) {
+  const num = v => (v === '' || v == null) ? null : (isFinite(Number(v)) ? Number(v) : null)
+  const MAP = {
+    purchase_price: ['purchase_price', num], sale_price: ['sale_price', num],
+    close_date: ['close_date', v => v || null], sold_date: ['sold_date', v => v || null],
+    invested: ['hist_invested', num], returned: ['hist_returned', num],
+    pref: ['hist_pref', num], sponsor_gain: ['hist_sponsor_gain', num],
+    irr: ['hist_irr', v => { const n = num(v); return n == null ? null : n / 100 }],
+    split: ['hist_split', v => (v == null || v === '') ? null : String(v).slice(0, 60)],
+  }
+  const cols = {}
+  for (const [key, [col, coerce]] of Object.entries(MAP)) {
+    if (key in b) cols[col] = coerce(b[key])
+  }
+  return cols
+}
+
+// PATCH /api/properties/:id/historical — edit a sold deal's returns (buy/sell/
+// dates + manual invested/returned/pref/sponsor/irr/split).
+router.patch('/:id/historical', (req, res) => {
+  if (!db.prepare('SELECT id FROM properties WHERE id = ?').get(req.params.id)) return res.status(404).json({ error: 'Property not found' })
+  const cols = applyHistoricalFields(req.body || {})
+  const keys = Object.keys(cols)
+  if (keys.length) {
+    db.prepare(`UPDATE properties SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map(k => cols[k]), req.params.id)
+  }
+  res.json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id))
+})
+
+// POST /api/properties/historical — create a historical-only (sold) record for a
+// pre-CRM deal. Minimal: address required; tenant name find-or-creates the brand.
+router.post('/historical', (req, res) => {
+  const b = req.body || {}
+  const address = String(b.address || '').trim()
+  if (!address) return res.status(400).json({ error: 'address is required' })
+
+  let tenant_brand_id = null
+  const tName = String(b.tenant || '').trim()
+  if (tName) {
+    const found = db.prepare('SELECT id FROM tenant_brands WHERE name = ?').get(tName)
+    tenant_brand_id = found ? found.id : db.prepare('INSERT INTO tenant_brands (name) VALUES (?)').run(tName).lastInsertRowid
+  }
+
+  const r = db.prepare(`
+    INSERT INTO properties (address, city, state, tenant_brand_id, listing_status, is_portfolio, addr_key)
+    VALUES (?, ?, ?, ?, 'sold', 0, ?)
+  `).run(address, b.city || null, b.state || null, tenant_brand_id,
+         normalizeAddr(address, b.city || '', b.state || '', b.zip || '') || null)
+  const id = r.lastInsertRowid
+
+  const cols = applyHistoricalFields(b)
+  const keys = Object.keys(cols)
+  if (keys.length) {
+    db.prepare(`UPDATE properties SET ${keys.map(k => `${k} = ?`).join(', ')} WHERE id = ?`).run(...keys.map(k => cols[k]), id)
+  }
+  res.status(201).json(db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(id))
 })
 
 // PATCH /api/properties/:id/sold — quick "mark as sold" without the full close-out

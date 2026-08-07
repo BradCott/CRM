@@ -89,6 +89,8 @@ export const sendTenantNotify      = (id, d)  => req('POST', `/properties/${id}/
 export const togglePortfolio       = (id, val) => req('PATCH',  `/properties/${id}/portfolio`, { is_portfolio: val })
 export const getHistoricalTransactions = ()      => req('GET',   '/properties/historical')
 export const markPropertySold      = (id, data)  => req('PATCH', `/properties/${id}/sold`, data)
+export const updateHistorical      = (id, data)  => req('PATCH', `/properties/${id}/historical`, data)
+export const createHistorical      = (data)      => req('POST',  '/properties/historical', data)
 
 // Deals
 export const getDeals       = ()       => req('GET',    '/deals')

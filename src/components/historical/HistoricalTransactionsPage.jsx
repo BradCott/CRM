@@ -4,8 +4,8 @@
 // distributions where available; deals without close-out data show what we have.
 import { useState, useEffect, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { History, Loader2, Building2, TrendingUp, Search, X, Check, AlertCircle } from 'lucide-react'
-import { getHistoricalTransactions, getProperties, markPropertySold } from '../../api/client'
+import { History, Loader2, Building2, TrendingUp, Search, X, Check, AlertCircle, Plus, Pencil } from 'lucide-react'
+import { getHistoricalTransactions, getProperties, markPropertySold, updateHistorical, createHistorical } from '../../api/client'
 import TopBar from '../layout/TopBar'
 
 const money = (n) => (n == null || n === '') ? '—' : (Math.abs(n) >= 1_000_000 ? `$${(n / 1_000_000).toFixed(2)}M` : `$${Math.round(Number(n)).toLocaleString()}`)
@@ -19,6 +19,7 @@ export default function HistoricalTransactionsPage() {
   const navigate = useNavigate()
   const [rows, setRows]       = useState(null)
   const [showMark, setShowMark] = useState(false)
+  const [editRow, setEditRow] = useState(null)   // row being edited, or 'new' to create
 
   const load = useCallback(() => { getHistoricalTransactions().then(setRows).catch(() => setRows([])) }, [])
   useEffect(() => { load() }, [load])
@@ -35,10 +36,16 @@ export default function HistoricalTransactionsPage() {
       <TopBar
         title={rows?.length ? `Historical Transactions (${rows.length})` : 'Historical Transactions'}
         actions={
-          <button onClick={() => setShowMark(true)}
-            className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800">
-            <Building2 className="w-4 h-4" /> Mark a property as sold
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setEditRow('new')}
+              className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border border-slate-200 text-slate-700 hover:bg-slate-50">
+              <Plus className="w-4 h-4" /> Add historical deal
+            </button>
+            <button onClick={() => setShowMark(true)}
+              className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg bg-slate-900 text-white hover:bg-slate-800">
+              <Building2 className="w-4 h-4" /> Mark a property as sold
+            </button>
+          </div>
         }
       />
 
@@ -69,6 +76,7 @@ export default function HistoricalTransactionsPage() {
                       {['Property', 'Bought', 'Sold', 'Hold', 'Invested', 'Returned', 'PROR', 'EMx', 'IRR', 'Investor Gain', 'Knox Gain'].map((h, i) => (
                         <th key={h} className={`px-3 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap ${i === 0 ? 'text-left' : 'text-right'}`}>{h}</th>
                       ))}
+                      <th className="px-2" />
                     </tr>
                   </thead>
                   <tbody>
@@ -88,6 +96,9 @@ export default function HistoricalTransactionsPage() {
                         <td className="px-3 py-3 text-right tabular-nums font-medium text-slate-800">{pct(r.irr)}</td>
                         <td className="px-3 py-3 text-right tabular-nums text-emerald-700">{money(r.investor_gain)}</td>
                         <td className="px-3 py-3 text-right tabular-nums text-blue-700">{money(r.sponsor_gain)}</td>
+                        <td className="px-2 py-3 text-right" onClick={e => e.stopPropagation()}>
+                          <button onClick={() => setEditRow(r)} title="Edit returns" className="text-slate-300 hover:text-slate-600"><Pencil className="w-3.5 h-3.5" /></button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>
@@ -102,7 +113,103 @@ export default function HistoricalTransactionsPage() {
       </div>
 
       {showMark && <MarkSoldModal onClose={() => setShowMark(false)} onDone={() => { setShowMark(false); load() }} />}
+      {editRow && <ReturnsEditorModal row={editRow === 'new' ? null : editRow} onClose={() => setEditRow(null)} onDone={() => { setEditRow(null); load() }} />}
     </div>
+  )
+}
+
+// Create a new historical deal, or edit an existing one's returns.
+function ReturnsEditorModal({ row, onClose, onDone }) {
+  const creating = !row
+  const [f, setF] = useState({
+    address: '', tenant: '', city: '', state: '',
+    purchase_price: row?.buy ?? '', sale_price: row?.sell ?? '',
+    close_date: row?.close_date ?? '', sold_date: row?.sold_date ?? '',
+    invested: row?.invested || '', returned: row?.total_distributed || '',
+    pref: row?.pref || '', sponsor_gain: row?.sponsor_gain ?? '',
+    irr: row?.irr != null ? +(row.irr * 100).toFixed(2) : '', split: row?.split ?? '',
+  })
+  const [busy, setBusy] = useState(false)
+  const [err, setErr]   = useState(null)
+  const set = (k) => (e) => setF(p => ({ ...p, [k]: e.target.value }))
+
+  async function save() {
+    setBusy(true); setErr(null)
+    const payload = {
+      purchase_price: f.purchase_price, sale_price: f.sale_price,
+      close_date: f.close_date, sold_date: f.sold_date,
+      invested: f.invested, returned: f.returned, pref: f.pref,
+      sponsor_gain: f.sponsor_gain, irr: f.irr, split: f.split,
+    }
+    try {
+      if (creating) await createHistorical({ address: f.address, tenant: f.tenant, city: f.city, state: f.state, ...payload })
+      else          await updateHistorical(row.id, payload)
+      onDone()
+    } catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
+          <h2 className="text-base font-bold text-slate-900">{creating ? 'Add historical deal' : `Edit returns — ${row.tenant_brand_name || row.address}`}</h2>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100"><X className="w-4 h-4" /></button>
+        </div>
+        <div className="flex-1 overflow-y-auto px-6 py-5 space-y-4">
+          {creating && (
+            <div className="grid grid-cols-2 gap-3">
+              <HField label="Address *" value={f.address} onChange={set('address')} wide placeholder="1212 Main St" />
+              <HField label="Tenant" value={f.tenant} onChange={set('tenant')} placeholder="Sherwin-Williams" />
+              <div className="grid grid-cols-2 gap-3">
+                <HField label="City" value={f.city} onChange={set('city')} />
+                <HField label="State" value={f.state} onChange={set('state')} />
+              </div>
+            </div>
+          )}
+          <div className="grid grid-cols-2 gap-3">
+            <HField label="Buy price" value={f.purchase_price} onChange={set('purchase_price')} prefix="$" placeholder="0" />
+            <HField label="Sale price" value={f.sale_price} onChange={set('sale_price')} prefix="$" placeholder="0" />
+            <HField label="Acquired" value={f.close_date} onChange={set('close_date')} type="date" />
+            <HField label="Sold" value={f.sold_date} onChange={set('sold_date')} type="date" />
+          </div>
+          <div className="pt-1 border-t border-slate-100">
+            <p className="text-xs font-semibold text-slate-500 mt-3 mb-2">Returns</p>
+            <div className="grid grid-cols-2 gap-3">
+              <HField label="Capital invested" value={f.invested} onChange={set('invested')} prefix="$" placeholder="0" />
+              <HField label="Returned to investors" value={f.returned} onChange={set('returned')} prefix="$" placeholder="0" />
+              <HField label="Preferred paid (PROR)" value={f.pref} onChange={set('pref')} prefix="$" placeholder="0" />
+              <HField label="Knox / sponsor gain" value={f.sponsor_gain} onChange={set('sponsor_gain')} prefix="$" placeholder="0" />
+              <HField label="IRR (%)" value={f.irr} onChange={set('irr')} placeholder="18" />
+              <HField label="Split / promote" value={f.split} onChange={set('split')} placeholder="40/60 LP/GP" />
+            </div>
+            <p className="text-[11px] text-slate-400 mt-2">Equity multiple is computed from invested ÷ returned. These override any auto-calculated figures for this deal.</p>
+          </div>
+          {err && <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /> {err}</div>}
+        </div>
+        <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100">
+          <button onClick={onClose} className="text-sm text-slate-500 hover:text-slate-700">Cancel</button>
+          <button onClick={save} disabled={busy || (creating && !f.address.trim())}
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 text-white text-sm font-medium hover:bg-slate-800 disabled:opacity-50">
+            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />} {creating ? 'Add deal' : 'Save returns'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Module-level so it keeps a stable identity across the modal's re-renders
+// (a component defined inside the modal would remount and drop focus per keystroke).
+function HField({ label, value, onChange, type = 'text', prefix, placeholder, wide }) {
+  return (
+    <label className={wide ? 'col-span-2' : ''}>
+      <span className="block text-[11px] font-semibold text-slate-500 uppercase tracking-wide mb-1">{label}</span>
+      <div className="relative">
+        {prefix && <span className="absolute left-3 top-1/2 -translate-y-1/2 text-sm text-slate-400">{prefix}</span>}
+        <input type={type} value={value} onChange={onChange} placeholder={placeholder}
+          className={`w-full ${prefix ? 'pl-6' : 'pl-3'} pr-3 py-2 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500`} />
+      </div>
+    </label>
   )
 }
 
