@@ -356,22 +356,35 @@ function xirr(flows) {
 router.get('/historical', (_req, res) => {
   const props = db.prepare(`${BASE_SELECT} WHERE p.listing_status = 'sold' ORDER BY (p.sold_date IS NULL), p.sold_date DESC, p.id DESC`).all()
   const saleTx    = db.prepare(`SELECT amount FROM accounting_transactions WHERE property_id = ? AND source = 'Sale' AND description = 'Sale Proceeds' ORDER BY id DESC LIMIT 1`)
-  const distStmt  = db.prepare(`SELECT amount, distribution_type AS type, distribution_date AS date FROM investor_distributions WHERE property_id = ?`)
-  const investedStmt = db.prepare(`SELECT COALESCE(SUM(contribution), 0) AS s FROM property_investors WHERE property_id = ?`)
+  const distStmt  = db.prepare(`SELECT amount, distribution_type AS type, distribution_date AS date, cap_row_id FROM investor_distributions WHERE property_id = ?`)
+  const capStmt   = db.prepare(`SELECT id, contribution, class FROM property_investors WHERE property_id = ?`)
 
   const out = props.map(p => {
     const buy  = p.purchase_price != null ? Number(p.purchase_price) : null
     const sell = p.sale_price != null ? Number(p.sale_price) : (saleTx.get(p.id)?.amount ?? null)
+
+    // Split the cap table into the sponsor (GP promote) row(s) and the LP
+    // investors. Investor metrics are LP-only — the sponsor's carry is NOT part
+    // of investor returns; it's Knox's gain. cap_row_id links a distribution to
+    // its cap-table row so carry to the Sponsor row is excluded from the LP side.
+    const caps = capStmt.all(p.id)
+    const sponsorRowIds = new Set(caps.filter(c => String(c.class || '').toLowerCase() === 'sponsor').map(c => c.id))
+    const lpInvested = caps.filter(c => !sponsorRowIds.has(c.id)).reduce((s, c) => s + (Number(c.contribution) || 0), 0)
+
     const dists = distStmt.all(p.id)
-    const sumType = (t) => dists.filter(d => !t || d.type === t).reduce((s, d) => s + (Number(d.amount) || 0), 0)
-    const roc = sumType('Principal'), profit = sumType('Profit')
-    const derivedPref = sumType('Preferred Return')
-    const derivedDist = sumType()
-    const derivedInvested = Number(investedStmt.get(p.id).s) || 0
+    const isSponsorDist = (d) => d.cap_row_id != null && sponsorRowIds.has(d.cap_row_id)
+    const lpDists = dists.filter(d => !isSponsorDist(d))
+    const carry   = dists.filter(isSponsorDist).reduce((s, d) => s + (Number(d.amount) || 0), 0)
+    const lpSum = (t) => lpDists.filter(d => !t || d.type === t).reduce((s, d) => s + (Number(d.amount) || 0), 0)
+
+    const roc = lpSum('Principal'), profit = lpSum('Profit')
+    const derivedPref = lpSum('Preferred Return')
+    const derivedDist = lpSum()
+    const derivedInvested = lpInvested
     const knox_fee = p.fee_amount != null ? Number(p.fee_amount) : null
-    const derivedSponsor = (dists.length || knox_fee != null) ? (knox_fee || 0) + profit : null
+    const derivedSponsor = (dists.length || knox_fee != null) ? (knox_fee || 0) + carry : null
     const derivedIrr = derivedInvested > 0
-      ? xirr([{ date: p.close_date, amount: -derivedInvested }, ...dists.map(d => ({ date: d.date, amount: Number(d.amount) || 0 }))])
+      ? xirr([{ date: p.close_date, amount: -derivedInvested }, ...lpDists.map(d => ({ date: d.date, amount: Number(d.amount) || 0 }))])
       : null
 
     // Manual entry (hist_*) wins over derived, so pre-CRM / non-closed-out deals

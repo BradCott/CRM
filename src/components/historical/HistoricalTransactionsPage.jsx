@@ -27,9 +27,9 @@ export default function HistoricalTransactionsPage() {
   const totals = (rows || []).reduce((a, r) => ({
     invested: a.invested + (r.invested || 0),
     returned: a.returned + (r.total_distributed || 0),
-    gain: a.gain + (r.gain || 0),
+    investorProfit: a.investorProfit + (r.investor_gain || 0),
     sponsor: a.sponsor + (r.sponsor_gain || 0),
-  }), { invested: 0, returned: 0, gain: 0, sponsor: 0 })
+  }), { invested: 0, returned: 0, investorProfit: 0, sponsor: 0 })
 
   return (
     <div className="flex flex-col h-full">
@@ -63,9 +63,9 @@ export default function HistoricalTransactionsPage() {
             {/* Track-record summary */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <Tile label="Deals" value={rows.length} />
-              <Tile label="Capital Invested" value={money(totals.invested)} />
+              <Tile label="Investor Capital" value={money(totals.invested)} />
               <Tile label="Returned to Investors" value={money(totals.returned)} accent="text-emerald-700" />
-              <Tile label="Total Gain on Sales" value={money(totals.gain)} accent="text-emerald-700" />
+              <Tile label="Investor Profit" value={money(totals.investorProfit)} accent="text-emerald-700" />
             </div>
 
             <div className="rounded-2xl border border-slate-200 bg-white overflow-hidden">
@@ -73,7 +73,7 @@ export default function HistoricalTransactionsPage() {
                 <table className="min-w-full text-sm">
                   <thead className="bg-slate-50 border-b border-slate-100">
                     <tr>
-                      {['Property', 'Bought', 'Sold', 'Hold', 'Invested', 'Returned', 'PROR', 'EMx', 'IRR', 'Investor Gain', 'Knox Gain'].map((h, i) => (
+                      {['Property', 'Bought', 'Sold', 'Hold', 'Invested', 'Returned', 'PROR', 'Investor EMx', 'IRR', 'Investor Gain', 'Knox Gain'].map((h, i) => (
                         <th key={h} className={`px-3 py-2.5 text-[11px] font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap ${i === 0 ? 'text-left' : 'text-right'}`}>{h}</th>
                       ))}
                       <th className="px-2" />
