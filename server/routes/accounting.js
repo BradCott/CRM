@@ -357,6 +357,7 @@ router.get('/:propertyId/distributions', (req, res) => {
       investor_id:   r.investor_id != null ? r.investor_id : null,
       name:          r.name,
       contribution:  Number(r.contribution) || 0,
+      class:         r.class ?? null,
       preferred_return_rate: r.preferred_return ?? null,
     }))
 

@@ -86,9 +86,17 @@ export default function SaleCloseoutWizard({ propertyId, property, transactions 
       // Pre-fill payoffs from the balance sheet
       setLoanPayoff(bs.loanBalance > 0 ? String(Math.round(bs.loanBalance)) : '')
       setMemberPayoff(bs.memberLoan > 0 ? String(Math.round(bs.memberLoan)) : '')
-      // Best-effort default sponsor: an investor whose name looks like the sponsor
-      const guess = inv.find(i => /knox|sponsor|\bgp\b/i.test(i.name || ''))
-      if (guess) setSponsorIds(new Set([guess.id]))
+      // Default sponsor: cap-table rows explicitly flagged class='Sponsor' (the
+      // authoritative GP designation). Only if none are flagged do we fall back
+      // to a name guess — which can pick the wrong row when someone (e.g. Knox)
+      // appears as both a GP position AND an LP co-invest.
+      const flagged = inv.filter(i => String(i.class || '').toLowerCase() === 'sponsor')
+      if (flagged.length) {
+        setSponsorIds(new Set(flagged.map(i => i.id)))
+      } else {
+        const guess = inv.find(i => /knox|sponsor|\bgp\b/i.test(i.name || ''))
+        if (guess) setSponsorIds(new Set([guess.id]))
+      }
       setLoading(false)
     })
     return () => { cancelled = true }
