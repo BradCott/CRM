@@ -318,6 +318,102 @@ router.get('/deadlines', (req, res) => {
   res.json(all)
 })
 
+// ── GET /critical-dates ───────────────────────────────────────────────────────
+// Aggregated upcoming dates in two buckets:
+//   deal      — escrow/transactional dates for deals under contract (DD, closing)
+//   portfolio — ongoing asset dates (lease expirations, renewal-notice deadlines
+//               from parsed lease abstracts, loan maturities, insurance & tax dues)
+// Each item: { kind, label, date (ISO), daysUntil, entity_type, entity_id, entity_name, sub }
+router.get('/critical-dates', (req, res) => {
+  const today = new Date(); today.setHours(0, 0, 0, 0)
+  const MS = 86400000
+  const parseDate = v => {
+    if (!v) return null
+    const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/)
+    let d = m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(v)
+    if (Number.isNaN(d.getTime())) return null
+    d.setHours(0, 0, 0, 0)
+    return d
+  }
+  const toISO = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  // Build a normalized item; drop anything unparseable or more than 60 days past.
+  const mk = o => {
+    const d = parseDate(o.date); if (!d) return null
+    const daysUntil = Math.round((d - today) / MS)
+    if (daysUntil < -60) return null
+    return { ...o, date: toISO(d), daysUntil }
+  }
+
+  // ── Deal bucket — deals actively under contract ──
+  const deal = []
+  const dealRows = db.prepare(`
+    SELECT d.id, COALESCE(NULLIF(d.tenant,''), t.name, d.address, p.address, 'Deal') AS name,
+           COALESCE(d.address, p.address) AS address, d.stage, d.dd_deadline, d.close_date
+    FROM deals d
+    LEFT JOIN properties p ON p.id = d.property_id
+    LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE (d.status IS NULL OR d.status = 'active')
+      AND d.stage IN ('psa_negotiation', 'under_contract', 'money_hard')
+  `).all()
+  for (const r of dealRows) {
+    const base = { entity_type: 'deal', entity_id: r.id, entity_name: r.name, sub: r.address || null, stage: r.stage }
+    const dd = mk({ ...base, kind: 'dd_deadline', label: 'DD deadline — earnest hard', date: r.dd_deadline }); if (dd) deal.push(dd)
+    const cl = mk({ ...base, kind: 'closing', label: 'Closing', date: r.close_date }); if (cl) deal.push(cl)
+  }
+
+  // ── Portfolio bucket ──
+  const portfolio = []
+  const props = db.prepare(`
+    SELECT p.id, COALESCE(NULLIF(p.display_name,''), p.address) AS name, p.address,
+           p.lease_end, p.maturity_date, t.name AS tenant
+    FROM properties p LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE p.is_portfolio = 1
+  `).all()
+  for (const r of props) {
+    const base = { entity_type: 'property', entity_id: r.id, entity_name: r.name, sub: r.tenant || r.address || null }
+    const le = mk({ ...base, kind: 'lease_expiration', label: 'Lease expiration', date: r.lease_end }); if (le) portfolio.push(le)
+    const lm = mk({ ...base, kind: 'loan_maturity', label: 'Loan maturity', date: r.maturity_date }); if (lm) portfolio.push(lm)
+  }
+  const taxes = db.prepare(`
+    SELECT pt.property_id AS id, pt.due_date, pt.tax_year, COALESCE(NULLIF(p.display_name,''), p.address) AS name, p.address, t.name AS tenant
+    FROM property_taxes pt JOIN properties p ON p.id = pt.property_id LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE p.is_portfolio = 1 AND pt.due_date IS NOT NULL AND pt.paid_date IS NULL
+  `).all()
+  for (const r of taxes) {
+    const it = mk({ entity_type: 'property', entity_id: r.id, entity_name: r.name, sub: r.tenant || r.address || null,
+      kind: 'tax_due', label: `Property tax due${r.tax_year ? ` (${r.tax_year})` : ''}`, date: r.due_date })
+    if (it) portfolio.push(it)
+  }
+  const ins = db.prepare(`
+    SELECT pi.property_id AS id, pi.expiry_date, pi.carrier, COALESCE(NULLIF(p.display_name,''), p.address) AS name, p.address, t.name AS tenant
+    FROM property_insurance pi JOIN properties p ON p.id = pi.property_id LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE p.is_portfolio = 1 AND pi.expiry_date IS NOT NULL AND pi.expiry_date >= date('now', '-30 days')
+  `).all()
+  for (const r of ins) {
+    const it = mk({ entity_type: 'property', entity_id: r.id, entity_name: r.name, sub: r.carrier || r.tenant || null,
+      kind: 'insurance_exp', label: 'Insurance expiration', date: r.expiry_date })
+    if (it) portfolio.push(it)
+  }
+  // Renewal-notice deadlines etc. from parsed lease abstracts (key_dates array).
+  const leases = db.prepare(`
+    SELECT pl.property_id AS id, pl.abstract, COALESCE(NULLIF(p.display_name,''), p.address) AS name, t.name AS tenant
+    FROM property_leases pl JOIN properties p ON p.id = pl.property_id LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE p.is_portfolio = 1 AND pl.abstract IS NOT NULL
+  `).all()
+  for (const r of leases) {
+    let a; try { a = JSON.parse(r.abstract) } catch { continue }
+    for (const kd of (a?.key_dates || [])) {
+      const it = mk({ entity_type: 'property', entity_id: r.id, entity_name: r.name, sub: r.tenant || null,
+        kind: 'lease_key_date', label: kd.label || 'Lease key date', date: kd.date })
+      if (it) portfolio.push(it)
+    }
+  }
+
+  const byDate = (a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0
+  deal.sort(byDate); portfolio.sort(byDate)
+  res.json({ deal, portfolio })
+})
+
 // ── GET /activity ─────────────────────────────────────────────────────────────
 // Last 10 actions across the CRM
 router.get('/activity', (req, res) => {

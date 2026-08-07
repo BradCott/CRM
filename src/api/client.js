@@ -185,6 +185,7 @@ export const getDashboardDeadlines      = () => req('GET', '/dashboard/deadlines
 export const getDashboardActivity       = () => req('GET', '/dashboard/activity')
 export const getDashboardMapProperties  = () => req('GET', '/dashboard/map-properties')
 export const getDashboardLeaseExpirations = () => req('GET', '/dashboard/lease-expirations')
+export const getCriticalDates           = () => req('GET', '/dashboard/critical-dates')   // { deal, portfolio }
 export const getTreasury                   = () => req('GET', '/dashboard/treasury')
 
 // Google OAuth / Drive

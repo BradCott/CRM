@@ -4,7 +4,7 @@ import {
   Landmark, TrendingUp, Users, FileCheck2, AlertTriangle,
   CalendarClock, Loader2, KanbanSquare,
   History, Mail, Shield, CheckCircle2, Building2,
-  MapPin, Calendar, Send, BookOpen, Plus,
+  MapPin, Calendar, Send, BookOpen, Plus, FileSignature,
 } from 'lucide-react'
 import { getDashboard, getDeals, getDashboardActivity, getDashboardMapProperties, getDashboardLeaseExpirations, getLauncherCounts } from '../../api/client'
 import knoxLogo from '../../assets/Knox.png'
@@ -13,6 +13,7 @@ import TodaysPlays from './TodaysPlays'
 import BrokerLeaderboard from './BrokerLeaderboard'
 import MailEngine from './MailEngine'
 import TreasuryChart from './TreasuryChart'
+import { CriticalDatesWidget } from './CriticalDatesPage'
 
 // ── Formatters ────────────────────────────────────────────────────────────────
 function fmt$(v) {
@@ -204,6 +205,8 @@ export default function DashboardPage() {
           </div>
 
           <div className="space-y-4">
+            <CriticalDatesWidget bucket="deal" title="Escrow Critical Dates" icon={FileSignature} />
+            <CriticalDatesWidget bucket="portfolio" title="Portfolio Deadlines" icon={CalendarClock} />
             <TreasuryChart />
             <MailEngine />
 

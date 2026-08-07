@@ -15,6 +15,7 @@ import HistoricalTransactionsPage from './components/historical/HistoricalTransa
 import InvestorsPage          from './components/investors/InvestorsPage'
 import InvestorProfilePage   from './components/investors/InvestorProfilePage'
 import DashboardPage    from './components/dashboard/DashboardPage'
+import CriticalDatesPage from './components/dashboard/CriticalDatesPage'
 import SettingsPage     from './components/settings/SettingsPage'
 import AccountingPage   from './components/accounting/AccountingPage'
 import LedgerPage       from './components/accounting/LedgerPage'
@@ -102,6 +103,7 @@ export default function App() {
               <Route path="/properties" element={<PropertiesPage />} />
               <Route path="/pipeline"   element={<PipelinePage />} />
               <Route path="/pipeline/:dealId" element={<DealDetailPage />} />
+              <Route path="/critical-dates" element={<CriticalDatesPage />} />
               <Route path="/reports"    element={<ReportsPage />} />
 
               {/* Admin + Full Agent only */}
