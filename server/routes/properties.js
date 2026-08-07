@@ -397,7 +397,7 @@ router.get('/historical', (_req, res) => {
     const irr             = p.hist_irr != null ? Number(p.hist_irr) : derivedIrr
 
     const hold_months = monthsBetween(p.close_date, p.sold_date)
-    const emx = invested > 0 ? total_distributed / invested : null
+    const emx = p.hist_emx != null ? Number(p.hist_emx) : (invested > 0 ? total_distributed / invested : null)
     const gain = (sell != null && buy != null) ? sell - buy : null
     const investor_gain = invested > 0 ? total_distributed - invested : null
     return {
@@ -626,6 +626,7 @@ function applyHistoricalFields(b) {
     invested: ['hist_invested', num], returned: ['hist_returned', num],
     pref: ['hist_pref', num], sponsor_gain: ['hist_sponsor_gain', num],
     irr: ['hist_irr', v => { const n = num(v); return n == null ? null : n / 100 }],
+    emx: ['hist_emx', num],
     split: ['hist_split', v => (v == null || v === '') ? null : String(v).slice(0, 60)],
   }
   const cols = {}

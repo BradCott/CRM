@@ -128,6 +128,7 @@ function ReturnsEditorModal({ row, onClose, onDone }) {
     invested: row?.invested || '', returned: row?.total_distributed || '',
     pref: row?.pref || '', sponsor_gain: row?.sponsor_gain ?? '',
     irr: row?.irr != null ? +(row.irr * 100).toFixed(2) : '', split: row?.split ?? '',
+    emx: row?.emx != null ? +Number(row.emx).toFixed(2) : '',
   })
   const [busy, setBusy] = useState(false)
   const [err, setErr]   = useState(null)
@@ -139,7 +140,7 @@ function ReturnsEditorModal({ row, onClose, onDone }) {
       purchase_price: f.purchase_price, sale_price: f.sale_price,
       close_date: f.close_date, sold_date: f.sold_date,
       invested: f.invested, returned: f.returned, pref: f.pref,
-      sponsor_gain: f.sponsor_gain, irr: f.irr, split: f.split,
+      sponsor_gain: f.sponsor_gain, irr: f.irr, split: f.split, emx: f.emx,
     }
     try {
       if (creating) await createHistorical({ address: f.address, tenant: f.tenant, city: f.city, state: f.state, ...payload })
@@ -179,10 +180,11 @@ function ReturnsEditorModal({ row, onClose, onDone }) {
               <HField label="Returned to investors" value={f.returned} onChange={set('returned')} prefix="$" placeholder="0" />
               <HField label="Preferred paid (PROR)" value={f.pref} onChange={set('pref')} prefix="$" placeholder="0" />
               <HField label="Knox / sponsor gain" value={f.sponsor_gain} onChange={set('sponsor_gain')} prefix="$" placeholder="0" />
+              <HField label="Investor EMx (x)" value={f.emx} onChange={set('emx')} placeholder="1.39" />
               <HField label="IRR (%)" value={f.irr} onChange={set('irr')} placeholder="18" />
-              <HField label="Split / promote" value={f.split} onChange={set('split')} placeholder="40/60 LP/GP" />
+              <HField label="Split / promote" value={f.split} onChange={set('split')} placeholder="40/60 LP/GP" wide />
             </div>
-            <p className="text-[11px] text-slate-400 mt-2">Equity multiple is computed from invested ÷ returned. These override any auto-calculated figures for this deal.</p>
+            <p className="text-[11px] text-slate-400 mt-2">Leave Investor EMx blank to auto-compute it from invested ÷ returned; set it to override (handy when a deal's carry was tagged wrong). Other fields override any auto-calculated figures.</p>
           </div>
           {err && <div className="flex items-start gap-2 text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg px-3 py-2"><AlertCircle className="w-4 h-4 mt-0.5 shrink-0" /> {err}</div>}
         </div>

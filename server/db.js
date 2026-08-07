@@ -631,6 +631,9 @@ const migrations = [
   `ALTER TABLE properties ADD COLUMN hist_sponsor_gain    REAL`,
   `ALTER TABLE properties ADD COLUMN hist_irr             REAL`,
   `ALTER TABLE properties ADD COLUMN hist_split           TEXT`,
+  // Direct investor equity-multiple override (when the derived split can't be
+  // trusted, e.g. carry mis-tagged on an old close-out).
+  `ALTER TABLE properties ADD COLUMN hist_emx             REAL`,
   // The cap-table row (property_investors.id) a distribution belongs to, so a single
   // global investor listed on multiple rows (e.g. Knox GP position + LP co-invest)
   // can have its GP carry and LP returns displayed separately.
