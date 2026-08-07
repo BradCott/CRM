@@ -10,6 +10,11 @@ import { getCriticalDates } from '../../api/client'
 const KIND = {
   dd_deadline:      { icon: FileSignature, tag: 'DD' },
   closing:          { icon: DollarSign,    tag: 'Closing' },
+  effective_date:   { icon: FileSignature, tag: 'PSA' },
+  earnest_due:      { icon: DollarSign,    tag: 'Earnest' },
+  title_objection:  { icon: FileSignature, tag: 'Title' },
+  order_by:         { icon: KeyRound,      tag: 'Order' },
+  psa_date:         { icon: FileSignature, tag: 'PSA' },
   lease_expiration: { icon: ScrollText,    tag: 'Lease' },
   lease_key_date:   { icon: KeyRound,      tag: 'Lease' },
   loan_maturity:    { icon: Landmark,      tag: 'Loan' },

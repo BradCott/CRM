@@ -2,10 +2,11 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Loader2, Building2, CalendarDays, DollarSign, User, Link2, FileText,
-  TrendingUp, Sparkles, ScrollText, AlertCircle, CheckCircle2, Pencil,
+  TrendingUp, Sparkles, ScrollText, AlertCircle, CheckCircle2, Pencil, FileSignature, CalendarClock,
+  ExternalLink, ClipboardCheck, X, UploadCloud,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
-import { getDeal, updateDealField, parseDealDoc } from '../../api/client'
+import { getDeal, updateDealField, parseDealDoc, deleteDealProposal } from '../../api/client'
 import ReturnsCalculator from './ReturnsCalculator'
 
 const STAGE_LABELS = {
@@ -15,10 +16,35 @@ const STAGE_LABELS = {
   money_hard:      { label: 'Money Hard',      cls: 'bg-green-100 text-green-700' },
 }
 
+const DOC_LABEL = { om: 'OM', lease: 'lease', psa: 'PSA', proposal: 'proposal' }
+
 const fmt$    = v => v == null || v === '' ? null : '$' + Math.round(Number(v)).toLocaleString()
 const fmtPct  = v => v == null || v === '' ? null : `${Number(v).toFixed(2)}%`
 const fmtNum  = v => v == null || v === '' ? null : Number(v).toLocaleString()
 const fmtDate = v => { if (!v) return null; const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})/); return m ? `${m[2]}/${m[3]}/${m[1]}` : v }
+function daysUntil(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/); if (!m) return null
+  const d = new Date(+m[1], +m[2] - 1, +m[3]); d.setHours(0, 0, 0, 0)
+  const t = new Date(); t.setHours(0, 0, 0, 0)
+  return Math.round((d - t) / 86400000)
+}
+function dueBadge(days) {
+  if (days < 0)   return 'bg-red-50 text-red-700 border-red-200'
+  if (days <= 14) return 'bg-red-50 text-red-600 border-red-200'
+  if (days <= 45) return 'bg-amber-50 text-amber-700 border-amber-200'
+  if (days <= 90) return 'bg-blue-50 text-blue-700 border-blue-200'
+  return 'bg-slate-100 text-slate-500 border-slate-200'
+}
+// Years/months left on the current lease term, computed from the expiration date.
+function termRemaining(iso) {
+  const days = daysUntil(iso)
+  if (days == null) return null
+  if (days < 0) return 'Expired'
+  const months = Math.round(days / 30.44)
+  if (months < 12) return `${months} mo`
+  const y = Math.floor(months / 12), m = months % 12
+  return m ? `${y}y ${m}mo` : `${y} yr`
+}
 
 function formatEditable(type, v) {
   if (v == null || v === '') return null
@@ -41,13 +67,12 @@ export default function DealDetailPage() {
   const [savingField, setSavingField] = useState(null)
   const [saveError, setSaveError]     = useState(null)
 
-  // Document parser (auto-fill)
-  const [busyDoc, setBusyDoc]   = useState(null)   // 'om' | 'lease'
-  const [dragDoc, setDragDoc]   = useState(null)
+  // Document parser — single upload box, auto-classified server-side.
+  const [busyDoc, setBusyDoc]   = useState(false)
+  const [dragDoc, setDragDoc]   = useState(false)
   const [docError, setDocError] = useState(null)
-  const [applied, setApplied]   = useState(null)   // { docType, count }
-  const omRef    = useRef(null)
-  const leaseRef = useRef(null)
+  const [applied, setApplied]   = useState(null)   // { docType, count, proposal }
+  const fileRef = useRef(null)
 
   useEffect(() => {
     let alive = true
@@ -71,19 +96,24 @@ export default function DealDetailPage() {
     }
   }
 
-  async function handleDoc(docType, fileList) {
+  async function handleDoc(fileList) {
     const files = Array.from(fileList || []).filter(Boolean)
     if (!files.length) return
-    setBusyDoc(docType); setDocError(null); setApplied(null)
+    setBusyDoc(true); setDocError(null); setApplied(null)
     try {
-      const { deal: updated, applied: cols } = await parseDealDoc(dealId, docType, files)
-      setDeal(updated)
-      setApplied({ docType, count: cols.length })
+      const res = await parseDealDoc(dealId, files)   // auto-classified
+      setDeal(res.deal)
+      setApplied({ docType: res.docType, count: res.applied?.length, proposal: res.proposal })
     } catch (err) {
       setDocError(err.message)
     } finally {
-      setBusyDoc(null)
+      setBusyDoc(false)
     }
+  }
+
+  async function removeProposal(pid) {
+    try { setDeal(await deleteDealProposal(dealId, pid)) }
+    catch (err) { setSaveError(err.message) }
   }
 
   if (loading) return (
@@ -117,7 +147,15 @@ export default function DealDetailPage() {
                 {deal.tenant && <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full">{deal.tenant}</span>}
                 {stage && <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${stage.cls}`}>{stage.label}</span>}
               </div>
-              <h1 className="text-xl font-bold text-slate-900 leading-snug">{deal.address || 'Untitled deal'}</h1>
+              {deal.property_id ? (
+                <button onClick={() => navigate(`/properties?open=${deal.property_id}`)}
+                  className="group inline-flex items-center gap-1.5 text-left">
+                  <h1 className="text-xl font-bold text-slate-900 leading-snug group-hover:text-blue-700 group-hover:underline">{deal.address || 'Untitled deal'}</h1>
+                  <ExternalLink className="w-4 h-4 text-slate-400 group-hover:text-blue-600 shrink-0" />
+                </button>
+              ) : (
+                <h1 className="text-xl font-bold text-slate-900 leading-snug">{deal.address || 'Untitled deal'}</h1>
+              )}
               {cityState && <p className="text-sm text-slate-500 mt-0.5">{cityState}</p>}
             </div>
             <div className="flex items-center gap-6 shrink-0">
@@ -134,29 +172,33 @@ export default function DealDetailPage() {
           </div>
         )}
 
-        {/* Document parser */}
+        {/* Document parser — single auto-detecting upload box */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5">
           <div className="flex items-center gap-1.5 mb-3">
             <Sparkles className="w-4 h-4 text-blue-500" />
             <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Auto-fill from documents</h2>
           </div>
-          <div className="grid sm:grid-cols-2 gap-3">
-            <DropZone
-              label="Offering Memorandum" hint="OM / flyer — fills property & pricing" icon={FileText} accent="blue"
-              busy={busyDoc === 'om'} drag={dragDoc === 'om'} disabled={!!busyDoc}
-              onEnter={() => setDragDoc('om')} onLeave={() => setDragDoc(null)}
-              onDrop={fl => handleDoc('om', fl)} onClick={() => omRef.current?.click()}
-            />
-            <DropZone
-              label="Lease + Amendments" hint="drop the lease and any amendments together" icon={ScrollText} accent="emerald"
-              busy={busyDoc === 'lease'} drag={dragDoc === 'lease'} disabled={!!busyDoc}
-              onEnter={() => setDragDoc('lease')} onLeave={() => setDragDoc(null)}
-              onDrop={fl => handleDoc('lease', fl)} onClick={() => leaseRef.current?.click()}
-            />
-          </div>
+          <button
+            onClick={() => !busyDoc && fileRef.current?.click()} disabled={busyDoc}
+            onDragOver={e => { e.preventDefault(); if (!busyDoc) setDragDoc(true) }}
+            onDragLeave={e => { e.preventDefault(); setDragDoc(false) }}
+            onDrop={e => { e.preventDefault(); setDragDoc(false); if (!busyDoc) handleDoc(e.dataTransfer.files) }}
+            className={`w-full flex flex-col items-center justify-center gap-1.5 px-4 py-7 rounded-xl text-sm font-semibold border-2 border-dashed transition-colors disabled:opacity-70 ${
+              dragDoc ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-slate-300 bg-slate-50/50 text-slate-600 hover:bg-blue-50/40 hover:border-blue-300'}`}
+          >
+            {busyDoc
+              ? <><Loader2 className="w-5 h-5 animate-spin" /> Reading &amp; identifying…</>
+              : <><UploadCloud className="w-6 h-6 text-slate-400" /> Drop a document or click to upload
+                  <span className="text-[11px] font-normal text-slate-400">OM, lease (+ amendments), PSA, or a survey / environmental / PCR proposal — auto-detected</span></>}
+          </button>
           {applied && (
             <div className="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-700">
-              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" /> Filled {applied.count} field{applied.count === 1 ? '' : 's'} from the {applied.docType === 'om' ? 'OM' : 'lease'}. Click any cell to adjust.
+              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+              {applied.proposal
+                ? <>Added {applied.proposal.kind} proposal{applied.proposal.vendor ? ` (${applied.proposal.vendor})` : ''} — see Third-Party Reports below.</>
+                : applied.docType === 'psa'
+                ? <>Read the PSA · escrow dates calculated from the effective date. Click any cell to adjust.</>
+                : <>Detected {DOC_LABEL[applied.docType] || 'document'} · filled {applied.count} field{applied.count === 1 ? '' : 's'}. Click any cell to adjust.</>}
             </div>
           )}
           {docError && (
@@ -164,8 +206,7 @@ export default function DealDetailPage() {
               <AlertCircle className="w-3.5 h-3.5 mt-px shrink-0" /> {docError}
             </div>
           )}
-          <input ref={omRef}    type="file" accept=".pdf" className="hidden" onChange={e => { handleDoc('om', e.target.files); e.target.value = '' }} />
-          <input ref={leaseRef} type="file" accept=".pdf" multiple className="hidden" onChange={e => { handleDoc('lease', e.target.files); e.target.value = '' }} />
+          <input ref={fileRef} type="file" accept=".pdf" multiple className="hidden" onChange={e => { handleDoc(e.target.files); e.target.value = '' }} />
         </div>
 
         {/* Purchase details */}
@@ -179,37 +220,81 @@ export default function DealDetailPage() {
             <EF label="Property Type"  field="property_type"  value={deal.property_type}  {...efProps} />
             <EF label="Building Size"  field="building_size"  value={deal.building_size}  type="sqft" {...efProps} />
             <EF label="Year Built"     field="year_built"     value={deal.year_built}     type="int" {...efProps} />
-            <EF label="Close Date"     field="close_date"     value={deal.close_date}     type="date" {...efProps} />
-            <EF label="DD Deadline"    field="dd_deadline"    value={deal.dd_deadline}    type="date" {...efProps} />
             <EF label="Due Diligence"  field="due_diligence_days" value={deal.due_diligence_days} type="int" {...efProps} />
-            <EF label="Earnest Money"  field="earnest_money"  value={deal.earnest_money}  type="currency" {...efProps} />
             <EF label="Address"        field="address"        value={deal.address}        {...efProps} />
             <EF label="City"           field="city"           value={deal.city}           {...efProps} />
             <EF label="State"          field="state"          value={deal.state}          {...efProps} />
             <EF label="Tenant"         field="tenant"         value={deal.tenant}         {...efProps} />
           </div>
-          {deal.property_id && deal.property_address && (
-            <button onClick={() => navigate(`/properties?open=${deal.property_id}`)} className="mt-4 pt-4 border-t border-slate-100 flex items-center gap-1.5 text-sm text-blue-600 hover:underline w-full text-left">
-              <Link2 className="w-3.5 h-3.5 shrink-0" /> Linked property: {deal.property_address}
-            </button>
-          )}
+        </Card>
+
+        {/* PSA abstract — named escrow dates (fill from a dropped PSA or edit manually) */}
+        <Card icon={CalendarClock} title="PSA Abstract">
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-x-6 gap-y-4">
+            <EF label="Effective Date"          field="effective_date"       value={deal.effective_date}       type="date" {...efProps} />
+            <EF label="Earnest Money Amount"    field="earnest_money"        value={deal.earnest_money}        type="currency" {...efProps} />
+            <EF label="Earnest Money Due Date"  field="earnest_due_date"     value={deal.earnest_due_date}     type="date" {...efProps} />
+            <EF label="DD Expiration"           field="dd_deadline"          value={deal.dd_deadline}          type="date" {...efProps} />
+            <EF label="Title Objection Deadline" field="title_objection_date" value={deal.title_objection_date} type="date" {...efProps} />
+            <EF label="Close Date"              field="close_date"           value={deal.close_date}           type="date" {...efProps} />
+          </div>
+          <p className="text-[11px] text-slate-400 mt-2">Dates auto-calculate from the Effective Date using the contract's timing rules — change the Effective Date and they all shift. Uploading a PSA amendment updates the affected deadlines. Edit any date to pin it manually.</p>
+
+          {/* Third-party DD timelines — vendor proposals + drop-dead order dates */}
+          <div className="mt-5 pt-4 border-t border-slate-100">
+            <div className="flex items-center gap-1.5 mb-2">
+              <ClipboardCheck className="w-3.5 h-3.5 text-slate-400" />
+              <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide">Third-Party Reports — Order By</p>
+            </div>
+            {deal.proposals?.length ? (
+              <div className="border border-slate-100 rounded-xl divide-y divide-slate-50">
+                {deal.proposals.map(p => {
+                  const du = p.order_by_date != null ? daysUntil(p.order_by_date) : null
+                  return (
+                    <div key={p.id} className="flex items-center gap-3 px-3 py-2.5">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-semibold text-slate-800 capitalize">{p.kind}</span>
+                          {p.vendor && <span className="text-xs text-slate-400 truncate">· {p.vendor}</span>}
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          {p.turnaround_text || (p.turnaround_days ? `${p.turnaround_days} days` : 'turnaround not found')}
+                          {p.cost ? ` · ${fmt$(p.cost)}` : ''}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-[10px] text-slate-400 uppercase tracking-wide">Order by</p>
+                        {p.order_by_date ? (
+                          <span className="flex items-center gap-1.5 justify-end">
+                            <span className="text-sm font-medium text-slate-800 tabular-nums">{fmtDate(p.order_by_date)}</span>
+                            {du != null && <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${dueBadge(du)}`}>{du < 0 ? `${Math.abs(du)}d overdue` : `${du}d`}</span>}
+                          </span>
+                        ) : <span className="text-xs text-slate-300">set DD Expiration</span>}
+                      </div>
+                      <button onClick={() => removeProposal(p.id)} title="Remove" className="text-slate-300 hover:text-red-500 shrink-0"><X className="w-4 h-4" /></button>
+                    </div>
+                  )
+                })}
+              </div>
+            ) : (
+              <p className="text-sm text-slate-400">Drop a survey, environmental, or PCR proposal above — it computes a drop-dead order date (DD Expiration − turnaround) so the report lands before due diligence ends.</p>
+            )}
+          </div>
         </Card>
 
         {/* Lease abstract */}
         <Card icon={ScrollText} title="Lease Abstract">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-4">
-            <EF label="Lease Type"      field="lease_type"        value={deal.lease_type} {...efProps} />
-            <EF label="Guarantor"       field="guarantor"         value={deal.guarantor} {...efProps} />
-            <EF label="Commencement"    field="lease_commencement" value={deal.lease_commencement} type="date" {...efProps} />
-            <EF label="Expiration"      field="lease_expiration"  value={deal.lease_expiration} type="date" {...efProps} />
-            <EF label="Term"            field="lease_term"        value={deal.lease_term} {...efProps} />
-            <EF label="Base Rent"       field="base_rent"         value={deal.base_rent} {...efProps} />
-            <EF label="Annual Rent"     field="annual_rent"       value={deal.annual_rent} type="currency" {...efProps} />
-            <EF label="Security Deposit" field="security_deposit" value={deal.security_deposit} {...efProps} />
-            <EF label="Permitted Use"   field="permitted_use"     value={deal.permitted_use} {...efProps} wide />
-            <EF label="Rent Escalations" field="rent_escalations" value={deal.rent_escalations} {...efProps} wide />
-            <EF label="Renewal Options" field="renewal_options"   value={deal.renewal_options} {...efProps} wide />
-            <EF label="Renewal Notice"  field="renewal_notice"    value={deal.renewal_notice} {...efProps} wide />
+            <EF label="Lease Type" field="lease_type" value={deal.lease_type} type="select"
+              options={['Ground Lease', 'NNN', 'NN', 'Modified Gross', 'Gross']} {...efProps} />
+            <EF label="Base Rent" field="annual_rent" value={deal.annual_rent} type="currency" {...efProps} />
+            <EF label="Lease Expiration" field="lease_expiration" value={deal.lease_expiration} type="date" {...efProps} />
+            <Detail label="Term Remaining" value={termRemaining(deal.lease_expiration)} />
+            <EF label="Rent Escalations (current term)" field="rent_escalations" value={deal.rent_escalations} type="select"
+              options={['Yes', 'No']} {...efProps} />
+            <EF label="Options Remaining" field="renewal_option_count" value={deal.renewal_option_count} type="int" {...efProps} />
+            <EF label="Option Length" field="renewal_option_length" value={deal.renewal_option_length} {...efProps} />
+            <EF label="Option Increase" field="renewal_option_increase" value={deal.renewal_option_increase} {...efProps} />
           </div>
 
           {/* Responsibility matrix + key dates (read-only, from parsed abstract) */}
@@ -296,7 +381,7 @@ function PartyBadge({ party }) {
 }
 
 // Inline click-to-edit cell → saves one deal column.
-function EF({ label, field, value, type = 'text', accent, placeholder, wide, save, saving }) {
+function EF({ label, field, value, type = 'text', accent, placeholder, wide, options, save, saving }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft]     = useState('')
   const ref = useRef(null)
@@ -307,9 +392,9 @@ function EF({ label, field, value, type = 'text', accent, placeholder, wide, sav
   const colSpan = wide || type === 'textarea' ? 'sm:col-span-2' : ''
 
   function begin() { if (isBusy) return; setDraft(value == null ? '' : String(value)); setEditing(true) }
-  function commit() {
+  function commit(raw) {
     setEditing(false)
-    const next = draft.trim(), orig = value == null ? '' : String(value)
+    const next = String(raw ?? draft).trim(), orig = value == null ? '' : String(value)
     if (next === orig) return
     save(field, next === '' ? null : next)
   }
@@ -321,14 +406,21 @@ function EF({ label, field, value, type = 'text', accent, placeholder, wide, sav
     return (
       <div className={colSpan}>
         {label && <p className="text-xs text-slate-400 mb-0.5">{label}</p>}
-        {type === 'textarea' ? (
+        {type === 'select' ? (
+          <select ref={ref} value={draft} onBlur={() => commit()}
+            onChange={e => { setDraft(e.target.value); commit(e.target.value) }}
+            onKeyDown={e => { if (e.key === 'Escape') setEditing(false) }} className={inputCls}>
+            <option value="">—</option>
+            {(options || []).map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        ) : type === 'textarea' ? (
           <textarea ref={ref} rows={3} value={draft} placeholder={placeholder}
-            onChange={e => setDraft(e.target.value)} onBlur={commit}
+            onChange={e => setDraft(e.target.value)} onBlur={() => commit()}
             onKeyDown={e => { if (e.key === 'Escape') setEditing(false) }} className={inputCls + ' resize-y leading-relaxed'} />
         ) : (
           <input ref={ref} type={type === 'date' ? 'date' : numeric || type === 'int' ? 'number' : 'text'}
             step={type === 'int' ? '1' : 'any'} value={draft} placeholder={placeholder}
-            onChange={e => setDraft(e.target.value)} onBlur={commit}
+            onChange={e => setDraft(e.target.value)} onBlur={() => commit()}
             onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }} className={inputCls} />
         )}
       </div>
@@ -350,9 +442,12 @@ function EF({ label, field, value, type = 'text', accent, placeholder, wide, sav
 
 // Drag-and-drop upload target.
 function DropZone({ label, hint, icon: Icon, accent, busy, drag, disabled, onEnter, onLeave, onDrop, onClick }) {
-  const colors = accent === 'emerald'
-    ? { on: 'border-emerald-400 bg-emerald-50 text-emerald-700', off: 'border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50' }
-    : { on: 'border-blue-400 bg-blue-50 text-blue-700', off: 'border-blue-200 bg-white text-blue-700 hover:bg-blue-50' }
+  const palette = {
+    emerald: { on: 'border-emerald-400 bg-emerald-50 text-emerald-700', off: 'border-emerald-200 bg-white text-emerald-700 hover:bg-emerald-50' },
+    violet:  { on: 'border-violet-400 bg-violet-50 text-violet-700',    off: 'border-violet-200 bg-white text-violet-700 hover:bg-violet-50' },
+    blue:    { on: 'border-blue-400 bg-blue-50 text-blue-700',          off: 'border-blue-200 bg-white text-blue-700 hover:bg-blue-50' },
+  }
+  const colors = palette[accent] || palette.blue
   return (
     <button
       onClick={() => !disabled && onClick()} disabled={disabled}

@@ -96,12 +96,13 @@ export const createHistorical      = (data)      => req('POST',  '/properties/hi
 export const getDeals       = ()       => req('GET',    '/deals')
 export const getDeal        = (id)     => req('GET',    `/deals/${id}`)
 export const updateDealField = (id, column, value) => req('PATCH', `/deals/${id}/field`, { column, value })
-export async function parseDealDoc(id, docType, files) {
+export async function parseDealDoc(id, files, docType = 'auto') {
   const fd = new FormData()
   fd.append('docType', docType)
   for (const f of files) fd.append('files', f)
-  return req('POST', `/deals/${id}/parse`, fd)   // { deal, applied }
+  return req('POST', `/deals/${id}/parse`, fd)   // { deal, docType, applied|proposal }
 }
+export const deleteDealProposal = (dealId, pid) => req('DELETE', `/deals/${dealId}/proposals/${pid}`)
 export const getDroppedDeals = ()      => req('GET',    '/deals/dropped')
 export const createDeal     = (data)   => req('POST',   '/deals', data)
 export const updateDeal     = (id, d)  => req('PUT',    `/deals/${id}`, d)

@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import multer from 'multer'
 import db from '../db.js'
-import { parseMarketingBuffer, abstractLease } from './management.js'
+import { parseMarketingBuffer, abstractLease, parsePsaBuffer, parseProposalBuffer, classifyDealDocument } from './management.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
@@ -21,6 +21,8 @@ const SELECT = `
     d.guarantor, d.permitted_use, d.lease_commencement, d.lease_expiration,
     d.lease_term, d.base_rent, d.annual_rent, d.rent_escalations,
     d.renewal_options, d.renewal_notice, d.security_deposit, d.lease_notes, d.lease_abstract,
+    d.renewal_option_count, d.renewal_option_length, d.renewal_option_increase,
+    d.psa_abstract, d.effective_date, d.earnest_due_date, d.title_objection_date,
     p.address    AS property_address,
     p.list_price AS property_list_price,
     p.lease_end,
@@ -91,8 +93,82 @@ router.post('/:id/restore', (req, res) => {
   res.json(db.prepare(SELECT + ' WHERE d.id = ?').get(req.params.id))
 })
 
+const toISO = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+function parseISO(iso) {
+  const m = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})/); if (!m) return null
+  return new Date(+m[1], +m[2] - 1, +m[3])
+}
+// Subtract N calendar days from an ISO date → ISO (or null).
+function minusDays(iso, days) {
+  const d = parseISO(iso); if (!d || days == null) return null
+  d.setDate(d.getDate() - days); return toISO(d)
+}
+function addCalendarDays(iso, days) {
+  const d = parseISO(iso); if (!d) return null
+  d.setDate(d.getDate() + days); return toISO(d)
+}
+function addBusinessDays(iso, days) {
+  const d = parseISO(iso); if (!d) return null
+  let added = 0
+  while (added < days) { d.setDate(d.getDate() + 1); const dow = d.getDay(); if (dow !== 0 && dow !== 6) added++ }
+  return toISO(d)
+}
+// Resolve one timing trigger to an ISO date. `anchorDate` is the date the offset
+// is measured from (the effective or dd date). Fixed triggers ignore the anchor.
+function computeTrigger(anchorDate, t) {
+  if (!t) return null
+  if (t.anchor === 'fixed' || (t.date && t.days == null)) return s_date(t.date)
+  if (t.days == null || !anchorDate) return null
+  return t.unit === 'business' ? addBusinessDays(anchorDate, t.days) : addCalendarDays(anchorDate, t.days)
+}
+
+// Recompute the derived PSA dates from the effective date + stored timing triggers,
+// and write them back. Runs after a PSA/amendment parse or when the effective date
+// (or a derived date) is edited. Writes only computed (non-null) values so it never
+// wipes a date that has no rule.
+function recomputePsaDates(dealId) {
+  const row = db.prepare('SELECT effective_date, psa_abstract FROM deals WHERE id = ?').get(dealId)
+  if (!row) return
+  let terms; try { terms = JSON.parse(row.psa_abstract || '{}') } catch { terms = {} }
+  const trig = terms.triggers || {}
+  const resolved = { effective: row.effective_date || null, dd_deadline: null }
+  const anchorFor = (t, def) => {
+    const a = t?.anchor && t.anchor !== 'fixed' ? t.anchor : def
+    return a === 'dd_deadline' ? resolved.dd_deadline : resolved.effective
+  }
+  // dd first (close may depend on it)
+  resolved.dd_deadline   = computeTrigger(anchorFor(trig.dd_deadline, 'effective'), trig.dd_deadline)
+  const earnest          = computeTrigger(anchorFor(trig.earnest_due, 'effective'), trig.earnest_due)
+  const title            = computeTrigger(anchorFor(trig.title_objection, 'effective'), trig.title_objection)
+  const close            = computeTrigger(anchorFor(trig.close, 'dd_deadline'), trig.close)
+
+  const out = { earnest_due_date: earnest, dd_deadline: resolved.dd_deadline, title_objection_date: title, close_date: close }
+  const cols = Object.keys(out).filter(k => out[k] != null)
+  if (cols.length) db.prepare(`UPDATE deals SET ${cols.map(c => `${c} = ?`).join(', ')} WHERE id = ?`).run(...cols.map(c => out[c]), dealId)
+}
+
+// Pin a derived date as a FIXED trigger (used when it's edited by hand) so later
+// recomputes preserve it while still updating anything downstream of it.
+function setTriggerFixed(dealId, key, isoDate) {
+  const row = db.prepare('SELECT psa_abstract FROM deals WHERE id = ?').get(dealId)
+  let terms; try { terms = JSON.parse(row?.psa_abstract || '{}') } catch { terms = {} }
+  terms.triggers = terms.triggers || {}
+  terms.triggers[key] = { anchor: 'fixed', date: isoDate || null, days: null, unit: 'calendar' }
+  db.prepare('UPDATE deals SET psa_abstract = ? WHERE id = ?').run(JSON.stringify(terms), dealId)
+}
+
+// A deal row + its DD vendor proposals, each with a drop-dead ORDER-BY date
+// (dd_deadline − turnaround) so the report is back before due diligence expires.
+function dealResponse(id) {
+  const row = db.prepare(SELECT + ' WHERE d.id = ?').get(id)
+  if (!row) return null
+  const proposals = db.prepare('SELECT * FROM deal_proposals WHERE deal_id = ? ORDER BY id').all(id)
+    .map(p => ({ ...p, order_by_date: minusDays(row.dd_deadline, p.turnaround_days) }))
+  return { ...row, proposals }
+}
+
 router.get('/:id', (req, res) => {
-  const row = db.prepare(SELECT + ' WHERE d.id = ?').get(req.params.id)
+  const row = dealResponse(req.params.id)
   if (!row) return res.status(404).json({ error: 'Not found' })
   res.json(row)
 })
@@ -167,13 +243,15 @@ const DEAL_EDITABLE = {
   purchase_price:'real', cap_rate:'real', noi:'real', list_price:'real',
   building_size:'real', year_built:'int', property_type:'text', earnest_money:'real',
   due_diligence_days:'int', close_date:'date', dd_deadline:'date',
+  effective_date:'date', earnest_due_date:'date', title_objection_date:'date',
   lease_type:'text', guarantor:'text', permitted_use:'text',
   lease_commencement:'date', lease_expiration:'date', lease_term:'text',
   base_rent:'text', annual_rent:'real', rent_escalations:'text',
+  renewal_option_count:'int', renewal_option_length:'text', renewal_option_increase:'text',
   renewal_options:'text', renewal_notice:'text', security_deposit:'text', lease_notes:'text',
 }
-// Everything the parser may write (includes the read-only lease_abstract JSON).
-const DEAL_WRITABLE = new Set([...Object.keys(DEAL_EDITABLE), 'lease_abstract'])
+// Everything the parser may write (includes the read-only abstract JSON blobs).
+const DEAL_WRITABLE = new Set([...Object.keys(DEAL_EDITABLE), 'lease_abstract', 'psa_abstract'])
 
 function coerce(type, raw) {
   if (raw == null) return null
@@ -192,7 +270,16 @@ router.patch('/:id/field', (req, res) => {
     const result = db.prepare(`UPDATE deals SET ${column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
       .run(coerce(type, value), dealId)
     if (result.changes === 0) return res.status(404).json({ error: `Deal ${dealId} not found` })
-    res.json(db.prepare(SELECT + ' WHERE d.id = ?').get(dealId))
+    // Keep the PSA timeline consistent: editing the effective date re-derives every
+    // dependent date; editing a derived date pins it (fixed) and updates downstream.
+    const TRIGGER_FOR = { earnest_due_date: 'earnest_due', dd_deadline: 'dd_deadline', title_objection_date: 'title_objection', close_date: 'close' }
+    if (column === 'effective_date') {
+      recomputePsaDates(dealId)
+    } else if (TRIGGER_FOR[column]) {
+      setTriggerFixed(dealId, TRIGGER_FOR[column], s_date(value))
+      recomputePsaDates(dealId)
+    }
+    res.json(dealResponse(dealId))
   } catch (err) {
     console.error('[deals] field update error:', err.message)
     res.status(500).json({ error: err.message || 'Failed to update field' })
@@ -209,34 +296,122 @@ function mapOmToDeal(d) {
     noi: s_num(d.noi), cap_rate: s_num(d.cap_rate), list_price: s_num(d.list_price),
   }
 }
+// Constrain a free-text lease type to one of our five canonical values.
+function normalizeLeaseType(v) {
+  const s = String(v || '').toLowerCase().trim()
+  if (!s) return null
+  if (s.includes('ground')) return 'Ground Lease'
+  if (s.includes('triple') || s.includes('absolute') || s.includes('nnn')) return 'NNN'
+  if (s.includes('double') || s.includes('nn')) return 'NN'
+  if (s.includes('modified')) return 'Modified Gross'
+  if (s.includes('gross') || s.includes('full service')) return 'Gross'
+  return null
+}
+function yesNo(v) {
+  const s = String(v || '').toLowerCase().trim()
+  if (!s) return null
+  if (/^(y|yes|true)/.test(s)) return 'Yes'
+  if (/^(n|no|false|none|flat)/.test(s)) return 'No'
+  return null
+}
 // Map a parsed lease abstract into deal columns (+ store the full abstract JSON).
 function mapLeaseToDeal(ab) {
   const sm = ab?.summary || {}
   return {
-    tenant: s_str(sm.tenant), lease_type: s_str(sm.lease_type), guarantor: s_str(sm.guarantor),
+    tenant: s_str(sm.tenant), lease_type: normalizeLeaseType(sm.lease_type), guarantor: s_str(sm.guarantor),
     permitted_use: s_str(sm.permitted_use), lease_commencement: s_date(sm.commencement_date),
     lease_expiration: s_date(sm.expiration_date), lease_term: s_str(sm.term), base_rent: s_str(sm.base_rent),
-    annual_rent: s_annual(sm.base_rent), rent_escalations: s_str(sm.rent_escalations),
+    annual_rent: s_annual(sm.base_rent),
+    rent_escalations: yesNo(sm.escalations_in_term) || (s_str(sm.rent_escalations) ? 'Yes' : null),
+    renewal_option_count:    s_int(sm.renewal_option_count),
+    renewal_option_length:   s_str(sm.renewal_option_length),
+    renewal_option_increase: s_str(sm.renewal_option_increase),
     renewal_options: s_str(sm.renewal_options), renewal_notice: s_str(sm.renewal_notice),
     security_deposit: s_str(sm.security_deposit), lease_notes: s_str(ab?.notes),
     lease_abstract: JSON.stringify({ responsibilities: ab?.responsibilities || [], key_dates: ab?.key_dates || [], notes: ab?.notes || '', summary: sm }),
   }
 }
+// Apply a parsed PSA / amendment to a deal: merge its timing triggers into the
+// stored ones (so an amendment overrides only what it changes), update effective
+// date / price / earnest if present, then recompute all derived dates.
+function applyPsa(dealId, parsed) {
+  const existing = (() => {
+    try { return JSON.parse(db.prepare('SELECT psa_abstract FROM deals WHERE id = ?').get(dealId)?.psa_abstract || '{}') } catch { return {} }
+  })()
+  const triggers = { ...(existing.triggers || {}) }
+  for (const [k, v] of Object.entries(parsed?.triggers || {})) {
+    if (v && (v.date || v.days != null)) triggers[k] = v   // only non-empty rules override
+  }
+  const terms = {
+    buyer:  s_str(parsed?.buyer)  || existing.buyer  || null,
+    seller: s_str(parsed?.seller) || existing.seller || null,
+    notes:  s_str(parsed?.notes)  || existing.notes  || null,
+    triggers,
+  }
+  const sets = { psa_abstract: JSON.stringify(terms) }
+  if (s_date(parsed?.effective_date))     sets.effective_date  = s_date(parsed.effective_date)
+  if (s_num(parsed?.purchase_price) != null) sets.purchase_price = s_num(parsed.purchase_price)
+  if (s_num(parsed?.earnest_money) != null)  sets.earnest_money  = s_num(parsed.earnest_money)
+  const cols = Object.keys(sets)
+  db.prepare(`UPDATE deals SET ${cols.map(c => `${c} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...cols.map(c => sets[c]), dealId)
+  recomputePsaDates(dealId)
+  return cols
+}
+// Normalize a parsed DD proposal for insertion into deal_proposals.
+function mapProposal(d) {
+  const kind = String(d.kind || '').toLowerCase()
+  return {
+    kind: ['survey', 'environmental', 'pcr'].includes(kind) ? kind : 'other',
+    vendor: s_str(d.vendor),
+    turnaround_days: s_int(d.turnaround_days),
+    turnaround_text: s_str(d.turnaround_text),
+    cost: s_num(d.cost),
+    notes: s_str(d.notes),
+  }
+}
 
-// POST /api/deals/:id/parse — drop an OM (docType 'om') or a lease + amendments
-// (docType 'lease', multiple files) to auto-fill the deal's detail + lease
-// abstract fields. Writes non-empty parsed values straight in (overwrites).
+// POST /api/deals/:id/parse — single upload box. Drop any deal document; it's
+// auto-classified (OM / lease / PSA / DD proposal) and routed to the right
+// parser. OM/lease/PSA auto-fill deal fields; a DD proposal (survey /
+// environmental / PCR) is stored with its turnaround for a drop-dead order date.
+// docType defaults to 'auto'; an explicit type skips classification.
 router.post('/:id/parse', upload.array('files', 12), async (req, res) => {
   const dealId = parseInt(req.params.id, 10)
-  const docType = req.body?.docType
   const files = req.files || []
   if (!files.length) return res.status(400).json({ error: 'No file uploaded' })
   const deal = db.prepare('SELECT id FROM deals WHERE id = ?').get(dealId)
   if (!deal) return res.status(404).json({ error: 'Deal not found' })
+
+  const first = files[0]
+  const media = first.mimetype || 'application/pdf'
   try {
+    let docType = req.body?.docType
+    if (!docType || docType === 'auto') {
+      docType = await classifyDealDocument(first.buffer, media)
+      if (docType === 'unknown') {
+        return res.status(422).json({ error: "Couldn't tell what kind of document this is. Try an OM, lease, PSA, or a survey/environmental/PCR proposal." })
+      }
+    }
+
+    // DD vendor proposal → its own row (a deal can have several).
+    if (docType === 'proposal') {
+      const p = mapProposal(await parseProposalBuffer(first.buffer, media))
+      db.prepare(`INSERT INTO deal_proposals (deal_id, kind, vendor, turnaround_days, turnaround_text, cost, notes)
+                  VALUES (?, ?, ?, ?, ?, ?, ?)`)
+        .run(dealId, p.kind, p.vendor, p.turnaround_days, p.turnaround_text, p.cost, p.notes)
+      return res.json({ deal: dealResponse(dealId), docType, proposal: p })
+    }
+
+    // PSA / amendment → merge timing triggers + recompute derived dates.
+    if (docType === 'psa') {
+      const cols = applyPsa(dealId, await parsePsaBuffer(first.buffer, media))
+      return res.json({ deal: dealResponse(dealId), docType, applied: cols })
+    }
+
+    // OM / lease → auto-fill deal fields.
     let patch
     if (docType === 'om') {
-      patch = mapOmToDeal(await parseMarketingBuffer(files[0].buffer, files[0].mimetype || 'application/pdf'))
+      patch = mapOmToDeal(await parseMarketingBuffer(first.buffer, media))
     } else if (docType === 'lease') {
       const docs = files.map(f => ({ buffer: f.buffer, mediaType: f.mimetype || 'application/pdf', name: f.originalname, doc_type: 'lease' }))
       patch = mapLeaseToDeal(await abstractLease(docs))
@@ -248,11 +423,17 @@ router.post('/:id/parse', upload.array('files', 12), async (req, res) => {
       const sets = cols.map(c => `${c} = ?`).join(', ')
       db.prepare(`UPDATE deals SET ${sets}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...cols.map(c => patch[c]), dealId)
     }
-    res.json({ deal: db.prepare(SELECT + ' WHERE d.id = ?').get(dealId), applied: cols })
+    res.json({ deal: dealResponse(dealId), docType, applied: cols })
   } catch (err) {
     console.error('[deals] parse error:', err.message)
     res.status(422).json({ error: 'Could not parse document: ' + err.message })
   }
+})
+
+// DELETE /api/deals/:id/proposals/:pid — remove a DD proposal.
+router.delete('/:id/proposals/:pid', (req, res) => {
+  db.prepare('DELETE FROM deal_proposals WHERE id = ? AND deal_id = ?').run(req.params.pid, req.params.id)
+  res.json(dealResponse(req.params.id))
 })
 
 export default router

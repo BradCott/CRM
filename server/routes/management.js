@@ -104,13 +104,17 @@ export async function abstractLease(docs) {
   "summary": {
     "tenant": string, "landlord": string, "guarantor": string|null,
     "premises": string, "permitted_use": string,
-    "lease_type": string,            // e.g. "NNN", "Modified Gross", "Gross"
+    "lease_type": string,            // classify as ONE of: "Ground Lease", "NNN", "NN", "Modified Gross", "Gross"
     "commencement_date": string|null,"expiration_date": string|null,
     "term": string,                  // e.g. "10 years"
     "base_rent": string,             // include $ and period
     "rent_escalations": string,
+    "escalations_in_term": "Yes"|"No", // whether the CURRENT / base term (NOT the option periods) contains any rent escalations
     "security_deposit": string|null,
     "renewal_options": string|null,  // e.g. "Two 5-year options at market rent"
+    "renewal_option_count": number|null,   // how many renewal options REMAIN unexercised
+    "renewal_option_length": string|null,  // length of each option, e.g. "5 years"
+    "renewal_option_increase": string|null,// rent increase during the options, as a percentage if stated (e.g. "10%"), or "Market" / "FMV" if market-rate
     "renewal_notice": string|null    // the WINDOW the tenant must give notice to exercise an option, e.g. "No less than 6 months and no more than 12 months prior to expiration of the then-current term"
   },
   "responsibilities": [
@@ -988,6 +992,110 @@ Extract exact values as they appear. Use "" for anything not found in the docume
   }
 
   const result = await callClaude(pdfBuffer, mediaType, prompt)
+  const raw  = result.content[0].text.trim()
+  const json = raw.replace(/^```json\s*/i, '').replace(/\s*```$/, '')
+  return JSON.parse(json)
+}
+
+// Parse a PSA / purchase-and-sale contract buffer into its critical escrow dates
+// and key business terms. Shared by the pipeline deal parser.
+export async function parsePsaBuffer(buffer, mediaType = 'application/pdf') {
+  const prompt = `You are a commercial real estate transaction analyst extracting the TIMING RULES from a Purchase and Sale Agreement (PSA) / purchase contract (or a PSA amendment). Escrow deadlines are usually defined RELATIVE to the Effective Date or the end of the Due Diligence period (e.g. "the Inspection Period expires 30 days after the Effective Date", "Closing shall occur 15 days after expiration of the Due Diligence Period", "earnest money due within 3 business days after the Effective Date"). Do NOT compute the calendar dates yourself — capture each rule so the app can compute them. Return ONLY valid JSON (no markdown, no commentary) with exactly this shape:
+{
+  "buyer": "",
+  "seller": "",
+  "purchase_price": "",
+  "earnest_money": "",
+  "effective_date": "",
+  "triggers": {
+    "earnest_due":     { "anchor": "effective|dd_deadline|fixed", "days": number|null, "unit": "calendar|business", "date": "YYYY-MM-DD|null" },
+    "dd_deadline":     { "anchor": "effective|dd_deadline|fixed", "days": number|null, "unit": "calendar|business", "date": "YYYY-MM-DD|null" },
+    "title_objection": { "anchor": "effective|dd_deadline|fixed", "days": number|null, "unit": "calendar|business", "date": "YYYY-MM-DD|null" },
+    "close":           { "anchor": "effective|dd_deadline|fixed", "days": number|null, "unit": "calendar|business", "date": "YYYY-MM-DD|null" }
+  },
+  "notes": ""
+}
+
+For each trigger:
+- If it is defined relative to the Effective Date → anchor="effective", days=N, unit="calendar" or "business", date=null.
+- If relative to the end of the Due Diligence / Inspection period → anchor="dd_deadline", days=N, unit=..., date=null. (Closing is most often anchored on dd_deadline.)
+- If stated as a specific calendar date → anchor="fixed", date="YYYY-MM-DD", days=null.
+- If a trigger isn't addressed in this document, set all its fields to null (important for AMENDMENTS, which often change only ONE deadline — leave the others null so we don't overwrite them).
+earnest_due = deadline to deposit earnest money. dd_deadline = end of the due-diligence / inspection period (earnest goes hard). title_objection = deadline to object to title/survey. close = closing date.
+effective_date = the actual execution/effective date (YYYY-MM-DD) if stated, else "".
+purchase_price / earnest_money = bare numbers. Use "" / null for anything not found. Do not invent values.`
+
+  let pdfBuffer = buffer
+  if (mediaType === 'application/pdf') {
+    // Critical dates cluster in the first ~30 pages (business terms, deposit,
+    // inspection, closing sections); trim to stay under Anthropic's limits, with
+    // the same encrypted-PDF fallback as the marketing parser.
+    try {
+      const srcDoc = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true })
+      const total  = srcDoc.getPageCount()
+      if (total > 30) {
+        const trimDoc = await PDFDocument.create()
+        const pages   = await trimDoc.copyPages(srcDoc, [...Array(30).keys()])
+        pages.forEach(p => trimDoc.addPage(p))
+        pdfBuffer = Buffer.from(await trimDoc.save())
+        console.log(`[management] PSA PDF truncated from ${total} to 30 pages`)
+      }
+    } catch (trimErr) {
+      console.warn('[management] PSA PDF trim skipped (sending original):', trimErr.message)
+    }
+  }
+
+  const result = await callClaude(pdfBuffer, mediaType, prompt)
+  const raw  = result.content[0].text.trim()
+  const json = raw.replace(/^```json\s*/i, '').replace(/\s*```$/, '')
+  return JSON.parse(json)
+}
+
+// Trim a PDF to its first N pages (encrypted-safe); returns the original on failure.
+async function trimPdf(buffer, mediaType, maxPages) {
+  if (mediaType !== 'application/pdf') return buffer
+  try {
+    const src = await PDFDocument.load(buffer, { ignoreEncryption: true })
+    if (src.getPageCount() <= maxPages) return buffer
+    const out = await PDFDocument.create()
+    const pages = await out.copyPages(src, [...Array(maxPages).keys()])
+    pages.forEach(p => out.addPage(p))
+    return Buffer.from(await out.save())
+  } catch { return buffer }
+}
+
+// Classify a dropped deal document so a single upload box can route to the right
+// parser. Returns one of: 'om' | 'lease' | 'psa' | 'proposal' | 'unknown'.
+export async function classifyDealDocument(buffer, mediaType = 'application/pdf') {
+  const trimmed = await trimPdf(buffer, mediaType, 6)
+  const prompt = `Classify this commercial real estate document into exactly ONE category. Return ONLY the lowercase category word, nothing else.
+Categories:
+- om        → offering memorandum, marketing package, property flyer, broker "OM"
+- lease     → a lease or lease amendment/exhibit
+- psa       → purchase & sale agreement, purchase contract, contract of sale
+- proposal  → a due-diligence VENDOR PROPOSAL / engagement for a survey (ALTA/boundary), Phase I/II environmental site assessment, or property condition report (PCR/PCA). These quote a scope, fee, and turnaround time.
+- unknown   → none of the above
+Answer with just one word: om, lease, psa, proposal, or unknown.`
+  const result = await callClaude(trimmed, mediaType, prompt)
+  const word = (result.content[0].text || '').trim().toLowerCase().replace(/[^a-z]/g, '')
+  return ['om', 'lease', 'psa', 'proposal'].includes(word) ? word : 'unknown'
+}
+
+// Parse a due-diligence vendor proposal (survey / environmental / PCR) for its
+// scope and TURNAROUND time. Returns { kind, vendor, turnaround_days, turnaround_text, cost, notes }.
+export async function parseProposalBuffer(buffer, mediaType = 'application/pdf') {
+  const trimmed = await trimPdf(buffer, mediaType, 15)
+  const prompt = `You are extracting the timeline from a commercial real estate due-diligence VENDOR PROPOSAL (a survey, environmental Phase I/II, or property condition report). Return ONLY valid JSON (no markdown) with exactly this shape:
+{
+  "kind": "",             // one of: survey, environmental, pcr, other
+  "vendor": "",           // the firm providing the report
+  "turnaround_text": "",  // the delivery timeline exactly as stated, e.g. "3 weeks from authorization" or "15 business days"
+  "turnaround_days": "",  // the turnaround as a bare number of CALENDAR days. Convert: weeks×7; "business days"×1.4 (round up). If a range, use the LONGER end.
+  "cost": "",             // the fee as a bare number (no $ or commas), if stated
+  "notes": ""             // anything important about timing (rush options, dependencies, assumptions)
+}
+Use "" for anything not found. Do not invent values.`
+  const result = await callClaude(trimmed, mediaType, prompt)
   const raw  = result.content[0].text.trim()
   const json = raw.replace(/^```json\s*/i, '').replace(/\s*```$/, '')
   return JSON.parse(json)

@@ -369,6 +369,29 @@ const migrations = [
   `ALTER TABLE deals ADD COLUMN security_deposit   TEXT`,
   `ALTER TABLE deals ADD COLUMN lease_notes        TEXT`,
   `ALTER TABLE deals ADD COLUMN lease_abstract     TEXT`,
+  // PSA / purchase contract abstract (critical escrow dates + key terms), filled
+  // by the deal-detail PSA parser.
+  `ALTER TABLE deals ADD COLUMN psa_abstract       TEXT`,
+  `ALTER TABLE deals ADD COLUMN effective_date        TEXT`,
+  `ALTER TABLE deals ADD COLUMN earnest_due_date      TEXT`,
+  `ALTER TABLE deals ADD COLUMN title_objection_date  TEXT`,
+  // Simplified renewal-option abstract (count remaining / length / % increase)
+  `ALTER TABLE deals ADD COLUMN renewal_option_count    INTEGER`,
+  `ALTER TABLE deals ADD COLUMN renewal_option_length   TEXT`,
+  `ALTER TABLE deals ADD COLUMN renewal_option_increase TEXT`,
+  // Due-diligence vendor proposals (survey / environmental / PCR). Their turnaround
+  // times give a drop-dead ORDER-BY date = dd_deadline − turnaround.
+  `CREATE TABLE IF NOT EXISTS deal_proposals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    deal_id INTEGER NOT NULL,
+    kind TEXT,                 -- survey | environmental | pcr | other
+    vendor TEXT,
+    turnaround_days INTEGER,
+    turnaround_text TEXT,
+    cost REAL,
+    notes TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`,
   `ALTER TABLE oauth_tokens ADD COLUMN notes_folder_id  TEXT`,
   `ALTER TABLE oauth_tokens ADD COLUMN notes_processed  TEXT`,
   `CREATE TABLE IF NOT EXISTS plays (

@@ -348,7 +348,8 @@ router.get('/critical-dates', (req, res) => {
   const deal = []
   const dealRows = db.prepare(`
     SELECT d.id, COALESCE(NULLIF(d.tenant,''), t.name, d.address, p.address, 'Deal') AS name,
-           COALESCE(d.address, p.address) AS address, d.stage, d.dd_deadline, d.close_date
+           COALESCE(d.address, p.address) AS address, d.stage,
+           d.effective_date, d.earnest_due_date, d.dd_deadline, d.title_objection_date, d.close_date
     FROM deals d
     LEFT JOIN properties p ON p.id = d.property_id
     LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
@@ -357,8 +358,35 @@ router.get('/critical-dates', (req, res) => {
   `).all()
   for (const r of dealRows) {
     const base = { entity_type: 'deal', entity_id: r.id, entity_name: r.name, sub: r.address || null, stage: r.stage }
-    const dd = mk({ ...base, kind: 'dd_deadline', label: 'DD deadline — earnest hard', date: r.dd_deadline }); if (dd) deal.push(dd)
-    const cl = mk({ ...base, kind: 'closing', label: 'Closing', date: r.close_date }); if (cl) deal.push(cl)
+    const named = [
+      ['effective_date',  'Effective date',            r.effective_date],
+      ['earnest_due',     'Earnest money due',         r.earnest_due_date],
+      ['dd_deadline',     'DD deadline — earnest hard', r.dd_deadline],
+      ['title_objection', 'Title objection deadline',  r.title_objection_date],
+      ['closing',         'Closing',                   r.close_date],
+    ]
+    for (const [kind, label, date] of named) {
+      const it = mk({ ...base, kind, label, date }); if (it) deal.push(it)
+    }
+  }
+  // DD proposal drop-dead ORDER-BY dates (dd_deadline − turnaround) for deals in escrow.
+  const kindLabel = { survey: 'Survey', environmental: 'Environmental', pcr: 'PCR', other: 'Report' }
+  const proposals = db.prepare(`
+    SELECT dp.kind, dp.turnaround_days, d.id AS deal_id, d.dd_deadline,
+           COALESCE(NULLIF(d.tenant,''), t.name, d.address, p.address, 'Deal') AS name, COALESCE(d.address, p.address) AS address
+    FROM deal_proposals dp JOIN deals d ON d.id = dp.deal_id
+    LEFT JOIN properties p ON p.id = d.property_id
+    LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE (d.status IS NULL OR d.status = 'active') AND d.stage IN ('psa_negotiation', 'under_contract', 'money_hard')
+      AND dp.turnaround_days IS NOT NULL AND d.dd_deadline IS NOT NULL
+  `).all()
+  for (const r of proposals) {
+    const m = String(r.dd_deadline).match(/^(\d{4})-(\d{2})-(\d{2})/); if (!m) continue
+    const od = new Date(+m[1], +m[2] - 1, +m[3]); od.setDate(od.getDate() - r.turnaround_days)
+    const iso = `${od.getFullYear()}-${String(od.getMonth() + 1).padStart(2, '0')}-${String(od.getDate()).padStart(2, '0')}`
+    const it = mk({ entity_type: 'deal', entity_id: r.deal_id, entity_name: r.name, sub: r.address || null,
+      kind: 'order_by', label: `Order ${kindLabel[r.kind] || 'report'} by`, date: iso })
+    if (it) deal.push(it)
   }
 
   // ── Portfolio bucket ──
