@@ -6,7 +6,7 @@
 <title>Lot Zone Editor — Oakleaf Ridge Admin</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+  body { font-family: system-ui, sans-serif; background: #1a1a2e; color: #eee; height: 100vh; display: flex; flex-direction: column; overflow-y: auto; }
 
   #login-screen {
     position: fixed; inset: 0; background: #1a1a2e;
@@ -34,9 +34,49 @@
   #status-msg { font-size: .8rem; color: #aaa; margin-left: auto; }
 
   #editor-wrap {
-    flex: 1; overflow: auto; display: flex; align-items: center; justify-content: center;
+    flex: 0 0 auto; overflow: auto; display: flex; align-items: center; justify-content: center;
     padding: .5rem;
+    max-height: 60vh;
   }
+
+  /* ── Registrations panel ── */
+  #reg-panel {
+    flex-shrink: 0;
+    background: #16213e;
+    border-top: 2px solid #0f3460;
+    padding: .75rem 1rem 1rem;
+    display: none; /* shown after login */
+  }
+  #reg-toolbar {
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: .5rem; margin-bottom: .6rem;
+  }
+  #reg-heading { font-size: 1rem; color: #4CAF50; margin: 0; }
+  #reg-table-wrap {
+    overflow-x: auto;
+    border-radius: 6px;
+    border: 1px solid #0f3460;
+    max-height: 280px;
+    overflow-y: auto;
+  }
+  #reg-table {
+    width: 100%; border-collapse: collapse; font-size: .8rem; white-space: nowrap;
+  }
+  #reg-table thead th {
+    background: #0f3460; color: #ccc; padding: 7px 10px;
+    text-align: left; font-weight: 600; font-size: .72rem;
+    text-transform: uppercase; letter-spacing: .04em;
+    position: sticky; top: 0;
+  }
+  #reg-table tbody tr { border-bottom: 1px solid #1a2a4a; }
+  #reg-table tbody tr:last-child { border-bottom: none; }
+  #reg-table tbody tr:hover { background: rgba(255,255,255,.04); }
+  #reg-table tbody td { padding: 7px 10px; color: #ddd; vertical-align: top; }
+  .reg-lot   { font-weight: 700; color: #4CAF50; }
+  .reg-yes   { color: #4CAF50; font-weight: 600; }
+  .reg-no    { color: #f44336; font-weight: 600; }
+  .reg-maybe { color: #FFC107; font-weight: 600; }
+  .reg-sub   { display: block; font-size: .72rem; color: #888; }
   #editor-svg-container {
     position: relative;
     width: min(90vw, 90vh);
@@ -113,6 +153,37 @@
       <g id="handle-layer"></g>
     </svg>
   </div>
+</div>
+
+<!-- Registrations panel -->
+<div id="reg-panel">
+  <div id="reg-toolbar">
+    <h2 id="reg-heading">Registrations <span id="reg-count" style="font-size:.8rem;color:#aaa;font-weight:400"></span></h2>
+    <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-blue" id="btn-reg-reload">&#8635; Reload</button>
+      <button class="btn btn-green" id="btn-reg-export">Export CSV</button>
+    </div>
+  </div>
+  <div id="reg-table-wrap">
+    <table id="reg-table">
+      <thead>
+        <tr>
+          <th>Lot</th>
+          <th>Name</th>
+          <th>Email</th>
+          <th>Phone</th>
+          <th>Resident 2</th>
+          <th>R2 Email</th>
+          <th>R2 Phone</th>
+          <th>Years</th>
+          <th>Kids</th>
+          <th>Support</th>
+        </tr>
+      </thead>
+      <tbody id="reg-tbody"></tbody>
+    </table>
+  </div>
+  <p id="reg-msg" style="color:#aaa;font-size:.85rem;padding:.5rem 1rem"></p>
 </div>
 
 <script>
@@ -362,10 +433,118 @@ document.addEventListener('keydown', e => {
   else if ((e.ctrlKey || e.metaKey) && e.key === 's') { e.preventDefault(); saveZones(); }
 });
 
+// ── Registrations ─────────────────────────────────────────────────────────────
+const WEBHOOK_URL   = 'https://script.google.com/macros/s/AKfycbwSreJEU5kPtUM_wNmHq2XWgZ74aH3WlJw7kVLVtr0Hfba7aS_E1eUw6KDISkw3_do/exec';
+const REG_CACHE_KEY = 'hoa-registrations';
+let regData = {}; // lot (string) → registration object
+
+function loadRegCache() {
+  try {
+    const saved = localStorage.getItem(REG_CACHE_KEY);
+    if (saved) regData = JSON.parse(saved);
+  } catch(e) {}
+}
+
+async function fetchRegistrations() {
+  document.getElementById('reg-msg').textContent = 'Loading from server…';
+  try {
+    const res  = await fetch(`${WEBHOOK_URL}?action=getRegistrations`);
+    const data = await res.json();
+    if (data.success && Array.isArray(data.registrations)) {
+      regData = {};
+      data.registrations.forEach(r => { regData[String(r.lot)] = r; });
+      localStorage.setItem(REG_CACHE_KEY, JSON.stringify(regData));
+      document.getElementById('reg-msg').textContent = 'Loaded from server.';
+    } else {
+      document.getElementById('reg-msg').textContent = 'Server returned no data — showing local cache.';
+    }
+  } catch(err) {
+    document.getElementById('reg-msg').textContent = 'Could not reach server — showing local cache.';
+  }
+  renderRegTable();
+}
+
+function supportClass(val) {
+  if (!val) return '';
+  const v = val.toLowerCase();
+  if (v.startsWith('yes')) return 'reg-yes';
+  if (v.startsWith('no,')) return 'reg-no';
+  return 'reg-maybe';
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function renderRegTable() {
+  const tbody   = document.getElementById('reg-tbody');
+  const countEl = document.getElementById('reg-count');
+  const entries = Object.entries(regData)
+    .map(([lot, r]) => ({ lot: Number(lot), ...r }))
+    .sort((a, b) => a.lot - b.lot);
+
+  countEl.textContent = `(${entries.length} registered)`;
+
+  if (entries.length === 0) {
+    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:#666;padding:1rem">No registrations yet</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = entries.map(r => {
+    const name2 = r.firstName2 ? `${esc(r.firstName2)} ${esc(r.lastName2 || '')}`.trim() : '';
+    const sc    = supportClass(r.support);
+    return `<tr>
+      <td class="reg-lot">Lot ${r.lot}</td>
+      <td>${esc(r.firstName)} ${esc(r.lastName)}</td>
+      <td>${esc(r.email || '')}</td>
+      <td>${esc(r.phone || '')}</td>
+      <td>${name2 || '—'}</td>
+      <td>${esc(r.email2 || '') || '—'}</td>
+      <td>${esc(r.phone2 || '') || '—'}</td>
+      <td>${esc(r.years  || '') || '—'}</td>
+      <td>${esc(r.kids   || '') || '—'}</td>
+      <td class="${sc}">${esc(r.support || '') || '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function exportCSV() {
+  const entries = Object.entries(regData)
+    .map(([lot, r]) => ({ lot: Number(lot), ...r }))
+    .sort((a, b) => a.lot - b.lot);
+
+  const cols = ['lot','firstName','lastName','email','phone','firstName2','lastName2','email2','phone2','years','kids','support'];
+  const header = cols.join(',');
+  const rows = entries.map(r =>
+    cols.map(c => {
+      const val = String(r[c] || '');
+      return val.includes(',') || val.includes('"') || val.includes('\n')
+        ? `"${val.replace(/"/g,'""')}"` : val;
+    }).join(',')
+  );
+
+  const csv  = [header, ...rows].join('\r\n');
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `oakleaf-registrations-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+document.getElementById('btn-reg-reload').addEventListener('click', fetchRegistrations);
+document.getElementById('btn-reg-export').addEventListener('click', exportCSV);
+
 function init() {
   zones = loadZones();
   buildSelect();
   render();
+  // Show registration panel and load data
+  document.getElementById('reg-panel').style.display = 'block';
+  loadRegCache();
+  renderRegTable();
+  fetchRegistrations(); // also try server
 }
 </script>
 </body>
