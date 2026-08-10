@@ -34,6 +34,12 @@
            preserveAspectRatio="xMidYMid meet" aria-label="Interactive lot map">
       </svg>
     </div>
+
+    <!-- Registered owners roster -->
+    <section id="owners-section" class="owners-section hidden">
+      <h2 class="owners-heading">Registered Homeowners</h2>
+      <div id="owners-grid" class="owners-grid"></div>
+    </section>
   </main>
 
   <!-- Registration modal -->
@@ -68,6 +74,24 @@
           <label for="phone">Phone Number</label>
           <input type="tel" id="phone" name="phone" autocomplete="tel" />
         </div>
+
+        <details class="resident2-wrap">
+          <summary class="resident2-toggle">+ Add Resident 2 (spouse / co-owner)</summary>
+          <div class="form-row" style="margin-top:10px">
+            <div class="form-group">
+              <label for="firstName2">First Name</label>
+              <input type="text" id="firstName2" name="firstName2" autocomplete="given-name" />
+            </div>
+            <div class="form-group">
+              <label for="lastName2">Last Name</label>
+              <input type="text" id="lastName2" name="lastName2" autocomplete="family-name" />
+            </div>
+          </div>
+          <div class="form-group">
+            <label for="email2">Email Address</label>
+            <input type="email" id="email2" name="email2" autocomplete="email" />
+          </div>
+        </details>
 
         <div class="form-row">
           <div class="form-group">
