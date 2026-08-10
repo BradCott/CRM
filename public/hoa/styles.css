@@ -447,63 +447,81 @@ tbody td {
   border-bottom: 2px solid #dde1e7;
 }
 
-.owners-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 10px;
-}
-
-.owner-card {
+.owners-table-wrap {
   background: #fff;
   border: 1px solid #dde1e7;
-  border-radius: 8px;
-  padding: 12px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
+  border-radius: 10px;
+  overflow-x: auto;
 }
 
-.owner-card-lot {
-  font-size: 0.72rem;
+.owners-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.86rem;
+}
+
+.owners-table thead th {
+  background: #f5f6f8;
+  padding: 10px 14px;
+  text-align: left;
+  font-size: 0.76rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
+  color: #5a6270;
+  border-bottom: 1px solid #dde1e7;
+  white-space: nowrap;
+}
+
+.owners-table tbody tr {
+  border-bottom: 1px solid #eef0f3;
+}
+.owners-table tbody tr:last-child { border-bottom: none; }
+.owners-table tbody tr:hover { background: #fafbfc; }
+
+.owners-table tbody td {
+  padding: 10px 14px;
+  color: #2a2a2a;
+  vertical-align: top;
+}
+
+.roster-lot {
+  font-weight: 700;
   color: #2a6e42;
+  white-space: nowrap;
 }
 
-.owner-card-name {
-  font-size: 0.88rem;
-  font-weight: 600;
-  color: #1a1a1a;
+.roster-email a {
+  color: #2a6e42;
+  text-decoration: none;
 }
+.roster-email a:hover { text-decoration: underline; }
 
-.owner-card-name2 {
-  font-size: 0.82rem;
-  font-weight: 500;
-  color: #555;
-}
+.roster-name2  { font-size: 0.8rem; color: #666; }
+.roster-email2 { font-size: 0.8rem; color: #555; }
+.roster-phone  { white-space: nowrap; }
 
-/* Resident 2 collapsible section */
-.resident2-wrap {
+/* ── Resident 2 optional section ─────────────── */
+.resident2-section {
   margin-bottom: 12px;
   border: 1px solid #e0e4ea;
   border-radius: 8px;
-  padding: 10px 14px;
+  padding: 12px 14px 2px;
   background: #fafbfc;
 }
 
-.resident2-toggle {
+.resident2-heading {
   font-size: 0.84rem;
-  font-weight: 600;
-  color: #2a6e42;
-  cursor: pointer;
-  list-style: none;
-  user-select: none;
+  font-weight: 700;
+  color: #444;
+  margin-bottom: 10px;
 }
-.resident2-toggle::-webkit-details-marker { display: none; }
-.resident2-toggle::marker { display: none; }
 
-.resident2-wrap[open] .resident2-toggle { margin-bottom: 4px; }
+.optional-label {
+  font-weight: 400;
+  color: #888;
+  font-size: 0.8rem;
+}
 
 /* ── Utility ──────────────────────────────────── */
 .hidden { display: none !important; }
@@ -562,7 +580,7 @@ tbody td {
 .lot-zone:focus { outline: none; }
 
 .lot-zone.registered {
-  cursor: default;
+  cursor: pointer;
 }
 
 .lot-zone.registered polygon {

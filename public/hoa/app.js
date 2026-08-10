@@ -1,14 +1,12 @@
 // ── Config ────────────────────────────────────────────────────────────────────
-const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwSreJEU5kPtUM_wNmHq2XWgZ74aH3WlJw7kVLVtr0Hfba7aS_E1eUw6KDISkw3_do/exec';
+const WEBHOOK_URL    = 'https://script.google.com/macros/s/AKfycbwSreJEU5kPtUM_wNmHq2XWgZ74aH3WlJw7kVLVtr0Hfba7aS_E1eUw6KDISkw3_do/exec';
 const LOT_STORAGE_KEY = 'hoa-lot-polygons';
+const REG_CACHE_KEY   = 'hoa-registrations';
 
 // ── State ─────────────────────────────────────────────────────────────────────
-const registrations = {}; // lot number (string) → { firstName, lastName, firstName2?, lastName2? }
+const registrations = {}; // lot (string) → { firstName, lastName, firstName2?, lastName2? }
 
 // ── Default lot polygons ──────────────────────────────────────────────────────
-// Each lot is an array of [x,y] corner points in the 1092×1092 SVG coordinate space.
-// These are rectangles approximated from the aerial photo boundary lines.
-// Use calibrate.html to drag corners into precise positions.
 function r(x1, y1, x2, y2) {
   return [[x1,y1],[x2,y1],[x2,y2],[x1,y2]];
 }
@@ -46,7 +44,6 @@ const LOT_ZONES_DEFAULT = {
   31: r(142, 957, 370,1082),
 };
 
-// Load saved polygon positions from localStorage (admin edits via calibrate.html)
 function loadLotZones() {
   try {
     const saved = localStorage.getItem(LOT_STORAGE_KEY);
@@ -60,6 +57,23 @@ function loadLotZones() {
     }
   } catch (e) { /* ignore */ }
   return { ...LOT_ZONES_DEFAULT };
+}
+
+// ── Registration cache (localStorage) ────────────────────────────────────────
+function saveRegCache() {
+  try { localStorage.setItem(REG_CACHE_KEY, JSON.stringify(registrations)); } catch (e) {}
+}
+
+function loadRegCache() {
+  try {
+    const saved = localStorage.getItem(REG_CACHE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      for (const [lot, data] of Object.entries(parsed)) {
+        registrations[lot] = data;
+      }
+    }
+  } catch (e) {}
 }
 
 // ── SVG helpers ───────────────────────────────────────────────────────────────
@@ -101,7 +115,6 @@ function buildMap() {
     poly.setAttribute('points', ptsToStr(pts));
     g.appendChild(poly);
 
-    // Lot number — visible in debug mode
     const numLabel = svgEl('text');
     numLabel.classList.add('lot-number-label');
     numLabel.setAttribute('x', cx);
@@ -111,7 +124,6 @@ function buildMap() {
     numLabel.textContent = lotNum;
     g.appendChild(numLabel);
 
-    // Owner name — centered in polygon, visible when registered
     const text = svgEl('text');
     text.classList.add('lot-owner-label');
     text.setAttribute('x', cx);
@@ -133,11 +145,10 @@ function applyZoneRegistered(g, firstName, lastName) {
   const text = g.querySelector('.lot-owner-label');
   if (!text) return;
   const lastInitial = lastName ? lastName.trim().charAt(0).toUpperCase() + '.' : '';
-  text.textContent = `${escHtml(firstName)} ${escHtml(lastInitial)}`;
+  text.textContent = `${firstName} ${lastInitial}`;
   text.style.display = '';
 }
 
-// Public entry point called after form submission
 function applyRegistered(lotNumber, firstName, lastName) {
   const g = document.querySelector(`#lot-svg [data-lot="${lotNumber}"]`);
   if (g) applyZoneRegistered(g, firstName, lastName);
@@ -147,7 +158,7 @@ function applyRegistered(lotNumber, firstName, lastName) {
 // ── Owners roster ─────────────────────────────────────────────────────────────
 function buildRoster() {
   const section = document.getElementById('owners-section');
-  const grid    = document.getElementById('owners-grid');
+  const tbody   = document.getElementById('owners-tbody');
   const entries = Object.entries(registrations)
     .map(([lot, r]) => ({ lot: Number(lot), ...r }))
     .sort((a, b) => a.lot - b.lot);
@@ -157,15 +168,21 @@ function buildRoster() {
     return;
   }
 
-  grid.innerHTML = entries.map(({ lot, firstName, lastName, firstName2, lastName2 }) => {
-    const name1 = `${escHtml(firstName)} ${escHtml(lastName)}`;
+  tbody.innerHTML = entries.map(({ lot, firstName, lastName, email, phone, firstName2, lastName2, email2 }) => {
+    const name1 = `${escHtml(firstName || '')} ${escHtml(lastName || '')}`.trim();
     const name2 = firstName2 ? `${escHtml(firstName2)} ${escHtml(lastName2 || '')}`.trim() : '';
+    const nameCell  = name2  ? `${name1}<br><span class="roster-name2">${name2}</span>` : name1;
+    const emailCell = email  ? `<a href="mailto:${escHtml(email)}">${escHtml(email)}</a>`
+                             + (email2 ? `<br><a href="mailto:${escHtml(email2)}" class="roster-email2">${escHtml(email2)}</a>` : '')
+                             : '—';
+    const phoneCell = phone ? escHtml(phone) : '—';
     return `
-    <div class="owner-card">
-      <span class="owner-card-lot">Lot ${lot}</span>
-      <span class="owner-card-name">${name1}</span>
-      ${name2 ? `<span class="owner-card-name2">${name2}</span>` : ''}
-    </div>`;
+    <tr>
+      <td class="roster-lot">Lot ${lot}</td>
+      <td>${nameCell}</td>
+      <td class="roster-email">${emailCell}</td>
+      <td class="roster-phone">${phoneCell}</td>
+    </tr>`;
   }).join('');
 
   section.classList.remove('hidden');
@@ -174,14 +191,14 @@ function buildRoster() {
 // ── Map interaction ───────────────────────────────────────────────────────────
 document.getElementById('lot-svg').addEventListener('click', e => {
   const g = e.target.closest('.lot-zone');
-  if (!g || g.classList.contains('registered')) return;
+  if (!g) return;
   openModal(Number(g.dataset.lot));
 });
 
 document.getElementById('lot-svg').addEventListener('keydown', e => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
   const g = document.activeElement;
-  if (!g || !g.classList.contains('lot-zone') || g.classList.contains('registered')) return;
+  if (!g || !g.classList.contains('lot-zone')) return;
   e.preventDefault();
   openModal(Number(g.dataset.lot));
 });
@@ -191,9 +208,34 @@ let activeLot = null;
 
 function openModal(lotNumber) {
   activeLot = lotNumber;
+  const existing = registrations[String(lotNumber)];
+  const isEdit   = !!existing;
+
   document.getElementById('modal-lot-label').textContent = `Lot ${lotNumber}`;
+  document.getElementById('modal-intro').textContent = isEdit
+    ? 'Update your registration below.'
+    : 'Your information is shared only with campaign organizers.';
+  document.getElementById('submit-btn').textContent = isEdit
+    ? 'Update Registration'
+    : 'Submit Registration';
+
+  // Reset then pre-fill if editing
+  document.getElementById('registration-form').reset();
   document.getElementById('lotNumber').value = lotNumber;
-  resetForm();
+  setMessage('', '');
+
+  if (isEdit) {
+    document.getElementById('firstName').value  = existing.firstName  || '';
+    document.getElementById('lastName').value   = existing.lastName   || '';
+    document.getElementById('email').value      = existing.email      || '';
+    document.getElementById('phone').value      = existing.phone      || '';
+    document.getElementById('years').value      = existing.years      || '';
+    document.getElementById('support').value    = existing.support    || '';
+    document.getElementById('firstName2').value = existing.firstName2 || '';
+    document.getElementById('lastName2').value  = existing.lastName2  || '';
+    document.getElementById('email2').value     = existing.email2     || '';
+  }
+
   document.getElementById('modal-overlay').classList.remove('hidden');
   document.getElementById('firstName').focus();
 }
@@ -246,24 +288,25 @@ document.getElementById('registration-form').addEventListener('submit', async e 
     return;
   }
   if (email2 && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email2)) {
-    setMessage('Please enter a valid email address for Resident 2.', 'error');
+    setMessage('Please enter a valid email for Resident 2.', 'error');
     return;
   }
 
+  const isUpdate = !!registrations[String(lot)];
   btn.disabled    = true;
-  btn.textContent = 'Submitting…';
+  btn.textContent = 'Saving…';
 
   const payload = new URLSearchParams({
-    action: 'register',
+    action: isUpdate ? 'update' : 'register',
     firstName: first,
-    lastName: last,
+    lastName:  last,
     email,
     phone,
     lot,
     years,
     support,
     firstName2: first2,
-    lastName2: last2,
+    lastName2:  last2,
     email2,
   });
 
@@ -277,17 +320,24 @@ document.getElementById('registration-form').addEventListener('submit', async e 
   } catch (err) {
     setMessage('Network error — please check your connection and try again.', 'error');
     btn.disabled    = false;
-    btn.textContent = 'Submit Registration';
+    btn.textContent = isUpdate ? 'Update Registration' : 'Submit Registration';
     return;
   }
 
-  // Optimistic UI update
-  registrations[String(lot)] = { firstName: first, lastName: last, firstName2: first2 || undefined, lastName2: last2 || undefined };
+  // Save to state + localStorage
+  registrations[String(lot)] = {
+    firstName: first, lastName: last,
+    email, phone, years, support,
+    firstName2: first2 || undefined,
+    lastName2:  last2  || undefined,
+    email2:     email2 || undefined,
+  };
+  saveRegCache();
   applyRegistered(lot, first, last);
 
-  setMessage('Registration submitted — thank you!', 'success');
+  setMessage(isUpdate ? 'Updated — thank you!' : 'Registration submitted — thank you!', 'success');
   btn.disabled    = false;
-  btn.textContent = 'Submit Registration';
+  btn.textContent = isUpdate ? 'Update Registration' : 'Submit Registration';
 
   setTimeout(closeModal, 1600);
 });
@@ -312,21 +362,32 @@ function escHtml(str) {
   const statusEl = document.getElementById('grid-status');
   statusEl.classList.remove('hidden');
 
+  // Load from localStorage cache first (instant)
+  loadRegCache();
+
+  // Then try to fetch from webhook (overwrites cache with server data)
   try {
     const res  = await fetch(`${WEBHOOK_URL}?action=getRegistrations`);
     const data = await res.json();
     if (data.success && Array.isArray(data.registrations)) {
+      // Clear and reload from server
+      for (const key of Object.keys(registrations)) delete registrations[key];
       data.registrations.forEach(r => {
         registrations[String(r.lot)] = {
           firstName:  r.firstName,
           lastName:   r.lastName,
           firstName2: r.firstName2 || undefined,
           lastName2:  r.lastName2  || undefined,
+          email:      r.email,
+          phone:      r.phone,
+          years:      r.years,
+          support:    r.support,
         };
       });
+      saveRegCache();
     }
   } catch (err) {
-    console.warn('Could not load existing registrations:', err);
+    console.warn('Could not load registrations from server, using local cache:', err);
   }
 
   statusEl.classList.add('hidden');
