@@ -143,14 +143,6 @@ function applyRegistered(lotNumber, firstName, lastName) {
   if (g) applyZoneRegistered(g, firstName, lastName);
 }
 
-// ── Debug toggle ──────────────────────────────────────────────────────────────
-document.getElementById('debug-toggle').addEventListener('click', function () {
-  const svg    = document.getElementById('lot-svg');
-  const active = svg.classList.toggle('debug');
-  this.setAttribute('aria-pressed', active);
-  this.textContent = active ? 'Hide zones' : 'Debug zones';
-});
-
 // ── Map interaction ───────────────────────────────────────────────────────────
 document.getElementById('lot-svg').addEventListener('click', e => {
   const g = e.target.closest('.lot-zone');
