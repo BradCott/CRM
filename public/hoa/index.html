@@ -46,6 +46,7 @@
               <th>Name</th>
               <th>Email</th>
               <th>Phone</th>
+              <th>Kids</th>
             </tr>
           </thead>
           <tbody id="owners-tbody"></tbody>
@@ -99,10 +100,21 @@
               <input type="text" id="lastName2" name="lastName2" autocomplete="family-name" />
             </div>
           </div>
-          <div class="form-group">
-            <label for="email2">Email Address</label>
-            <input type="email" id="email2" name="email2" autocomplete="email" />
+          <div class="form-row">
+            <div class="form-group">
+              <label for="email2">Email Address</label>
+              <input type="email" id="email2" name="email2" autocomplete="email" />
+            </div>
+            <div class="form-group">
+              <label for="phone2">Phone Number</label>
+              <input type="tel" id="phone2" name="phone2" autocomplete="tel" />
+            </div>
           </div>
+        </div>
+
+        <div class="form-group">
+          <label for="kids">Children <span class="optional-label">(optional — name &amp; age, e.g. Emma 8, Jake 12)</span></label>
+          <input type="text" id="kids" name="kids" placeholder="e.g. Emma 8, Jake 12" />
         </div>
 
         <div class="form-row">
