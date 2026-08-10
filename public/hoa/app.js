@@ -168,20 +168,25 @@ function buildRoster() {
     return;
   }
 
-  tbody.innerHTML = entries.map(({ lot, firstName, lastName, email, phone, firstName2, lastName2, email2 }) => {
+  tbody.innerHTML = entries.map(({ lot, firstName, lastName, email, phone, firstName2, lastName2, email2, phone2, kids }) => {
     const name1 = `${escHtml(firstName || '')} ${escHtml(lastName || '')}`.trim();
     const name2 = firstName2 ? `${escHtml(firstName2)} ${escHtml(lastName2 || '')}`.trim() : '';
-    const nameCell  = name2  ? `${name1}<br><span class="roster-name2">${name2}</span>` : name1;
-    const emailCell = email  ? `<a href="mailto:${escHtml(email)}">${escHtml(email)}</a>`
-                             + (email2 ? `<br><a href="mailto:${escHtml(email2)}" class="roster-email2">${escHtml(email2)}</a>` : '')
-                             : '—';
-    const phoneCell = phone ? escHtml(phone) : '—';
+    const nameCell  = name2 ? `${name1}<br><span class="roster-name2">${name2}</span>` : name1;
+    const emailCell = email
+      ? `<a href="mailto:${escHtml(email)}">${escHtml(email)}</a>`
+        + (email2 ? `<br><a href="mailto:${escHtml(email2)}" class="roster-sub">${escHtml(email2)}</a>` : '')
+      : '—';
+    const phoneCell = phone
+      ? escHtml(phone) + (phone2 ? `<br><span class="roster-sub">${escHtml(phone2)}</span>` : '')
+      : (phone2 ? escHtml(phone2) : '—');
+    const kidsCell = kids ? escHtml(kids) : '—';
     return `
     <tr>
       <td class="roster-lot">Lot ${lot}</td>
       <td>${nameCell}</td>
       <td class="roster-email">${emailCell}</td>
       <td class="roster-phone">${phoneCell}</td>
+      <td class="roster-kids">${kidsCell}</td>
     </tr>`;
   }).join('');
 
@@ -234,6 +239,8 @@ function openModal(lotNumber) {
     document.getElementById('firstName2').value = existing.firstName2 || '';
     document.getElementById('lastName2').value  = existing.lastName2  || '';
     document.getElementById('email2').value     = existing.email2     || '';
+    document.getElementById('phone2').value     = existing.phone2     || '';
+    document.getElementById('kids').value       = existing.kids       || '';
   }
 
   document.getElementById('modal-overlay').classList.remove('hidden');
@@ -278,6 +285,8 @@ document.getElementById('registration-form').addEventListener('submit', async e 
   const first2  = form.firstName2.value.trim();
   const last2   = form.lastName2.value.trim();
   const email2  = form.email2.value.trim();
+  const phone2  = form.phone2.value.trim();
+  const kids    = form.kids.value.trim();
 
   if (!first || !last || !email || !support) {
     setMessage('Please fill in all required fields.', 'error');
@@ -308,6 +317,8 @@ document.getElementById('registration-form').addEventListener('submit', async e 
     firstName2: first2,
     lastName2:  last2,
     email2,
+    phone2,
+    kids,
   });
 
   try {
@@ -331,6 +342,8 @@ document.getElementById('registration-form').addEventListener('submit', async e 
     firstName2: first2 || undefined,
     lastName2:  last2  || undefined,
     email2:     email2 || undefined,
+    phone2:     phone2 || undefined,
+    kids:       kids   || undefined,
   };
   saveRegCache();
   applyRegistered(lot, first, last);

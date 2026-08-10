@@ -498,8 +498,9 @@ tbody td {
 .roster-email a:hover { text-decoration: underline; }
 
 .roster-name2  { font-size: 0.8rem; color: #666; }
-.roster-email2 { font-size: 0.8rem; color: #555; }
+.roster-sub    { font-size: 0.8rem; color: #666; }
 .roster-phone  { white-space: nowrap; }
+.roster-kids   { color: #444; }
 
 /* ── Resident 2 optional section ─────────────── */
 .resident2-section {
