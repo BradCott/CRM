@@ -378,24 +378,15 @@ function escHtml(str) {
   // Load from localStorage cache first (instant)
   loadRegCache();
 
-  // Then try to fetch from webhook (overwrites cache with server data)
+  // Then try to fetch from webhook — merge on top of cache, don't replace it.
+  // The server may not return newer fields (phone2, kids, email2), so local cache wins for those.
   try {
     const res  = await fetch(`${WEBHOOK_URL}?action=getRegistrations`);
     const data = await res.json();
     if (data.success && Array.isArray(data.registrations)) {
-      // Clear and reload from server
-      for (const key of Object.keys(registrations)) delete registrations[key];
       data.registrations.forEach(r => {
-        registrations[String(r.lot)] = {
-          firstName:  r.firstName,
-          lastName:   r.lastName,
-          firstName2: r.firstName2 || undefined,
-          lastName2:  r.lastName2  || undefined,
-          email:      r.email,
-          phone:      r.phone,
-          years:      r.years,
-          support:    r.support,
-        };
+        const existing = registrations[String(r.lot)] || {};
+        registrations[String(r.lot)] = { ...existing, ...r };
       });
       saveRegCache();
     }
