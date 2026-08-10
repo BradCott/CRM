@@ -12,6 +12,15 @@ const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30
 const LEASE_DIR = join(DATA_DIR, 'leases')
 const PHOTO_DIR = join(DATA_DIR, 'property-photos')
 
+// A portfolio property drops out of the active Property Management section once
+// it's sold (listing_status = 'sold', set by the accounting Sale Close-Out or by
+// the "Mark as sold" action). The full record is preserved — this only hides it
+// from the management dashboard, task/insurance lists and reimbursement widgets.
+// NOT_SOLD assumes the properties table is aliased `p`; NOT_SOLD_NOALIAS is for
+// queries that select straight from `properties`.
+const NOT_SOLD         = `(p.listing_status IS NULL OR p.listing_status <> 'sold')`
+const NOT_SOLD_NOALIAS = `(listing_status IS NULL OR listing_status <> 'sold')`
+
 // Title of the auto-created follow-up task that tracks whether a tenant has
 // reimbursed us for an insurance premium. Kept in one place so the send,
 // mark-reimbursed, and dashboard code all match on it.
@@ -330,7 +339,7 @@ router.get('/dashboard', (req, res) => {
     FROM properties p
     LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
     LEFT JOIN people         o ON o.id = p.owner_id
-    WHERE p.is_portfolio = 1
+    WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
     ORDER BY p.address
   `).all()
 
@@ -386,7 +395,7 @@ router.get('/dashboard', (req, res) => {
     SELECT COUNT(DISTINCT pt.property_id) AS n
     FROM property_taxes pt
     JOIN properties p ON p.id = pt.property_id
-    WHERE p.is_portfolio = 1
+    WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
       AND pt.paid_date IS NULL
       AND pt.due_date IS NOT NULL
       AND pt.due_date <= ?
@@ -398,7 +407,7 @@ router.get('/dashboard', (req, res) => {
     SELECT COUNT(DISTINCT pt.property_id) AS n
     FROM property_tasks pt
     JOIN properties p ON p.id = pt.property_id
-    WHERE p.is_portfolio = 1
+    WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
       AND pt.completed_at IS NULL
       AND pt.task_type = 'tax'
       AND LOWER(pt.title) LIKE '%reimburs%'
@@ -409,7 +418,7 @@ router.get('/dashboard', (req, res) => {
     SELECT COUNT(DISTINCT pt.property_id) AS n
     FROM property_tasks pt
     JOIN properties p ON p.id = pt.property_id
-    WHERE p.is_portfolio = 1
+    WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
       AND pt.completed_at IS NULL
       AND pt.task_type = 'insurance'
       AND LOWER(pt.title) LIKE '%reimburs%'
@@ -424,7 +433,7 @@ router.get('/dashboard', (req, res) => {
       COUNT(CASE WHEN completed_at IS NOT NULL THEN 1 END) AS completed,
       COUNT(CASE WHEN completed_at IS NULL THEN 1 END) AS pending
     FROM property_tasks
-    WHERE property_id IN (SELECT id FROM properties WHERE is_portfolio = 1)
+    WHERE property_id IN (SELECT id FROM properties WHERE is_portfolio = 1 AND ${NOT_SOLD_NOALIAS})
     GROUP BY property_id
   `).all()
   const taskCounts = {}
@@ -471,7 +480,7 @@ router.get('/dashboard/breakdown', (req, res) => {
         SELECT ${PROP_COLS}, p.annual_rent AS value
         FROM properties p
         LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
-        WHERE p.is_portfolio = 1
+        WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
         ORDER BY p.annual_rent DESC NULLS LAST, p.address
       `).all()
       return respond('Portfolio Properties', { label: 'Annual Rent', type: 'currency' }, rows)
@@ -486,7 +495,7 @@ router.get('/dashboard/breakdown', (req, res) => {
         FROM property_tasks pt
         JOIN properties p ON p.id = pt.property_id
         LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
-        WHERE p.is_portfolio = 1
+        WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
           AND pt.completed_at IS NULL
           AND pt.due_date IS NOT NULL
           AND pt.due_date < ?
@@ -505,7 +514,7 @@ router.get('/dashboard/breakdown', (req, res) => {
         FROM property_insurance pi
         JOIN properties p ON p.id = pi.property_id
         LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
-        WHERE p.is_portfolio = 1
+        WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
           AND pi.expiry_date IS NOT NULL
           AND pi.expiry_date >= ? AND pi.expiry_date <= ?
         ORDER BY pi.expiry_date
@@ -519,7 +528,7 @@ router.get('/dashboard/breakdown', (req, res) => {
         FROM property_maintenance pm
         JOIN properties p ON p.id = pm.property_id
         LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
-        WHERE p.is_portfolio = 1
+        WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
           AND pm.date >= date('now', '-365 days')
         GROUP BY p.id
         HAVING SUM(pm.cost) > 0
@@ -538,7 +547,7 @@ router.get('/dashboard/breakdown', (req, res) => {
         FROM property_taxes pt
         JOIN properties p ON p.id = pt.property_id
         LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
-        WHERE p.is_portfolio = 1
+        WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
           AND pt.paid_date IS NULL
           AND pt.due_date IS NOT NULL
           AND pt.due_date <= ?
@@ -559,7 +568,7 @@ router.get('/dashboard/breakdown', (req, res) => {
         SELECT ${PROP_COLS}
         FROM properties p
         LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
-        WHERE p.is_portfolio = 1
+        WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
       `).all()
       const rows = []
       for (const p of props) {
@@ -600,7 +609,7 @@ router.get('/tasks', (req, res) => {
     FROM property_tasks pt
     JOIN  properties p ON p.id = pt.property_id
     LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
-    WHERE p.is_portfolio = 1
+    WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
       ${statusClause}
     ORDER BY
       CASE WHEN pt.due_date IS NULL THEN 1 ELSE 0 END,
@@ -682,7 +691,7 @@ router.get('/insurance/all', (req, res) => {
     FROM property_insurance pi
     JOIN  properties   p ON p.id  = pi.property_id
     LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
-    WHERE p.is_portfolio = 1
+    WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
     ORDER BY p.address ASC, pi.effective_date DESC
   `).all()
   res.json(rows)
@@ -2198,7 +2207,7 @@ function removeUntouchedReimbursement(sourceType, sourceId) {
 // ?year= / ?status= / ?type= filters. Defined before /:propertyId/* routes.
 router.get('/reimbursements', (req, res) => {
   const { year, status, type } = req.query
-  const where = ['p.is_portfolio = 1']
+  const where = ['p.is_portfolio = 1', NOT_SOLD]
   const args  = []
   if (year)   { where.push('r.year = ?');         args.push(parseInt(year, 10)) }
   if (status) { where.push('r.status = ?');        args.push(status) }
@@ -2230,7 +2239,7 @@ router.get('/reimbursements/summary', (req, res) => {
   const throughMonth = now.getMonth() + 1
   const acc = { tax: { count: 0, outstanding: 0 }, insurance: { count: 0, outstanding: 0 }, cam: { count: 0, outstanding: 0 } }
 
-  const properties = db.prepare('SELECT id FROM properties WHERE is_portfolio = 1').all()
+  const properties = db.prepare(`SELECT id FROM properties WHERE is_portfolio = 1 AND ${NOT_SOLD_NOALIAS}`).all()
   for (const p of properties) {
     const settingsRows = db.prepare('SELECT expense_type, method FROM property_expense_settings WHERE property_id = ?').all(p.id)
     const methodOf = Object.fromEntries(settingsRows.map(s => [s.expense_type, s.method]))

@@ -348,6 +348,7 @@ router.get('/critical-dates', (req, res) => {
   const deal = []
   const dealRows = db.prepare(`
     SELECT d.id, COALESCE(NULLIF(d.tenant,''), t.name, d.address, p.address, 'Deal') AS name,
+           t.name AS brand, COALESCE(d.city, p.city) AS city,
            COALESCE(d.address, p.address) AS address, d.stage,
            d.effective_date, d.earnest_due_date, d.dd_deadline, d.title_objection_date, d.close_date
     FROM deals d
@@ -357,7 +358,7 @@ router.get('/critical-dates', (req, res) => {
       AND d.stage IN ('psa_negotiation', 'under_contract', 'money_hard')
   `).all()
   for (const r of dealRows) {
-    const base = { entity_type: 'deal', entity_id: r.id, entity_name: r.name, sub: r.address || null, stage: r.stage }
+    const base = { entity_type: 'deal', entity_id: r.id, entity_name: r.name, brand: r.brand || null, city: r.city || null, sub: r.address || null, stage: r.stage }
     const named = [
       ['effective_date',  'Effective date',            r.effective_date],
       ['earnest_due',     'Earnest money due',         r.earnest_due_date],
@@ -373,7 +374,8 @@ router.get('/critical-dates', (req, res) => {
   const kindLabel = { survey: 'Survey', environmental: 'Environmental', pcr: 'PCR', other: 'Report' }
   const proposals = db.prepare(`
     SELECT dp.kind, dp.turnaround_days, d.id AS deal_id, d.dd_deadline,
-           COALESCE(NULLIF(d.tenant,''), t.name, d.address, p.address, 'Deal') AS name, COALESCE(d.address, p.address) AS address
+           COALESCE(NULLIF(d.tenant,''), t.name, d.address, p.address, 'Deal') AS name,
+           t.name AS brand, COALESCE(d.city, p.city) AS city, COALESCE(d.address, p.address) AS address
     FROM deal_proposals dp JOIN deals d ON d.id = dp.deal_id
     LEFT JOIN properties p ON p.id = d.property_id
     LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
@@ -384,7 +386,7 @@ router.get('/critical-dates', (req, res) => {
     const m = String(r.dd_deadline).match(/^(\d{4})-(\d{2})-(\d{2})/); if (!m) continue
     const od = new Date(+m[1], +m[2] - 1, +m[3]); od.setDate(od.getDate() - r.turnaround_days)
     const iso = `${od.getFullYear()}-${String(od.getMonth() + 1).padStart(2, '0')}-${String(od.getDate()).padStart(2, '0')}`
-    const it = mk({ entity_type: 'deal', entity_id: r.deal_id, entity_name: r.name, sub: r.address || null,
+    const it = mk({ entity_type: 'deal', entity_id: r.deal_id, entity_name: r.name, brand: r.brand || null, city: r.city || null, sub: r.address || null,
       kind: 'order_by', label: `Order ${kindLabel[r.kind] || 'report'} by`, date: iso })
     if (it) deal.push(it)
   }
@@ -392,54 +394,91 @@ router.get('/critical-dates', (req, res) => {
   // ── Portfolio bucket ──
   const portfolio = []
   const props = db.prepare(`
-    SELECT p.id, COALESCE(NULLIF(p.display_name,''), p.address) AS name, p.address,
+    SELECT p.id, COALESCE(NULLIF(p.display_name,''), p.address) AS name, p.address, p.city,
            p.lease_end, p.maturity_date, t.name AS tenant
     FROM properties p LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
     WHERE p.is_portfolio = 1
   `).all()
   for (const r of props) {
-    const base = { entity_type: 'property', entity_id: r.id, entity_name: r.name, sub: r.tenant || r.address || null }
+    const base = { entity_type: 'property', entity_id: r.id, entity_name: r.name, brand: r.tenant || null, city: r.city || null, sub: r.tenant || r.address || null }
     const le = mk({ ...base, kind: 'lease_expiration', label: 'Lease expiration', date: r.lease_end }); if (le) portfolio.push(le)
     const lm = mk({ ...base, kind: 'loan_maturity', label: 'Loan maturity', date: r.maturity_date }); if (lm) portfolio.push(lm)
   }
   const taxes = db.prepare(`
-    SELECT pt.property_id AS id, pt.due_date, pt.tax_year, COALESCE(NULLIF(p.display_name,''), p.address) AS name, p.address, t.name AS tenant
+    SELECT pt.property_id AS id, pt.due_date, pt.tax_year, COALESCE(NULLIF(p.display_name,''), p.address) AS name, p.address, p.city, t.name AS tenant
     FROM property_taxes pt JOIN properties p ON p.id = pt.property_id LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
     WHERE p.is_portfolio = 1 AND pt.due_date IS NOT NULL AND pt.paid_date IS NULL
   `).all()
   for (const r of taxes) {
-    const it = mk({ entity_type: 'property', entity_id: r.id, entity_name: r.name, sub: r.tenant || r.address || null,
+    const it = mk({ entity_type: 'property', entity_id: r.id, entity_name: r.name, brand: r.tenant || null, city: r.city || null, sub: r.tenant || r.address || null,
       kind: 'tax_due', label: `Property tax due${r.tax_year ? ` (${r.tax_year})` : ''}`, date: r.due_date })
     if (it) portfolio.push(it)
   }
   const ins = db.prepare(`
-    SELECT pi.property_id AS id, pi.expiry_date, pi.carrier, COALESCE(NULLIF(p.display_name,''), p.address) AS name, p.address, t.name AS tenant
+    SELECT pi.property_id AS id, pi.expiry_date, pi.carrier, COALESCE(NULLIF(p.display_name,''), p.address) AS name, p.address, p.city, t.name AS tenant
     FROM property_insurance pi JOIN properties p ON p.id = pi.property_id LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
     WHERE p.is_portfolio = 1 AND pi.expiry_date IS NOT NULL AND pi.expiry_date >= date('now', '-30 days')
   `).all()
   for (const r of ins) {
-    const it = mk({ entity_type: 'property', entity_id: r.id, entity_name: r.name, sub: r.carrier || r.tenant || null,
+    const it = mk({ entity_type: 'property', entity_id: r.id, entity_name: r.name, brand: r.tenant || null, city: r.city || null, sub: r.carrier || r.tenant || null,
       kind: 'insurance_exp', label: 'Insurance expiration', date: r.expiry_date })
     if (it) portfolio.push(it)
   }
   // Renewal-notice deadlines etc. from parsed lease abstracts (key_dates array).
   const leases = db.prepare(`
-    SELECT pl.property_id AS id, pl.abstract, COALESCE(NULLIF(p.display_name,''), p.address) AS name, t.name AS tenant
+    SELECT pl.property_id AS id, pl.abstract, COALESCE(NULLIF(p.display_name,''), p.address) AS name, p.city, t.name AS tenant
     FROM property_leases pl JOIN properties p ON p.id = pl.property_id LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
     WHERE p.is_portfolio = 1 AND pl.abstract IS NOT NULL
   `).all()
   for (const r of leases) {
     let a; try { a = JSON.parse(r.abstract) } catch { continue }
     for (const kd of (a?.key_dates || [])) {
-      const it = mk({ entity_type: 'property', entity_id: r.id, entity_name: r.name, sub: r.tenant || null,
+      const it = mk({ entity_type: 'property', entity_id: r.id, entity_name: r.name, brand: r.tenant || null, city: r.city || null, sub: r.tenant || null,
         kind: 'lease_key_date', label: kd.label || 'Lease key date', date: kd.date })
       if (it) portfolio.push(it)
     }
   }
 
+  // Flag items the user has cleared. Keyed by the exact (type, id, kind, date) —
+  // if a date later shifts, the key no longer matches and the item re-surfaces.
+  const doneRows = db.prepare(`SELECT entity_type, entity_id, kind, date FROM critical_date_completions`).all()
+  const doneSet = new Set(doneRows.map(r => `${r.entity_type}:${r.entity_id}:${r.kind}:${r.date}`))
+  const annotate = it => { it.done = doneSet.has(`${it.entity_type}:${it.entity_id}:${it.kind}:${it.date}`); return it }
+  deal.forEach(annotate); portfolio.forEach(annotate)
+
   const byDate = (a, b) => a.date < b.date ? -1 : a.date > b.date ? 1 : 0
   deal.sort(byDate); portfolio.sort(byDate)
   res.json({ deal, portfolio })
+})
+
+// ── POST /critical-dates/complete ─ mark one computed date cleared ─────────────
+// DELETE the same path to undo. Body: { entity_type, entity_id, kind, date }.
+function completionKey(b) {
+  const entity_type = String(b?.entity_type || '')
+  const entity_id   = Number(b?.entity_id)
+  const kind        = String(b?.kind || '')
+  const date        = String(b?.date || '')
+  if (!entity_type || !Number.isFinite(entity_id) || !kind || !date) return null
+  return { entity_type, entity_id, kind, date }
+}
+
+router.post('/critical-dates/complete', (req, res) => {
+  const k = completionKey(req.body)
+  if (!k) return res.status(400).json({ error: 'entity_type, entity_id, kind and date are required' })
+  db.prepare(`
+    INSERT OR IGNORE INTO critical_date_completions (entity_type, entity_id, kind, date, completed_by)
+    VALUES (?, ?, ?, ?, ?)
+  `).run(k.entity_type, k.entity_id, k.kind, k.date, req.user?.sub ?? null)
+  res.json({ ok: true })
+})
+
+router.delete('/critical-dates/complete', (req, res) => {
+  const k = completionKey(req.body)
+  if (!k) return res.status(400).json({ error: 'entity_type, entity_id, kind and date are required' })
+  db.prepare(`
+    DELETE FROM critical_date_completions WHERE entity_type = ? AND entity_id = ? AND kind = ? AND date = ?
+  `).run(k.entity_type, k.entity_id, k.kind, k.date)
+  res.json({ ok: true })
 })
 
 // ── GET /activity ─────────────────────────────────────────────────────────────

@@ -13,9 +13,10 @@ import {
   ArrowLeft, ClipboardList, Shield, Receipt, Wrench, Users,
   Plus, Pencil, Trash2, CheckCircle2, Loader2,
   Upload, AlertCircle, ChevronDown, ChevronUp, FileUp, FileText, LayoutDashboard, Calculator, Scale, Hammer,
+  Archive, RotateCcw,
 } from 'lucide-react'
 import {
-  getProperty,
+  getProperty,          markPropertySold,
   getPropertyTasks,      createTask,        updateTask,        completeTask,    deleteTask,
   getPropertyInsurance,  createInsurance,   updateInsurance,   deleteInsurance, uploadInsurancePdf, uploadInsuranceDoc, markInsurancePaid,
   getPropertyTaxes,      createTax,         updateTax,         deleteTax,        uploadTaxPdf, uploadTaxDoc, markTaxPaid, getTaxDocuments, taxDocUrl,
@@ -1540,6 +1541,9 @@ export default function PropertyManagementDetail() {
   const [property, setProperty] = useState(null)
   const [loading, setLoading]   = useState(true)
   const [tab, setTab]           = useState(searchParams.get('tab') || 'dash')
+  const [soldModal, setSoldModal]   = useState(false)
+  const [soldForm, setSoldForm]     = useState({ sold_date: '', sale_price: '' })
+  const [soldSaving, setSoldSaving] = useState(false)
 
   useEffect(() => {
     setLoading(true)
@@ -1547,6 +1551,41 @@ export default function PropertyManagementDetail() {
       .then(p => { setProperty(p); setLoading(false) })
       .catch(() => setLoading(false))
   }, [propertyId])
+
+  const isSold = property?.listing_status === 'sold'
+
+  function openSoldModal() {
+    setSoldForm({ sold_date: new Date().toISOString().slice(0, 10), sale_price: '' })
+    setSoldModal(true)
+  }
+
+  async function handleMarkSold(e) {
+    e.preventDefault()
+    setSoldSaving(true)
+    try {
+      await markPropertySold(propertyId, {
+        sold: true,
+        sold_date:  soldForm.sold_date || undefined,
+        sale_price: soldForm.sale_price || undefined,
+      })
+      setProperty(await getProperty(propertyId))
+      setSoldModal(false)
+    } catch (err) {
+      alert('Error: ' + err.message)
+    } finally {
+      setSoldSaving(false)
+    }
+  }
+
+  async function handleRestore() {
+    if (!confirm('Restore this property to the active management dashboard? This also removes it from Historical Transactions.')) return
+    try {
+      await markPropertySold(propertyId, { sold: false })
+      setProperty(await getProperty(propertyId))
+    } catch (err) {
+      alert('Error: ' + err.message)
+    }
+  }
 
   if (loading) {
     return (
@@ -1572,18 +1611,66 @@ export default function PropertyManagementDetail() {
         </Link>
         <div className="flex items-start justify-between gap-3">
           <div>
-            <h1 className="text-lg font-bold text-slate-900">{property.address}</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-lg font-bold text-slate-900">{property.address}</h1>
+              {isSold && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-slate-200 text-slate-600 text-xs font-semibold uppercase tracking-wide">
+                  <Archive className="w-3 h-3" /> Sold
+                </span>
+              )}
+            </div>
             <p className="text-sm text-slate-500">
               {[property.city, property.state, property.zip].filter(Boolean).join(', ')}
               {property.tenant_brand_name ? ` · ${property.tenant_brand_name}` : ''}
             </p>
+            {isSold && (
+              <p className="text-xs text-slate-400 mt-0.5">
+                Sold {fmtDate(property.sold_date)}
+                {property.sale_price != null ? ` · ${fmt(property.sale_price)}` : ''}
+                {' '}— hidden from the active dashboard, record preserved.
+              </p>
+            )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <TenantNotifyButton propertyId={propertyId} />
             <DriveDocsButton propertyId={propertyId} />
+            {isSold ? (
+              <button
+                onClick={handleRestore}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-slate-600 border border-slate-200 hover:bg-slate-100 transition-colors"
+                title="Restore this property to the active management dashboard"
+              >
+                <RotateCcw className="w-3.5 h-3.5" /> Restore
+              </button>
+            ) : (
+              <button
+                onClick={openSoldModal}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-slate-600 border border-slate-200 hover:bg-slate-100 transition-colors"
+                title="Mark this property sold and remove it from the active dashboard (the record is kept)"
+              >
+                <Archive className="w-3.5 h-3.5" /> Mark as sold
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Mark-as-sold modal */}
+      <Modal isOpen={soldModal} onClose={() => setSoldModal(false)} title="Mark property as sold" size="sm">
+        <form onSubmit={handleMarkSold} className="px-6 py-5 space-y-3">
+          <p className="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-3 py-2">
+            This removes the property from the active Property Management dashboard and moves it to
+            Historical Transactions. The full record — leases, insurance, taxes, maintenance and
+            accounting — is preserved and stays accessible. You can restore it any time.
+          </p>
+          <Input label="Sale date" type="date" value={soldForm.sold_date} onChange={e => setSoldForm(f => ({ ...f, sold_date: e.target.value }))} />
+          <Input label="Sale price ($) — optional" type="number" step="0.01" value={soldForm.sale_price} onChange={e => setSoldForm(f => ({ ...f, sale_price: e.target.value }))} />
+          <div className="flex justify-end gap-2 pt-1">
+            <Button type="button" variant="secondary" onClick={() => setSoldModal(false)}>Cancel</Button>
+            <Button type="submit" disabled={soldSaving}>{soldSaving ? 'Saving…' : 'Mark as sold'}</Button>
+          </div>
+        </form>
+      </Modal>
 
       {/* Tabs */}
       <div className="flex gap-1 px-6 py-2 border-b border-slate-200 bg-white overflow-x-auto">
