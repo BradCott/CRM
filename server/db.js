@@ -930,6 +930,21 @@ const migrations = [
   // Optional custom subtitle shown under the display name on the widgets. Falls
   // back to the auto "address, city, state" line when blank.
   `ALTER TABLE properties ADD COLUMN display_subtitle TEXT`,
+
+  // Completed/cleared Critical Dates. Those dashboard items are computed live
+  // from deals/taxes/leases (no stored row), so "mark complete" is recorded here
+  // keyed to the exact item + its date. If an underlying date later changes, the
+  // key no longer matches and the item correctly re-surfaces as outstanding.
+  `CREATE TABLE IF NOT EXISTS critical_date_completions (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_type  TEXT    NOT NULL,
+    entity_id    INTEGER NOT NULL,
+    kind         TEXT    NOT NULL,
+    date         TEXT    NOT NULL,
+    completed_at TEXT    NOT NULL DEFAULT (datetime('now')),
+    completed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    UNIQUE(entity_type, entity_id, kind, date)
+  )`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

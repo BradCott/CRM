@@ -187,6 +187,9 @@ export const getDashboardActivity       = () => req('GET', '/dashboard/activity'
 export const getDashboardMapProperties  = () => req('GET', '/dashboard/map-properties')
 export const getDashboardLeaseExpirations = () => req('GET', '/dashboard/lease-expirations')
 export const getCriticalDates           = () => req('GET', '/dashboard/critical-dates')   // { deal, portfolio }
+// Mark one computed Critical Date cleared / restore it. key = { entity_type, entity_id, kind, date }
+export const completeCriticalDate       = (key) => req('POST',   '/dashboard/critical-dates/complete', key)
+export const uncompleteCriticalDate     = (key) => req('DELETE', '/dashboard/critical-dates/complete', key)
 export const getTreasury                   = () => req('GET', '/dashboard/treasury')
 
 // Google OAuth / Drive
