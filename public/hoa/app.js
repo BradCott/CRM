@@ -129,7 +129,7 @@ function buildMap() {
     text.setAttribute('x', cx);
     text.setAttribute('y', cy);
     text.setAttribute('text-anchor', 'middle');
-    text.setAttribute('dominant-baseline', 'middle');
+    text.setAttribute('dominant-baseline', 'central');
     text.style.display = 'none';
     g.appendChild(text);
 
