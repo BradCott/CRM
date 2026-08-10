@@ -534,13 +534,16 @@ tbody td {
   border-radius: 10px;
   overflow: hidden;
   box-shadow: 0 4px 24px rgba(0,0,0,0.14);
-  background: #e8f0eb; /* fallback while image loads */
-  line-height: 0;      /* collapse inline-block gap under img */
+  background: #e8f0eb;
+  /* Force square container — aerial photo is 1:1, SVG viewBox is 1:1.
+     Without this, a brief height mismatch during image load shifts the SVG offset. */
+  aspect-ratio: 1 / 1;
 }
 
 .map-wrap img {
   width: 100%;
-  height: auto;
+  height: 100%;
+  object-fit: cover; /* fills the forced-square container without distortion */
   display: block;
 }
 
@@ -550,19 +553,19 @@ tbody td {
   width: 100%;
   height: 100%;
   cursor: default;
-  /* Don't let the SVG itself block pointer events — only zones do */
   pointer-events: none;
 }
 
 /* Re-enable pointer events on individual zones */
 .lot-zone {
   pointer-events: all;
+  touch-action: manipulation; /* prevent double-tap zoom on iOS */
 }
 
 .lot-zone polygon {
   fill: transparent;
-  stroke: rgba(42, 110, 66, 0.28);
-  stroke-width: 2;
+  stroke: rgba(42, 110, 66, 0.35);
+  stroke-width: 3;
   transition: fill 0.15s ease, stroke 0.15s ease, stroke-width 0.15s ease;
 }
 
@@ -574,7 +577,7 @@ tbody td {
 .lot-zone:not(.registered):focus polygon {
   fill: rgba(42, 110, 66, 0.32);
   stroke: rgba(42, 110, 66, 0.9);
-  stroke-width: 3;
+  stroke-width: 4;
 }
 
 /* Remove default focus ring — polygon provides visual feedback */
@@ -587,17 +590,51 @@ tbody td {
 .lot-zone.registered polygon {
   fill: rgba(42, 110, 66, 0.88);
   stroke: #1f5c36;
-  stroke-width: 2;
+  stroke-width: 3;
 }
 
+/* Owner label: SVG units so it scales with the map */
 .lot-owner-label {
   fill: #fff;
-  font-size: 16px;
+  font-size: 38px;   /* SVG units — looks ~16px at typical desktop width */
   font-weight: 700;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.7));
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.8));
   pointer-events: none;
   user-select: none;
 }
 
 .lot-number-label { display: none; }
+
+/* ── Mobile improvements ──────────────────────── */
+@media (max-width: 600px) {
+  /* Full-screen modal on small phones */
+  .modal-overlay {
+    align-items: flex-end;
+    padding: 0;
+  }
+
+  .modal {
+    border-radius: 16px 16px 0 0;
+    max-width: 100%;
+    max-height: 92vh;
+    padding: 22px 20px 32px;
+  }
+
+  /* Roster table: hide Kids column, compress padding */
+  .owners-table th:last-child,
+  .owners-table td:last-child {
+    display: none;
+  }
+
+  .owners-table thead th,
+  .owners-table tbody td {
+    padding: 8px 10px;
+    font-size: 0.8rem;
+  }
+
+  /* Instruction text */
+  .intro-banner {
+    font-size: 0.84rem;
+  }
+}
