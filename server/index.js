@@ -32,6 +32,7 @@ import tenantRolesRouter     from './routes/tenantRoles.js'
 import pluginRouter          from './routes/plugin.js'
 import extDistRouter         from './routes/extDist.js'
 import portalRouter          from './routes/portal.js'
+import hoaRouter             from './routes/hoa.js'
 
 import { requireAuth, requireWrite, requireRole, requireExtKey } from './middleware/auth.js'
 
@@ -57,6 +58,7 @@ if (isProd && existsSync(distPath)) {
 
 // ── Public API routes (no auth required) ─────────────────────────────────────
 app.use('/api/auth', authRouter)
+app.use('/api/hoa',  hoaRouter)
 // Investor portal — self-contained auth + investor-scoped data (NOT behind CRM auth)
 app.use('/api/portal', portalRouter)
 

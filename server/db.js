@@ -1367,5 +1367,25 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_properties_year_purchased  ON properties(year_purchased);
 `)
 
+// ── HOA Registration ──────────────────────────────────────────────────────────
+db.exec(`
+  CREATE TABLE IF NOT EXISTS hoa_registrations (
+    lot_number       INTEGER PRIMARY KEY,
+    first_name       TEXT NOT NULL,
+    last_name        TEXT NOT NULL,
+    email            TEXT NOT NULL,
+    phone            TEXT,
+    first_name2      TEXT,
+    last_name2       TEXT,
+    email2           TEXT,
+    phone2           TEXT,
+    years_at_address TEXT,
+    kids             TEXT,
+    support          TEXT,
+    created_at       TEXT DEFAULT (datetime('now')),
+    updated_at       TEXT DEFAULT (datetime('now'))
+  )
+`)
+
 export { DB_PATH, DATA_DIR }
 export default db
