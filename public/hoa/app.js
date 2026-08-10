@@ -1,10 +1,10 @@
 // ── Config ────────────────────────────────────────────────────────────────────
-const WEBHOOK_URL    = 'https://script.google.com/macros/s/AKfycbwSreJEU5kPtUM_wNmHq2XWgZ74aH3WlJw7kVLVtr0Hfba7aS_E1eUw6KDISkw3_do/exec';
+const API_BASE    = '/api/hoa';
+const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwSreJEU5kPtUM_wNmHq2XWgZ74aH3WlJw7kVLVtr0Hfba7aS_E1eUw6KDISkw3_do/exec';
 const LOT_STORAGE_KEY = 'hoa-lot-polygons';
-const REG_CACHE_KEY   = 'hoa-registrations';
 
 // ── State ─────────────────────────────────────────────────────────────────────
-const registrations = {}; // lot (string) → { firstName, lastName, firstName2?, lastName2? }
+const registrations = {};
 
 // ── Default lot polygons ──────────────────────────────────────────────────────
 function r(x1, y1, x2, y2) {
@@ -57,23 +57,6 @@ function loadLotZones() {
     }
   } catch (e) { /* ignore */ }
   return { ...LOT_ZONES_DEFAULT };
-}
-
-// ── Registration cache (localStorage) ────────────────────────────────────────
-function saveRegCache() {
-  try { localStorage.setItem(REG_CACHE_KEY, JSON.stringify(registrations)); } catch (e) {}
-}
-
-function loadRegCache() {
-  try {
-    const saved = localStorage.getItem(REG_CACHE_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      for (const [lot, data] of Object.entries(parsed)) {
-        registrations[lot] = data;
-      }
-    }
-  } catch (e) {}
 }
 
 // ── SVG helpers ───────────────────────────────────────────────────────────────
@@ -163,10 +146,7 @@ function buildRoster() {
     .map(([lot, r]) => ({ lot: Number(lot), ...r }))
     .sort((a, b) => a.lot - b.lot);
 
-  if (entries.length === 0) {
-    section.classList.add('hidden');
-    return;
-  }
+  if (entries.length === 0) { section.classList.add('hidden'); return; }
 
   tbody.innerHTML = entries.map(({ lot, firstName, lastName, email, phone, firstName2, lastName2, email2, phone2, kids }) => {
     const name1 = `${escHtml(firstName || '')} ${escHtml(lastName || '')}`.trim();
@@ -179,14 +159,13 @@ function buildRoster() {
     const phoneCell = phone
       ? escHtml(phone) + (phone2 ? `<br><span class="roster-sub">${escHtml(phone2)}</span>` : '')
       : (phone2 ? escHtml(phone2) : '—');
-    const kidsCell = kids ? escHtml(kids) : '—';
     return `
     <tr>
       <td class="roster-lot">Lot ${lot}</td>
       <td>${nameCell}</td>
       <td class="roster-email">${emailCell}</td>
       <td class="roster-phone">${phoneCell}</td>
-      <td class="roster-kids">${kidsCell}</td>
+      <td class="roster-kids">${kids ? escHtml(kids) : '—'}</td>
     </tr>`;
   }).join('');
 
@@ -221,10 +200,8 @@ function openModal(lotNumber) {
     ? 'Update your registration below.'
     : 'Your information is shared only with campaign organizers.';
   document.getElementById('submit-btn').textContent = isEdit
-    ? 'Update Registration'
-    : 'Submit Registration';
+    ? 'Update Registration' : 'Submit Registration';
 
-  // Reset then pre-fill if editing
   document.getElementById('registration-form').reset();
   document.getElementById('lotNumber').value = lotNumber;
   setMessage('', '');
@@ -252,19 +229,10 @@ function closeModal() {
   activeLot = null;
 }
 
-function resetForm() {
-  const lotVal = document.getElementById('lotNumber').value;
-  document.getElementById('registration-form').reset();
-  document.getElementById('lotNumber').value = lotVal;
-  setMessage('', '');
-}
-
 document.getElementById('modal-close').addEventListener('click', closeModal);
-
 document.getElementById('modal-overlay').addEventListener('click', e => {
   if (e.target === e.currentTarget) closeModal();
 });
-
 document.addEventListener('keydown', e => {
   if (e.key === 'Escape') closeModal();
 });
@@ -289,69 +257,54 @@ document.getElementById('registration-form').addEventListener('submit', async e 
   const kids    = form.kids.value.trim();
 
   if (!first || !last || !email || !support) {
-    setMessage('Please fill in all required fields.', 'error');
-    return;
+    setMessage('Please fill in all required fields.', 'error'); return;
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    setMessage('Please enter a valid email address.', 'error');
-    return;
+    setMessage('Please enter a valid email address.', 'error'); return;
   }
   if (email2 && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email2)) {
-    setMessage('Please enter a valid email for Resident 2.', 'error');
-    return;
+    setMessage('Please enter a valid email for Resident 2.', 'error'); return;
   }
 
   const isUpdate = !!registrations[String(lot)];
   btn.disabled    = true;
   btn.textContent = 'Saving…';
 
-  const payload = new URLSearchParams({
-    action: isUpdate ? 'update' : 'register',
-    firstName: first,
-    lastName:  last,
-    email,
-    phone,
-    lot,
-    years,
-    support,
-    firstName2: first2,
-    lastName2:  last2,
-    email2,
-    phone2,
-    kids,
-  });
+  const body = { lot, firstName: first, lastName: last, email, phone,
+                 firstName2: first2, lastName2: last2, email2, phone2,
+                 years, kids, support };
 
   try {
-    await fetch(WEBHOOK_URL, {
+    const res = await fetch(`${API_BASE}/register`, {
       method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: payload,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     });
+    if (!res.ok) throw new Error(await res.text());
   } catch (err) {
-    setMessage('Network error — please check your connection and try again.', 'error');
+    setMessage('Could not save — please check your connection and try again.', 'error');
     btn.disabled    = false;
     btn.textContent = isUpdate ? 'Update Registration' : 'Submit Registration';
     return;
   }
 
-  // Save to state + localStorage
-  registrations[String(lot)] = {
-    firstName: first, lastName: last,
-    email, phone, years, support,
-    firstName2: first2 || undefined,
-    lastName2:  last2  || undefined,
-    email2:     email2 || undefined,
-    phone2:     phone2 || undefined,
-    kids:       kids   || undefined,
-  };
-  saveRegCache();
-  applyRegistered(lot, first, last);
+  // Also forward to Google Sheet for their records (fire-and-forget)
+  try {
+    const gPayload = new URLSearchParams({ action: 'register', ...body });
+    fetch(WEBHOOK_URL, { method: 'POST', mode: 'no-cors',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: gPayload });
+  } catch (_) {}
 
+  registrations[String(lot)] = { firstName: first, lastName: last, email, phone,
+    firstName2: first2 || undefined, lastName2: last2 || undefined,
+    email2: email2 || undefined, phone2: phone2 || undefined,
+    years, kids: kids || undefined, support };
+
+  applyRegistered(lot, first, last);
   setMessage(isUpdate ? 'Updated — thank you!' : 'Registration submitted — thank you!', 'success');
   btn.disabled    = false;
   btn.textContent = isUpdate ? 'Update Registration' : 'Submit Registration';
-
   setTimeout(closeModal, 1600);
 });
 
@@ -364,10 +317,8 @@ function setMessage(text, type) {
 
 function escHtml(str) {
   return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
@@ -375,23 +326,16 @@ function escHtml(str) {
   const statusEl = document.getElementById('grid-status');
   statusEl.classList.remove('hidden');
 
-  // Load from localStorage cache first (instant)
-  loadRegCache();
-
-  // Then try to fetch from webhook — merge on top of cache, don't replace it.
-  // The server may not return newer fields (phone2, kids, email2), so local cache wins for those.
   try {
-    const res  = await fetch(`${WEBHOOK_URL}?action=getRegistrations`);
+    const res  = await fetch(`${API_BASE}/registrations`);
     const data = await res.json();
     if (data.success && Array.isArray(data.registrations)) {
       data.registrations.forEach(r => {
-        const existing = registrations[String(r.lot)] || {};
-        registrations[String(r.lot)] = { ...existing, ...r };
+        registrations[String(r.lot)] = r;
       });
-      saveRegCache();
     }
   } catch (err) {
-    console.warn('Could not load registrations from server, using local cache:', err);
+    console.warn('Could not load registrations:', err);
   }
 
   statusEl.classList.add('hidden');

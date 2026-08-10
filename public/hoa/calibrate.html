@@ -434,32 +434,23 @@ document.addEventListener('keydown', e => {
 });
 
 // ── Registrations ─────────────────────────────────────────────────────────────
-const WEBHOOK_URL   = 'https://script.google.com/macros/s/AKfycbwSreJEU5kPtUM_wNmHq2XWgZ74aH3WlJw7kVLVtr0Hfba7aS_E1eUw6KDISkw3_do/exec';
-const REG_CACHE_KEY = 'hoa-registrations';
-let regData = {}; // lot (string) → registration object
-
-function loadRegCache() {
-  try {
-    const saved = localStorage.getItem(REG_CACHE_KEY);
-    if (saved) regData = JSON.parse(saved);
-  } catch(e) {}
-}
+const API_BASE = '/api/hoa';
+let regData = {};
 
 async function fetchRegistrations() {
-  document.getElementById('reg-msg').textContent = 'Loading from server…';
+  document.getElementById('reg-msg').textContent = 'Loading…';
   try {
-    const res  = await fetch(`${WEBHOOK_URL}?action=getRegistrations`);
+    const res  = await fetch(`${API_BASE}/registrations`);
     const data = await res.json();
     if (data.success && Array.isArray(data.registrations)) {
       regData = {};
       data.registrations.forEach(r => { regData[String(r.lot)] = r; });
-      localStorage.setItem(REG_CACHE_KEY, JSON.stringify(regData));
-      document.getElementById('reg-msg').textContent = 'Loaded from server.';
+      document.getElementById('reg-msg').textContent = `${data.registrations.length} registration(s) loaded.`;
     } else {
-      document.getElementById('reg-msg').textContent = 'Server returned no data — showing local cache.';
+      document.getElementById('reg-msg').textContent = 'No data returned.';
     }
   } catch(err) {
-    document.getElementById('reg-msg').textContent = 'Could not reach server — showing local cache.';
+    document.getElementById('reg-msg').textContent = 'Could not reach server.';
   }
   renderRegTable();
 }
@@ -540,11 +531,8 @@ function init() {
   zones = loadZones();
   buildSelect();
   render();
-  // Show registration panel and load data
   document.getElementById('reg-panel').style.display = 'block';
-  loadRegCache();
-  renderRegTable();
-  fetchRegistrations(); // also try server
+  fetchRegistrations();
 }
 </script>
 </body>
