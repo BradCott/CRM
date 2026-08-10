@@ -38,7 +38,19 @@
     <!-- Registered owners roster -->
     <section id="owners-section" class="owners-section hidden">
       <h2 class="owners-heading">Registered Homeowners</h2>
-      <div id="owners-grid" class="owners-grid"></div>
+      <div class="owners-table-wrap">
+        <table class="owners-table">
+          <thead>
+            <tr>
+              <th>Lot</th>
+              <th>Name</th>
+              <th>Email</th>
+              <th>Phone</th>
+            </tr>
+          </thead>
+          <tbody id="owners-tbody"></tbody>
+        </table>
+      </div>
     </section>
   </main>
 
@@ -75,9 +87,9 @@
           <input type="tel" id="phone" name="phone" autocomplete="tel" />
         </div>
 
-        <details class="resident2-wrap">
-          <summary class="resident2-toggle">+ Add Resident 2 (spouse / co-owner)</summary>
-          <div class="form-row" style="margin-top:10px">
+        <div class="resident2-section">
+          <p class="resident2-heading">Resident 2 <span class="optional-label">(spouse / co-owner — optional)</span></p>
+          <div class="form-row">
             <div class="form-group">
               <label for="firstName2">First Name</label>
               <input type="text" id="firstName2" name="firstName2" autocomplete="given-name" />
@@ -91,7 +103,7 @@
             <label for="email2">Email Address</label>
             <input type="email" id="email2" name="email2" autocomplete="email" />
           </div>
-        </details>
+        </div>
 
         <div class="form-row">
           <div class="form-group">
