@@ -1,58 +1,90 @@
 // ── Config ────────────────────────────────────────────────────────────────────
 const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwSreJEU5kPtUM_wNmHq2XWgZ74aH3WlJw7kVLVtr0Hfba7aS_E1eUw6KDISkw3_do/exec';
-const CIRCLE_R    = 48; // radius in SVG units (1092×1092 space) ≈ 38px at max container width
+const LOT_STORAGE_KEY = 'hoa-lot-polygons';
 
 // ── State ─────────────────────────────────────────────────────────────────────
 const registrations = {}; // lot number (string) → { firstName, lastName }
 
-// ── Lot circle centers ────────────────────────────────────────────────────────
-// cx/cy are in the 1092×1092 image coordinate space, placed over the lot number
-// text that is already printed on the aerial photo.
-const LOT_ZONES = {
-   1: { cx:  48, cy: 251 },
-   2: { cx: 186, cy: 240 },
-   3: { cx: 229, cy:  76 },
-   4: { cx: 382, cy:  76 },
-   5: { cx: 360, cy: 186 },
-   6: { cx: 306, cy: 284 },
-   7: { cx: 328, cy: 437 },
-   8: { cx: 295, cy: 350 },
-   9: { cx: 229, cy: 350 },
-  10: { cx:  44, cy: 393 },
-  11: { cx:  44, cy: 590 },
-  12: { cx: 153, cy: 579 },
-  13: { cx: 218, cy: 557 },
-  14: { cx: 306, cy: 644 },
-  15: { cx: 339, cy: 688 },
-  16: { cx: 513, cy: 557 },
-  17: { cx: 415, cy: 513 },
-  18: { cx: 513, cy: 437 },
-  19: { cx: 612, cy: 339 },
-  20: { cx: 601, cy: 229 },
-  21: { cx: 568, cy:  44 },
-  22: { cx: 863, cy:  33 },
-  23: { cx: 841, cy: 153 },
-  24: { cx: 830, cy: 328 },
-  25: { cx: 841, cy: 481 },
-  26: { cx: 732, cy: 612 },
-  27: { cx: 765, cy: 841 },
-  28: { cx: 863, cy: 623 },
-  29: { cx: 623, cy: 852 },
-  30: { cx: 470, cy: 852 },
-  31: { cx: 317, cy: 863 },
+// ── Default lot polygons ──────────────────────────────────────────────────────
+// Each lot is an array of [x,y] corner points in the 1092×1092 SVG coordinate space.
+// These are rectangles approximated from the aerial photo boundary lines.
+// Use calibrate.html to drag corners into precise positions.
+function r(x1, y1, x2, y2) {
+  return [[x1,y1],[x2,y1],[x2,y2],[x1,y2]];
+}
+const LOT_ZONES_DEFAULT = {
+   1: r(  5,   8, 142, 330),
+   2: r(142, 157, 370, 406),
+   3: r(142,   8, 370, 157),
+   4: r(370,   8, 532, 157),
+   5: r(370, 157, 532, 406),
+   6: r(370, 406, 532, 551),
+   7: r(370, 551, 532, 790),
+   8: r(260, 406, 370, 551),
+   9: r(142, 406, 260, 551),
+  10: r(  5, 330, 142, 551),
+  11: r(  5, 551, 142, 957),
+  12: r(142, 551, 260, 790),
+  13: r(260, 551, 370, 790),
+  14: r(142, 790, 370, 957),
+  15: r(370, 790, 668, 957),
+  16: r(532, 630, 668, 790),
+  17: r(532, 551, 668, 630),
+  18: r(532, 292, 668, 551),
+  19: r(668, 292, 804, 551),
+  20: r(532, 157, 804, 292),
+  21: r(532,   8, 804, 157),
+  22: r(804,   8,1080, 157),
+  23: r(804, 157,1080, 292),
+  24: r(804, 292,1080, 406),
+  25: r(804, 406,1080, 551),
+  26: r(668, 551, 804, 790),
+  27: r(804, 790,1080, 957),
+  28: r(804, 551,1080, 790),
+  29: r(532, 957, 668,1082),
+  30: r(370, 957, 532,1082),
+  31: r(142, 957, 370,1082),
 };
+
+// Load saved polygon positions from localStorage (admin edits via calibrate.html)
+function loadLotZones() {
+  try {
+    const saved = localStorage.getItem(LOT_STORAGE_KEY);
+    if (saved) {
+      const parsed = JSON.parse(saved);
+      const merged = {};
+      for (const lot of Object.keys(LOT_ZONES_DEFAULT)) {
+        merged[lot] = parsed[lot] || LOT_ZONES_DEFAULT[lot];
+      }
+      return merged;
+    }
+  } catch (e) { /* ignore */ }
+  return { ...LOT_ZONES_DEFAULT };
+}
 
 // ── SVG helpers ───────────────────────────────────────────────────────────────
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const svgEl  = tag => document.createElementNS(SVG_NS, tag);
 
+function ptsToStr(pts) {
+  return pts.map(p => p.join(',')).join(' ');
+}
+
+function centroid(pts) {
+  const cx = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+  const cy = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+  return [Math.round(cx), Math.round(cy)];
+}
+
 // ── Map rendering ─────────────────────────────────────────────────────────────
 function buildMap() {
   const svg = document.getElementById('lot-svg');
   svg.innerHTML = '';
+  const LOT_ZONES = loadLotZones();
 
-  for (const [lot, zone] of Object.entries(LOT_ZONES)) {
+  for (const [lot, pts] of Object.entries(LOT_ZONES)) {
     const lotNum = Number(lot);
+    const [cx, cy] = centroid(pts);
 
     const g = svgEl('g');
     g.dataset.lot = lotNum;
@@ -65,27 +97,25 @@ function buildMap() {
     title.textContent = `Lot ${lotNum}`;
     g.appendChild(title);
 
-    const circle = svgEl('circle');
-    circle.setAttribute('cx', zone.cx);
-    circle.setAttribute('cy', zone.cy);
-    circle.setAttribute('r', CIRCLE_R);
-    g.appendChild(circle);
+    const poly = svgEl('polygon');
+    poly.setAttribute('points', ptsToStr(pts));
+    g.appendChild(poly);
 
-    // Lot number — visible in debug mode, confirms circle is over the right number
+    // Lot number — visible in debug mode
     const numLabel = svgEl('text');
     numLabel.classList.add('lot-number-label');
-    numLabel.setAttribute('x', zone.cx);
-    numLabel.setAttribute('y', zone.cy);
+    numLabel.setAttribute('x', cx);
+    numLabel.setAttribute('y', cy);
     numLabel.setAttribute('text-anchor', 'middle');
     numLabel.setAttribute('dominant-baseline', 'middle');
     numLabel.textContent = lotNum;
     g.appendChild(numLabel);
 
-    // Owner name — centered in circle, visible when registered
+    // Owner name — centered in polygon, visible when registered
     const text = svgEl('text');
     text.classList.add('lot-owner-label');
-    text.setAttribute('x', zone.cx);
-    text.setAttribute('y', zone.cy);
+    text.setAttribute('x', cx);
+    text.setAttribute('y', cy);
     text.setAttribute('text-anchor', 'middle');
     text.setAttribute('dominant-baseline', 'middle');
     text.style.display = 'none';

@@ -486,7 +486,7 @@ tbody td {
   pointer-events: all;
 }
 
-.lot-zone circle {
+.lot-zone polygon {
   fill: transparent;
   stroke: rgba(42, 110, 66, 0.28);
   stroke-width: 2;
@@ -497,21 +497,21 @@ tbody td {
   cursor: pointer;
 }
 
-.lot-zone:not(.registered):hover circle,
-.lot-zone:not(.registered):focus circle {
+.lot-zone:not(.registered):hover polygon,
+.lot-zone:not(.registered):focus polygon {
   fill: rgba(42, 110, 66, 0.32);
   stroke: rgba(42, 110, 66, 0.9);
   stroke-width: 3;
 }
 
-/* Remove default focus ring — circle provides visual feedback */
+/* Remove default focus ring — polygon provides visual feedback */
 .lot-zone:focus { outline: none; }
 
 .lot-zone.registered {
   cursor: default;
 }
 
-.lot-zone.registered circle {
+.lot-zone.registered polygon {
   fill: rgba(42, 110, 66, 0.88);
   stroke: #1f5c36;
   stroke-width: 2;
@@ -541,14 +541,14 @@ tbody td {
   user-select: none;
 }
 
-/* Debug: highlight circles in red so you can verify placement */
-#lot-svg.debug .lot-zone circle {
+/* Debug: highlight polygons in red so you can verify placement */
+#lot-svg.debug .lot-zone polygon {
   fill: rgba(220, 53, 69, 0.28) !important;
   stroke: #dc3545 !important;
   stroke-width: 3 !important;
 }
 
-#lot-svg.debug .lot-zone.registered circle {
+#lot-svg.debug .lot-zone.registered polygon {
   fill: rgba(220, 53, 69, 0.48) !important;
 }
 
