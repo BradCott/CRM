@@ -3,7 +3,7 @@ const WEBHOOK_URL = 'https://script.google.com/macros/s/AKfycbwSreJEU5kPtUM_wNmH
 const LOT_STORAGE_KEY = 'hoa-lot-polygons';
 
 // ── State ─────────────────────────────────────────────────────────────────────
-const registrations = {}; // lot number (string) → { firstName, lastName }
+const registrations = {}; // lot number (string) → { firstName, lastName, firstName2?, lastName2? }
 
 // ── Default lot polygons ──────────────────────────────────────────────────────
 // Each lot is an array of [x,y] corner points in the 1092×1092 SVG coordinate space.
@@ -141,6 +141,34 @@ function applyZoneRegistered(g, firstName, lastName) {
 function applyRegistered(lotNumber, firstName, lastName) {
   const g = document.querySelector(`#lot-svg [data-lot="${lotNumber}"]`);
   if (g) applyZoneRegistered(g, firstName, lastName);
+  buildRoster();
+}
+
+// ── Owners roster ─────────────────────────────────────────────────────────────
+function buildRoster() {
+  const section = document.getElementById('owners-section');
+  const grid    = document.getElementById('owners-grid');
+  const entries = Object.entries(registrations)
+    .map(([lot, r]) => ({ lot: Number(lot), ...r }))
+    .sort((a, b) => a.lot - b.lot);
+
+  if (entries.length === 0) {
+    section.classList.add('hidden');
+    return;
+  }
+
+  grid.innerHTML = entries.map(({ lot, firstName, lastName, firstName2, lastName2 }) => {
+    const name1 = `${escHtml(firstName)} ${escHtml(lastName)}`;
+    const name2 = firstName2 ? `${escHtml(firstName2)} ${escHtml(lastName2 || '')}`.trim() : '';
+    return `
+    <div class="owner-card">
+      <span class="owner-card-lot">Lot ${lot}</span>
+      <span class="owner-card-name">${name1}</span>
+      ${name2 ? `<span class="owner-card-name2">${name2}</span>` : ''}
+    </div>`;
+  }).join('');
+
+  section.classList.remove('hidden');
 }
 
 // ── Map interaction ───────────────────────────────────────────────────────────
@@ -205,6 +233,9 @@ document.getElementById('registration-form').addEventListener('submit', async e 
   const lot     = form.lotNumber.value;
   const years   = form.years.value.trim();
   const support = form.support.value;
+  const first2  = form.firstName2.value.trim();
+  const last2   = form.lastName2.value.trim();
+  const email2  = form.email2.value.trim();
 
   if (!first || !last || !email || !support) {
     setMessage('Please fill in all required fields.', 'error');
@@ -212,6 +243,10 @@ document.getElementById('registration-form').addEventListener('submit', async e 
   }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     setMessage('Please enter a valid email address.', 'error');
+    return;
+  }
+  if (email2 && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email2)) {
+    setMessage('Please enter a valid email address for Resident 2.', 'error');
     return;
   }
 
@@ -227,6 +262,9 @@ document.getElementById('registration-form').addEventListener('submit', async e 
     lot,
     years,
     support,
+    firstName2: first2,
+    lastName2: last2,
+    email2,
   });
 
   try {
@@ -244,7 +282,7 @@ document.getElementById('registration-form').addEventListener('submit', async e 
   }
 
   // Optimistic UI update
-  registrations[String(lot)] = { firstName: first, lastName: last };
+  registrations[String(lot)] = { firstName: first, lastName: last, firstName2: first2 || undefined, lastName2: last2 || undefined };
   applyRegistered(lot, first, last);
 
   setMessage('Registration submitted — thank you!', 'success');
@@ -280,8 +318,10 @@ function escHtml(str) {
     if (data.success && Array.isArray(data.registrations)) {
       data.registrations.forEach(r => {
         registrations[String(r.lot)] = {
-          firstName: r.firstName,
-          lastName:  r.lastName,
+          firstName:  r.firstName,
+          lastName:   r.lastName,
+          firstName2: r.firstName2 || undefined,
+          lastName2:  r.lastName2  || undefined,
         };
       });
     }
@@ -291,4 +331,5 @@ function escHtml(str) {
 
   statusEl.classList.add('hidden');
   buildMap();
+  buildRoster();
 })();

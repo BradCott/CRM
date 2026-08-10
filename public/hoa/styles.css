@@ -433,6 +433,78 @@ tbody td {
 .support-learn { background: #fff4d6; color: #7a5a00; }
 .support-none  { background: #eef0f3; color: #5a6270; }
 
+/* ── Owners roster ────────────────────────────── */
+.owners-section {
+  margin: 0 0 40px;
+}
+
+.owners-heading {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #1f5c36;
+  margin-bottom: 14px;
+  padding-bottom: 8px;
+  border-bottom: 2px solid #dde1e7;
+}
+
+.owners-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+}
+
+.owner-card {
+  background: #fff;
+  border: 1px solid #dde1e7;
+  border-radius: 8px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.owner-card-lot {
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #2a6e42;
+}
+
+.owner-card-name {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.owner-card-name2 {
+  font-size: 0.82rem;
+  font-weight: 500;
+  color: #555;
+}
+
+/* Resident 2 collapsible section */
+.resident2-wrap {
+  margin-bottom: 12px;
+  border: 1px solid #e0e4ea;
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: #fafbfc;
+}
+
+.resident2-toggle {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #2a6e42;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+.resident2-toggle::-webkit-details-marker { display: none; }
+.resident2-toggle::marker { display: none; }
+
+.resident2-wrap[open] .resident2-toggle { margin-bottom: 4px; }
+
 /* ── Utility ──────────────────────────────────── */
 .hidden { display: none !important; }
 
