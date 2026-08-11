@@ -313,7 +313,8 @@ export default function PropertiesPage() {
   const [stateFilters, setStateFilters]   = useState([])
   const [operatorFilters, setOperatorFilters] = useState([])
   const [showOperatorManager, setShowOperatorManager] = useState(false)
-  const [needsReviewFilter, setNeedsReviewFilter] = useState(false)
+  const [needsReviewFilter, setNeedsReviewFilter] = useState(() =>
+    new URLSearchParams(window.location.search).get('needsReview') === '1')
   const [fetching, setFetching]         = useState(false)
   const [showForm, setShowForm]         = useState(false)
   const [editTarget, setEditTarget]     = useState(null)

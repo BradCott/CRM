@@ -150,6 +150,26 @@ export function generateSystemPlays() {
     })
   }
 
+  // Ownership re-check: properties flagged from a recent sale 12+ months ago.
+  // The owner is likely settled by now, so re-verify and get them back on the
+  // mail list (recently-sold properties are held out of campaigns). One rolled-up
+  // play, keyed by month so it re-nudges monthly while any are stale.
+  const staleReview = db.prepare(`
+    SELECT COUNT(*) AS n FROM properties
+    WHERE needs_ownership_review = 1 AND needs_review_at IS NOT NULL
+      AND needs_review_at <= date('now', '-12 months')
+  `).get()
+  if (staleReview.n > 0) {
+    addPlay({
+      play_type: 'ownership_review',
+      title: `${staleReview.n} propert${staleReview.n === 1 ? 'y needs' : 'ies need'} an ownership re-check`,
+      detail: 'Flagged from a sale 12+ months ago — verify the current owner and get them back on the mail list.',
+      route: '/properties?needsReview=1',
+      priority: 55,
+      dedupe_key: `ownership-review-stale:${today.slice(0, 7)}`,
+    })
+  }
+
   // Portfolio leases under 12 months — one play per property
   const leases = db.prepare(`
     SELECT p.id, p.address, p.lease_end, t.name AS tenant
@@ -216,6 +236,16 @@ export function generateSystemPlays() {
       AND (dedupe_key LIKE 'dd:%' OR dedupe_key LIKE 'close:%' OR dedupe_key LIKE 'stale:%')
       AND CAST(substr(dedupe_key, instr(dedupe_key, ':') + 1) AS INTEGER) IN
         (SELECT id FROM deals WHERE stage IN ('Closed', 'Dropped') OR status = 'dropped')
+  `).run()
+  // The ownership re-check play clears once nothing is stale anymore.
+  db.prepare(`
+    UPDATE plays SET status = 'done', done_at = datetime('now')
+    WHERE status = 'open' AND source = 'system' AND dedupe_key LIKE 'ownership-review-stale:%'
+      AND NOT EXISTS (
+        SELECT 1 FROM properties
+        WHERE needs_ownership_review = 1 AND needs_review_at IS NOT NULL
+          AND needs_review_at <= date('now', '-12 months')
+      )
   `).run()
 }
 
