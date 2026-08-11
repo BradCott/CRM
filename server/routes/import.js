@@ -708,11 +708,11 @@ router.post('/property-updates', upload.single('file'), (req, res) => {
           }
         }
         // Ownership was corrected — clear the review flag.
-        db.prepare(`UPDATE properties SET owner_id = ?, needs_ownership_review = 0 WHERE id = ?`).run(ownerId, prop.id)
+        db.prepare(`UPDATE properties SET owner_id = ?, needs_ownership_review = 0, needs_review_at = NULL WHERE id = ?`).run(ownerId, prop.id)
       } else {
         // No owner change in this row — still clear the review flag if all we did
         // was confirm the property (rare); keep owner as-is.
-        db.prepare(`UPDATE properties SET needs_ownership_review = 0 WHERE id = ?`).run(prop.id)
+        db.prepare(`UPDATE properties SET needs_ownership_review = 0, needs_review_at = NULL WHERE id = ?`).run(prop.id)
       }
       if (queueRemail) {
         db.prepare(`UPDATE properties SET remail_ready = 1 WHERE id = ?`).run(prop.id)
@@ -795,7 +795,7 @@ router.post('/recent-sales', upload.single('file'), (req, res) => {
   }
 
   const flagStmt = db.prepare(
-    `UPDATE properties SET needs_ownership_review = 1 WHERE id = ?`
+    `UPDATE properties SET needs_ownership_review = 1, needs_review_at = datetime('now') WHERE id = ?`
   )
 
   function bestMatch(candidates, city, state) {

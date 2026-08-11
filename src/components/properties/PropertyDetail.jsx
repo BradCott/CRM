@@ -286,6 +286,27 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
       {/* ── Body ───────────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto">
 
+        {/* Ownership-review banner — set by the recent-sales upload */}
+        {data.needs_ownership_review ? (
+          <div className="mx-6 mt-4 flex items-start gap-3 px-4 py-3 rounded-xl bg-amber-50 border border-amber-300">
+            <AlertCircle className="w-4 h-4 text-amber-600 mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold text-amber-800">Ownership needs review</p>
+              <p className="text-xs text-amber-700 mt-0.5">
+                Flagged from a recent-sales upload{data.needs_review_at
+                  ? <> on <strong>{new Date(String(data.needs_review_at).replace(' ', 'T') + 'Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}</strong></>
+                  : ''} — this property likely sold, so confirm the current owner before mailing. Mail campaigns skip it until it's reviewed.
+              </p>
+            </div>
+            <button
+              onClick={async () => { await clearOwnershipReview(data.id); setData(d => ({ ...d, needs_ownership_review: 0, needs_review_at: null })) }}
+              className="shrink-0 text-xs font-semibold text-amber-800 bg-white border border-amber-300 px-2.5 py-1.5 rounded-lg hover:bg-amber-100"
+            >
+              Mark reviewed
+            </button>
+          </div>
+        ) : null}
+
         {saveError && (
           <div className="mx-6 mt-3 flex items-start gap-1.5 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
             <AlertCircle className="w-3.5 h-3.5 mt-px shrink-0" />

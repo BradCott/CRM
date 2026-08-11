@@ -693,8 +693,9 @@ router.patch('/:id/sold', (req, res) => {
 // PATCH /api/properties/:id/ownership-review — set or clear needs_ownership_review flag
 router.patch('/:id/ownership-review', (req, res) => {
   const { needs_ownership_review } = req.body
-  db.prepare(`UPDATE properties SET needs_ownership_review = ? WHERE id = ?`)
-    .run(needs_ownership_review ? 1 : 0, req.params.id)
+  const flag = needs_ownership_review ? 1 : 0
+  db.prepare(`UPDATE properties SET needs_ownership_review = ?, needs_review_at = ? WHERE id = ?`)
+    .run(flag, flag ? new Date().toISOString().slice(0, 19).replace('T', ' ') : null, req.params.id)
   const row = db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(req.params.id)
   res.json(row)
 })

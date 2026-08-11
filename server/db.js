@@ -286,6 +286,8 @@ const migrations = [
   `ALTER TABLE properties ADD COLUMN lng REAL`,
   // Ownership review flag — set by recent-sales upload
   `ALTER TABLE properties ADD COLUMN needs_ownership_review INTEGER DEFAULT 0`,
+  // When the property was flagged for ownership review (set by recent-sales upload).
+  `ALTER TABLE properties ADD COLUMN needs_review_at TEXT`,
   // Operators / franchisees — brand-agnostic (Flynn, Sun Holdings, etc. span many
   // brands). "Corporate" is an explicit operator meaning the brand's own corporate
   // entity, interpreted per-property alongside the tenant brand.
