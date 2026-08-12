@@ -241,7 +241,15 @@ export function computeBalanceSheet(transactions, investors = [], opening = null
   const distributions = sum(transactions.filter(t => t.category === 'Distribution'))
   // Reconciling entries that true up book cash to the actual bank balance.
   const cashAdjustments = sum(transactions.filter(t => t.category === 'Cash Adjustment'))
-  const totalCash = opCash + otherOp + equityContribCash + principalPaid + memberLoan + distributions + cashAdjustments + obCash
+  // The cash the buyer actually paid at closing — cash-to-close, earnest, any
+  // taxes/costs paid at the table (Purchase lines from the settlement, EXCEPT the
+  // Building/Land basis, which is capitalized as an asset above). Without this,
+  // equity that funded the purchase was counted as cash while the purchase it
+  // funded was not, so cash was overstated by the whole cash-to-close.
+  const closingCashOut = sum(transactions.filter(t =>
+    t.source === 'Settlement Statement' && t.category === 'Purchase' &&
+    t.description !== 'Building Value' && t.description !== 'Land Value'))
+  const totalCash = opCash + otherOp + equityContribCash + principalPaid + memberLoan + distributions + cashAdjustments + closingCashOut + obCash
   const totalAssets = totalRealEstate + totalCash
 
   const loanBalance = sum(transactions.filter(t => t.category === 'Loan' && t.description !== '1031 Exchange Proceeds')) + principalPaid + obLoan
@@ -281,14 +289,16 @@ export function computeCashBreakdown(transactions, opening = null) {
   const memberTxs = pick(t => t.category === 'Member Loan')
   const distTxs   = pick(t => t.category === 'Distribution')
   const adjTxs    = pick(t => t.category === 'Cash Adjustment')
-
-  const equityFromSettlement = sum(equityTxs.filter(t => t.source === 'Settlement Statement'))
+  // Cash actually paid at closing (cash-to-close, earnest, closing costs) — the
+  // Building/Land basis is excluded here since it's capitalized as an asset.
+  const closingTxs = pick(t => t.source === 'Settlement Statement' && t.category === 'Purchase'
+    && t.description !== 'Building Value' && t.description !== 'Land Value')
 
   const lines = [
     { key: 'operating',    label: 'Operating (rent − expenses)',        amount: sum(opTxs),     txs: opTxs },
     { key: 'other',        label: 'Other',                              amount: sum(otherTxs),  txs: otherTxs },
-    { key: 'equity',       label: 'Equity contributions',               amount: sum(equityTxs), txs: equityTxs,
-      flag: sum(equityTxs) !== 0, note: equityFromSettlement !== 0 ? 'includes acquisition-time equity — usually wired to closing, not the bank' : null },
+    { key: 'equity',       label: 'Equity contributions',               amount: sum(equityTxs), txs: equityTxs },
+    { key: 'closing',      label: 'Cash paid at closing (cash-to-close, earnest)', amount: sum(closingTxs), txs: closingTxs },
     { key: 'memberLoan',   label: 'Member loans',                       amount: sum(memberTxs), txs: memberTxs },
     { key: 'principal',    label: 'Mortgage principal paid',            amount: sum(princTxs),  txs: princTxs },
     { key: 'distributions',label: 'Distributions to investors',         amount: sum(distTxs),   txs: distTxs },
