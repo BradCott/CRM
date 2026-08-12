@@ -513,7 +513,7 @@ function SignaturesCard() {
           </div>
           {err && <p className="text-xs text-red-600 mt-2">{err}</p>}
           <p className="text-[11px] text-slate-400 mt-2">
-            The signature ID comes from your Handwrytten account (each saved signature has one — it's the code in the <code className="bg-slate-100 px-1 rounded">&lt;sig:XXXX&gt;</code> tag). Create Cole's signature in Handwrytten, then paste its ID here.
+            In Handwrytten, go to <strong>Account → Signatures</strong> and copy a signature's <strong>Code</strong> — it looks like <code className="bg-slate-100 px-1 rounded">&lt;sig:1837CH offset=-20&gt;</code>. Paste that whole thing here (or just the code part — both work). Create Cole's signature in Handwrytten first, then add it.
           </p>
         </div>
       </div>
