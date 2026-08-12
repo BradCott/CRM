@@ -1924,6 +1924,47 @@ router.post('/:propertyId/reconcile-cash', (req, res) => {
   res.status(201).json({ ok: true, adjustment: delta, new_balance: target })
 })
 
+// ── Reconciliation plugs (portfolio-wide) ─────────────────────────────────────
+// The reconcile-cash tool posts a 'Cash Adjustment' / 'Reconciliation' plug to
+// force book cash onto the bank balance. These were band-aids for the old
+// cash-overstatement bug (equity counted as cash-in while the purchase it funded
+// was not). Now that closing cash reduces cash correctly, those plugs
+// double-correct and should be removed. List + bulk-clear them here — narrowly
+// scoped to category='Cash Adjustment' AND source='Reconciliation' so nothing
+// else is ever touched.
+router.get('/cash-adjustments', (req, res) => {
+  const rows = db.prepare(`
+    SELECT t.id, t.property_id, t.date, t.description, t.amount,
+           COALESCE(p.display_name, p.address, 'Property ' || t.property_id) AS property_name
+    FROM accounting_transactions t
+    LEFT JOIN properties p ON p.id = t.property_id
+    WHERE t.category = 'Cash Adjustment' AND t.source = 'Reconciliation'
+    ORDER BY ABS(t.amount) DESC
+  `).all()
+  const total = rows.reduce((s, r) => s + Number(r.amount), 0)
+  res.json({ plugs: rows, count: rows.length, total })
+})
+
+router.post('/cash-adjustments/clear', (req, res) => {
+  const b = req.body || {}
+  const ids = Array.isArray(b.ids) ? b.ids.map(Number).filter(Boolean) : null
+  try {
+    let result
+    if (ids && ids.length) {
+      const ph = ids.map(() => '?').join(',')
+      result = db.prepare(`DELETE FROM accounting_transactions WHERE category='Cash Adjustment' AND source='Reconciliation' AND id IN (${ph})`).run(...ids)
+    } else if (b.all === true) {
+      result = db.prepare(`DELETE FROM accounting_transactions WHERE category='Cash Adjustment' AND source='Reconciliation'`).run()
+    } else {
+      return res.status(400).json({ error: 'Pass { ids: [...] } or { all: true }' })
+    }
+    res.json({ ok: true, deleted: result.changes })
+  } catch (err) {
+    console.error('[accounting] cash-adjustments/clear:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 // ── Depreciation recovery period (per property) ───────────────────────────────
 // 39 = commercial real property (default), 27.5 = residential rental. Stored on
 // the property; the schedule itself is derived from the Building Value entry.

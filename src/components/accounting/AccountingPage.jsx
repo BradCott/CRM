@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { BookOpen, Loader2, ArrowRight, TrendingUp, Home, BarChart2, Tag, Banknote } from 'lucide-react'
+import { BookOpen, Loader2, ArrowRight, TrendingUp, Home, BarChart2, Tag, Banknote, Eraser } from 'lucide-react'
 import { getAccountingSummary, getAccountingSettings, updateAccountingSettings, getAccountingReports } from '../../api/client'
 import { computeBalanceSheet } from '../../utils/accounting'
 import CategoryManager from './CategoryManager'
 import PortfolioReconcileModal from './PortfolioReconcileModal'
+import RemovePlugsModal from './RemovePlugsModal'
 
 function fmt$(v) {
   if (!v && v !== 0) return '$0'
@@ -29,6 +30,7 @@ export default function AccountingPage() {
   const [error, setError]           = useState(null)
   const [showCategories, setShowCategories] = useState(false)
   const [showReconcile, setShowReconcile] = useState(false)
+  const [showRemovePlugs, setShowRemovePlugs] = useState(false)
   const [advanced, setAdvanced] = useState(false)
   const [savingAdvanced, setSavingAdvanced] = useState(false)
 
@@ -95,6 +97,14 @@ export default function AccountingPage() {
             >
               <Banknote className="w-4 h-4" />
               Reconcile Cash
+            </button>
+            <button
+              onClick={() => setShowRemovePlugs(true)}
+              title="Remove old 'Cash Adjustment' reconciliation plugs across all properties — now that closing cash is subtracted correctly, they're no longer needed"
+              className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors"
+            >
+              <Eraser className="w-4 h-4" />
+              Remove Plugs
             </button>
             <button
               onClick={() => setShowCategories(true)}
@@ -197,6 +207,13 @@ export default function AccountingPage() {
         <PortfolioReconcileModal
           onDone={loadSummary}
           onClose={() => setShowReconcile(false)}
+        />
+      )}
+
+      {showRemovePlugs && (
+        <RemovePlugsModal
+          onCleared={loadSummary}
+          onClose={() => setShowRemovePlugs(false)}
         />
       )}
     </div>
