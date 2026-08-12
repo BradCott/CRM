@@ -1,6 +1,6 @@
 // Loan amortization — upload a schedule; mortgage payments auto-split on sync
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Landmark, Upload, Loader2, Trash2, FileText, CheckCircle, AlertCircle, Scissors, CalendarCheck } from 'lucide-react'
+import { Landmark, Upload, Loader2, Trash2, FileText, CheckCircle, AlertCircle, Scissors, CalendarCheck, ChevronDown, ChevronRight } from 'lucide-react'
 import { getAmortization, uploadAmortization, deleteAmortization, applyAmortization, reconcileAmortization } from '../../api/client'
 
 function fmt$(n) {
@@ -18,6 +18,7 @@ export default function AmortizationCard({ propertyId, hideUploader = false, onC
   const [uploading, setUploading] = useState(false)
   const [error, setError]     = useState(null)
   const [dragging, setDrag]   = useState(false)
+  const [collapsed, setCollapsed] = useState(true)   // default collapsed to keep the ledger in reach
   const [applying, setApplying] = useState(false)
   const [applyMsg, setApplyMsg] = useState(null)
   const [reconciling, setReconciling] = useState(false)
@@ -96,11 +97,15 @@ export default function AmortizationCard({ propertyId, hideUploader = false, onC
   return (
     <div className="shrink-0 bg-white border-b border-slate-200">
       <div className="px-6 pt-3 pb-2 flex items-center justify-between">
-        <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5">
+        <button
+          onClick={() => setCollapsed(c => !c)}
+          className="text-xs font-semibold text-slate-500 uppercase tracking-wide flex items-center gap-1.5 hover:text-slate-700"
+        >
+          {collapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
           <Landmark className="w-3.5 h-3.5" /> Loan Amortization
-          {loans.length > 1 && <span className="text-slate-300 normal-case font-normal">· {loans.length} loans</span>}
-        </h3>
-        {loans.length > 0 && (
+          {loans.length > 0 && <span className="text-slate-300 normal-case font-normal">· {loans.length} loan{loans.length > 1 ? 's' : ''}</span>}
+        </button>
+        {loans.length > 0 && !collapsed && (
           <div className="flex items-center gap-3">
             <button
               onClick={handleApply}
@@ -139,7 +144,7 @@ export default function AmortizationCard({ propertyId, hideUploader = false, onC
         </div>
       )}
 
-      {loans.length > 0 ? (
+      {!collapsed && (loans.length > 0 ? (
         <div className="px-6 pb-4 space-y-4">
           {loans.map(loan => (
             <div key={loan.id} className={loans.length > 1 ? 'pb-3 border-b border-slate-100 last:border-0 last:pb-0' : ''}>
@@ -194,7 +199,7 @@ export default function AmortizationCard({ propertyId, hideUploader = false, onC
             )}
           </div>
         </div>
-      )}
+      ))}
     </div>
   )
 }
