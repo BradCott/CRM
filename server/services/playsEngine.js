@@ -290,6 +290,19 @@ function matchUser(name) {
 
 // ── 2. Meeting notes → plays ──────────────────────────────────────────────────
 
+// Stable, content-based dedupe key for a meeting-notes action item. Keyed on the
+// normalized assignee + context + task text — NOT the Drive file id — so the same
+// action item maps to the same key no matter which week's notes doc it came from.
+// Combined with addPlay's INSERT OR IGNORE (which dedupes across EVERY status),
+// this means once you mark a meeting-notes play done or dismiss it on the
+// dashboard, re-importing the identical item from a later notes file is skipped —
+// it never repopulates. Context is included so distinct items that happen to share
+// wording (e.g. "Order survey" on two different properties) stay separate.
+function noteDedupeKey(assignee, context, task) {
+  const norm = s => String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+  return `notes:${[norm(assignee), norm(context), norm(task)].join('|')}`
+}
+
 const NOTES_PROMPT = `You are extracting action items from a real estate investment team's weekly meeting notes.
 
 Return ONLY a valid JSON object:
@@ -312,7 +325,7 @@ export async function parseMeetingNotesText(filename, text, fileId) {
   const result = await claudeJson(`${NOTES_PROMPT}\n\nMeeting notes:\n\n${text.slice(0, 12000)}`)
   const items = Array.isArray(result.items) ? result.items : []
   let created = 0
-  items.forEach((item, i) => {
+  items.forEach((item) => {
     if (!item.task) return
     const userId = matchUser(item.assignee)
     addPlay({
@@ -320,7 +333,7 @@ export async function parseMeetingNotesText(filename, text, fileId) {
       title: item.task,
       detail: [item.context, `From meeting notes: ${filename}`].filter(Boolean).join(' · '),
       priority: 80,
-      dedupe_key: `notes:${fileId}:${i}`,
+      dedupe_key: noteDedupeKey(item.assignee, item.context, item.task),
     })
     created++
   })
