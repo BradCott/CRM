@@ -45,7 +45,13 @@ export function balanceSheetRows(recorded, investors) {
 
 export function plRows(recorded) {
   const p = computePL(recorded)
-  return [
+  // Operating principal only — the loan PAYOFF at sale (source 'Sale') is a
+  // disposition/financing event, not operating debt service. Including it made
+  // "Cash Available" show a nonsensical ~−$493k on sold deals.
+  const opPrincipal = (p.principalTxs || [])
+    .filter(t => t.source !== 'Sale')
+    .reduce((s, t) => s + Math.abs(Number(t.amount)), 0)
+  const rows = [
     ['REVENUE', ''],
     ['  Rent', money(p.rentRevenue)],
     ['  Other Income', money(p.otherRevenue)],
@@ -56,9 +62,26 @@ export function plRows(recorded) {
     ['Total Expenses', money(p.totalExpenses)],
     ['', ''],
     ['Net Operating Income', money(p.noi)],
-    ['  Less: Mortgage Principal', money(-p.principalPaid)],
-    ['Cash Available', money(p.cashAvailable)],
+    ['  Less: Mortgage Principal (operating)', money(-opPrincipal)],
+    ['Operating Cash Flow', money(p.noi - opPrincipal)],
   ]
+  // On a sold property, surface the gain on sale + true net income — the engine
+  // already computes these; the old export dropped them, hiding the deal's
+  // single biggest number. (The loan payoff lands here via book value, not as
+  // an operating expense.)
+  if (p.hasSale) {
+    rows.push(
+      ['', ''],
+      ['GAIN ON SALE', ''],
+      ['  Sale Proceeds', money(p.saleProceeds)],
+      ['  Less: Selling Costs', money(-p.sellingCosts)],
+      ['  Less: Book Value of Property Sold', money(-p.bookValueSold)],
+      ['Gain / (Loss) on Sale', money(p.gainOnSale)],
+      ['', ''],
+      ['Net Income (incl. gain on sale)', money(p.noi + p.gainOnSale)],
+    )
+  }
+  return rows
 }
 
 export function cashFlowRows(recorded) {
