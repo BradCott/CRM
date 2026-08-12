@@ -260,8 +260,11 @@ export default function LedgerPage() {
   async function handleRecord(tx) {
     setRecordingId(tx.id)
     try {
-      await recordTransaction(tx.id, { category: reviewCats[tx.id] ?? tx.category })
-      await reload()
+      // Update in place instead of refetching the whole ledger — a full reload
+      // remounts the list and throws away the scroll position mid-review.
+      const updated = await recordTransaction(tx.id, { category: reviewCats[tx.id] ?? tx.category })
+      setTransactions(prev => prev.map(t => t.id === tx.id ? { ...t, ...updated } : t))
+      setReviewCats(prev => { const n = { ...prev }; delete n[tx.id]; return n })
     } finally {
       setRecordingId(null)
     }
@@ -270,8 +273,8 @@ export default function LedgerPage() {
   async function handleUnrecord(tx) {
     setRecordingId(tx.id)
     try {
-      await unrecordTransaction(tx.id)
-      await reload()
+      const updated = await unrecordTransaction(tx.id)
+      setTransactions(prev => prev.map(t => t.id === tx.id ? { ...t, ...updated } : t))
     } finally {
       setRecordingId(null)
     }
