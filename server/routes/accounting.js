@@ -431,7 +431,7 @@ router.post('/:propertyId/sale-closeout', (req, res) => {
       if (loanPayoff) {
         const loanBalance = db.prepare(`
           SELECT COALESCE(SUM(amount), 0) AS v FROM accounting_transactions
-          WHERE property_id = ? AND review_status = 'recorded'
+          WHERE property_id = ? AND review_status IN ('recorded', 'matched')
             AND ((category = 'Loan' AND description != '1031 Exchange Proceeds') OR category = 'Mortgage Principal')
         `).get(propertyId).v
         const principalPortion = Math.min(loanPayoff, Math.max(0, loanBalance))
@@ -984,14 +984,40 @@ router.patch('/transactions/:id/unrecord', (req, res) => {
 // ── Match: reconcile a bank transaction against something already in the books ─
 // (e.g. the settlement statement) without double-counting. review_status='matched'
 // is excluded from all financials (which require 'recorded').
+// Primary book entries — the ones that carry a real number reports depend on.
+// Suppressing one of these (instead of the redundant bank line) is how a loan or
+// sale silently vanishes from the balance sheet, so we never let it happen.
+const PRIMARY_MATCH_CATS = new Set(['Loan', 'Sale', 'Purchase', 'Equity Contribution', 'Mortgage Principal', 'Distribution'])
+const isPrimaryEntry = t => t && (t.source === 'Settlement Statement' || t.source === 'Sale' || PRIMARY_MATCH_CATS.has(t.category))
+
 router.patch('/transactions/:id/match', (req, res) => {
-  const tx = db.prepare('SELECT id FROM accounting_transactions WHERE id = ?').get(req.params.id)
+  const tx = db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id)
   if (!tx) return res.status(404).json({ error: 'Transaction not found' })
   const note = (req.body?.note || 'Matched — already in the books').toString().slice(0, 200)
   const matchedToId = req.body?.matched_to_id ? Number(req.body.matched_to_id) : null
+
+  // Fail-safe: if the caller is trying to suppress a PRIMARY book entry (e.g. the
+  // loan proceeds or a settlement line) against a plain bank line, swap the
+  // direction — keep the primary "recorded" and mark the bank duplicate "matched"
+  // instead. This is exactly the mistake that made a paid-off loan show as
+  // -$495,000: the wrong side of the pair got hidden.
+  let suppressId = req.params.id
+  let keepId = matchedToId
+  if (matchedToId && isPrimaryEntry(tx)) {
+    const other = db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(matchedToId)
+    if (other && !isPrimaryEntry(other)) {
+      suppressId = String(matchedToId)   // hide the bank line
+      keepId = Number(req.params.id)      // keep the primary entry
+    }
+  }
+
   db.prepare(`UPDATE accounting_transactions SET review_status = 'matched', matched_note = ?, matched_to_id = ? WHERE id = ?`)
-    .run(note, matchedToId, req.params.id)
-  res.json(db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(req.params.id))
+    .run(note, keepId, suppressId)
+  // Make sure the kept side is counted (in case it was previously suppressed).
+  if (String(keepId) !== String(suppressId) && keepId != null) {
+    db.prepare(`UPDATE accounting_transactions SET review_status = 'recorded' WHERE id = ? AND review_status = 'matched'`).run(keepId)
+  }
+  res.json(db.prepare('SELECT * FROM accounting_transactions WHERE id = ?').get(suppressId))
 })
 
 // Candidate entries already in the books that a bank line might reconcile against.
