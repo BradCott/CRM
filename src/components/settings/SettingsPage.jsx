@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle, Download, Database, Mail, Loader2, Trash2, PenLine } from 'lucide-react'
-import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, syncGmailNow, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl, getEmailFrom, setEmailFrom, getSenderStatus, disconnectSender, getHwSignatures, addHwSignature, setDefaultHwSignature, deleteHwSignature } from '../../api/client'
+import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, syncGmailNow, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl, getEmailFrom, setEmailFrom, getSenderStatus, disconnectSender, getHwSignatures, addHwSignature, setDefaultHwSignature, deleteHwSignature, getMyGmailStatus, disconnectMyGmail, refreshMyDigest, connectMyGmailUrl } from '../../api/client'
 import Button from '../ui/Button'
 
 // Preset "From" addresses for outbound app email. Sending as management@
@@ -24,12 +24,35 @@ export default function SettingsPage() {
   const [emailSaving, setEmailSaving] = useState(false)
   const [emailNote, setEmailNote]   = useState('')
   const [sender, setSender]         = useState(null)   // dedicated send mailbox status
+  const [myGmail, setMyGmail]       = useState(null)   // my personal Gmail for Today's Plays
+  const [digestBusy, setDigestBusy] = useState(false)
 
   const loadSender = () => getSenderStatus().then(setSender).catch(() => setSender({ connected: false }))
+  const loadMyGmail = () => getMyGmailStatus().then(setMyGmail).catch(() => setMyGmail({ connected: false }))
   useEffect(() => {
     getEmailFrom().then(r => setSenderFrom(r.from)).catch(() => {})
     loadSender()
+    loadMyGmail()
   }, [])
+
+  async function handleDisconnectMyGmail() {
+    if (!confirm('Disconnect your Gmail? Today’s Plays will stop suggesting action items from your inbox.')) return
+    try { await disconnectMyGmail(); await loadMyGmail(); setMsg({ type: 'success', text: 'Your Gmail was disconnected.' }) }
+    catch (e) { setMsg({ type: 'error', text: e.message }) }
+  }
+
+  async function handleRefreshDigest() {
+    setDigestBusy(true); setMsg(null)
+    try {
+      const r = await refreshMyDigest()
+      if (r.connected === false) setMsg({ type: 'error', text: 'Connect your Gmail first.' })
+      else setMsg({ type: 'success', text: `Scanned your inbox — ${r.created} new suggestion${r.created === 1 ? '' : 's'} in Today’s Plays.` })
+    } catch (e) {
+      setMsg({ type: 'error', text: e.message })
+    } finally {
+      setDigestBusy(false)
+    }
+  }
 
   async function handleDisconnectSender() {
     if (!confirm('Disconnect the sending mailbox? Email will fall back to the main connected account.')) return
@@ -112,6 +135,12 @@ export default function SettingsPage() {
       window.history.replaceState({}, '', '/settings')
     } else if (params.get('sender') === 'error') {
       setMsg({ type: 'error', text: 'Failed to connect the sending mailbox. Please try again.' })
+      window.history.replaceState({}, '', '/settings')
+    } else if (params.get('gmail') === 'connected') {
+      setMsg({ type: 'success', text: 'Your Gmail is connected — Today’s Plays will suggest action items from your inbox.' })
+      window.history.replaceState({}, '', '/settings')
+    } else if (params.get('gmail') === 'error') {
+      setMsg({ type: 'error', text: 'Failed to connect your Gmail. Please try again.' })
       window.history.replaceState({}, '', '/settings')
     }
     loadStatus()
@@ -311,6 +340,42 @@ export default function SettingsPage() {
           </Card>
 
           {/* Outbound email sender */}
+          {/* Per-user Gmail for Today's Plays */}
+          <Card title="My Email for Today's Plays" subtitle="Connect your own inbox so Today's Plays suggests action items from YOUR email. Each person connects their own — you only see your mail, not anyone else's.">
+            {myGmail === null ? (
+              <p className="text-sm text-slate-400">Checking…</p>
+            ) : myGmail.connected ? (
+              <div className="space-y-3">
+                <div className="flex items-center gap-2">
+                  <CheckCircle className="w-4 h-4 text-green-500 shrink-0" />
+                  <p className="text-sm text-slate-700">
+                    Connected as <span className="font-semibold">{myGmail.email}</span>
+                  </p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button onClick={handleRefreshDigest} disabled={digestBusy} variant="secondary">
+                    {digestBusy ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> Scanning…</> : <><RefreshCw className="w-3.5 h-3.5 mr-1.5" /> Scan my inbox now</>}
+                  </Button>
+                  <button onClick={handleDisconnectMyGmail} className="text-xs text-slate-500 hover:text-red-600 inline-flex items-center gap-1">
+                    <Trash2 className="w-3.5 h-3.5" /> Disconnect
+                  </button>
+                </div>
+                <p className="text-xs text-slate-400">
+                  Reads only your inbox (received mail from known CRM contacts, last 24h). It never reads your sent mail, and suggestions land only in your queue.
+                </p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-slate-600">
+                  Connect your Google account to have the 6&nbsp;AM digest scan your inbox and suggest action items — routed only to you.
+                </p>
+                <Button onClick={() => { window.location.href = connectMyGmailUrl }} variant="primary">
+                  <GoogleIcon /> Connect my Gmail
+                </Button>
+              </div>
+            )}
+          </Card>
+
           <Card title="Outbound Email" subtitle="Which address the CRM sends from — reimbursement requests, tenant notices, portal invites, and reminders.">
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-2">

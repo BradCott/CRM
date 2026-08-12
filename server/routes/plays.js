@@ -1,7 +1,7 @@
 // Today's Plays + dashboard command-center API
 import { Router } from 'express'
 import db from '../db.js'
-import { generateSystemPlays, getSetting, setSetting } from '../services/playsEngine.js'
+import { generateSystemPlays, getSetting, setSetting, runDigestForUser } from '../services/playsEngine.js'
 
 const router = Router()
 
@@ -64,6 +64,24 @@ router.post('/', (req, res) => {
     VALUES (?, 'manual', 'custom', ?, ?, ?, 50, ?)
   `).run(for_everyone ? null : Number(req.user.sub), title.trim(), detail || null, route || null, due_date || null)
   res.status(201).json(db.prepare('SELECT * FROM plays WHERE id = ?').get(r.lastInsertRowid))
+})
+
+// ── POST /plays/gmail/refresh — run my email digest now ───────────────────────
+// Scans the signed-in user's own connected Gmail and creates suggested plays for
+// them. Returns { created }. 202 with a hint if they haven't connected Gmail.
+router.post('/gmail/refresh', async (req, res) => {
+  const userId = Number(req.user.sub)
+  const connected = db.prepare(`SELECT 1 FROM oauth_tokens WHERE provider = ?`).get(`gmail:${userId}`)
+  if (!connected) {
+    return res.status(202).json({ created: 0, connected: false, message: 'Connect your Gmail in Settings first.' })
+  }
+  try {
+    const created = await runDigestForUser(userId)
+    res.json({ created, connected: true })
+  } catch (e) {
+    console.error('[plays] manual digest failed:', e.message)
+    res.status(500).json({ error: 'Digest failed. Try again shortly.' })
+  }
 })
 
 // ── POST /plays/:id/claim ─────────────────────────────────────────────────────
