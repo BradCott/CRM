@@ -235,7 +235,12 @@ router.get('/campaigns', (req, res) => {
   const rows = db.prepare(`
     SELECT c.*,
       u.name AS sent_by_name,
-      (SELECT COUNT(*) FROM handwrytten_sends s WHERE s.campaign_id = c.id AND s.responded_at IS NOT NULL) AS responded_count
+      (SELECT COUNT(*) FROM handwrytten_sends s WHERE s.campaign_id = c.id AND s.responded_at IS NOT NULL) AS responded_count,
+      (SELECT GROUP_CONCAT(DISTINCT tb.name)
+         FROM handwrytten_sends s
+         JOIN properties p     ON p.id  = s.property_id
+         JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
+        WHERE s.campaign_id = c.id) AS tenants
     FROM handwrytten_campaigns c
     LEFT JOIN users u ON u.id = c.sent_by_user_id
     ORDER BY c.sent_at DESC
@@ -245,6 +250,20 @@ router.get('/campaigns', (req, res) => {
   const total = db.prepare(`SELECT COUNT(*) AS n FROM handwrytten_campaigns`).get().n
 
   res.json({ total, rows })
+})
+
+/** DELETE /api/handwrytten/campaigns/:id — remove a campaign from history along
+ *  with its letter records. Handy for cleaning up failed/test campaigns. */
+router.delete('/campaigns/:id', (req, res) => {
+  const camp = db.prepare(`SELECT id FROM handwrytten_campaigns WHERE id = ?`).get(req.params.id)
+  if (!camp) return res.status(404).json({ error: 'Campaign not found' })
+  const run = db.transaction(() => {
+    const n = db.prepare(`DELETE FROM handwrytten_sends WHERE campaign_id = ?`).run(camp.id).changes
+    db.prepare(`DELETE FROM handwrytten_campaigns WHERE id = ?`).run(camp.id)
+    return n
+  })
+  const removedSends = run()
+  res.json({ ok: true, removed_sends: removedSends })
 })
 
 /** POST /api/handwrytten/send — send a single letter */

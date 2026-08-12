@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, Fragment } from 'react'
-import { Mail, Loader2, ChevronDown, ChevronRight, CheckCircle, AlertCircle, Clock, Pause, Play, X, Pencil, Droplet, Reply, Send, TrendingUp, RefreshCw } from 'lucide-react'
+import { Mail, Loader2, ChevronDown, ChevronRight, CheckCircle, AlertCircle, Clock, Pause, Play, X, Pencil, Droplet, Reply, Send, TrendingUp, RefreshCw, Trash2 } from 'lucide-react'
 import {
-  getHandwryttenCampaigns, getHandwryttenSends,
+  getHandwryttenCampaigns, getHandwryttenSends, deleteHandwryttenCampaign,
   getHandwryttenDrips, updateHandwryttenDrip, cancelHandwryttenDrip,
   getHandwryttenDripQueue, retryHandwryttenDripFailed, getMailResponseSummary, markSendResponded,
 } from '../../api/client'
@@ -77,7 +77,7 @@ function RespondedToggle({ send, onChange }) {
   )
 }
 
-function CampaignRow({ campaign }) {
+function CampaignRow({ campaign, onDelete }) {
   const [expanded,  setExpanded]  = useState(false)
   const [sends,     setSends]     = useState([])
   const [loading,   setLoading]   = useState(false)
@@ -115,6 +115,9 @@ function CampaignRow({ campaign }) {
         <td className="px-4 py-3">
           <p className="text-sm text-slate-800 line-clamp-2 max-w-xs">{campaign.message_template}</p>
         </td>
+        <td className="px-4 py-3">
+          <p className="text-sm text-slate-600 line-clamp-2 max-w-[180px]" title={campaign.tenants || ''}>{campaign.tenants || '—'}</p>
+        </td>
         <td className="px-4 py-3 text-center">
           <span className="text-sm font-semibold text-slate-800">{campaign.total_count}</span>
         </td>
@@ -139,11 +142,22 @@ function CampaignRow({ campaign }) {
           <StatusBadge status={campaign.status} />
         </td>
         <td className="px-4 py-3 text-sm text-slate-500">{campaign.sent_by_name || '—'}</td>
+        <td className="px-4 py-3 text-right" onClick={e => e.stopPropagation()}>
+          <button
+            onClick={() => {
+              if (window.confirm(`Delete this campaign from history? This removes its ${campaign.total_count} letter record${campaign.total_count === 1 ? '' : 's'} too. This can't be undone.`)) onDelete(campaign.id)
+            }}
+            title="Delete this campaign from history"
+            className="text-slate-300 hover:text-red-500"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        </td>
       </tr>
 
       {expanded && (
         <tr>
-          <td colSpan={9} className="bg-slate-50 px-4 py-3">
+          <td colSpan={11} className="bg-slate-50 px-4 py-3">
             {loading ? (
               <div className="flex items-center gap-2 text-sm text-slate-400 py-2">
                 <Loader2 className="w-4 h-4 animate-spin" /> Loading sends…
@@ -497,6 +511,14 @@ export default function CampaignsPage() {
   useEffect(() => { load(0) }, [load])
   useEffect(() => { getMailResponseSummary().then(setSummary).catch(() => {}) }, [])
 
+  async function handleDeleteCampaign(id) {
+    try {
+      await deleteHandwryttenCampaign(id)
+      setCampaigns(prev => prev.filter(c => c.id !== id))
+      setTotal(t => Math.max(0, t - 1))
+    } catch (e) { alert('Could not delete: ' + e.message) }
+  }
+
   const totalPages = Math.ceil(total / PAGE_SIZE)
 
   return (
@@ -539,16 +561,18 @@ export default function CampaignsPage() {
                     <th className="px-4 py-3 w-8" />
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Date Sent</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Message</th>
+                    <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Tenant(s)</th>
                     <th className="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">Total</th>
                     <th className="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">Sent</th>
                     <th className="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">Failed</th>
                     <th className="px-4 py-3 text-center text-xs font-semibold text-slate-500 uppercase tracking-wide">Responses</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Status</th>
                     <th className="px-4 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">Sent By</th>
+                    <th className="px-4 py-3 w-8" />
                   </tr>
                 </thead>
                 <tbody>
-                  {campaigns.map(c => <CampaignRow key={c.id} campaign={c} />)}
+                  {campaigns.map(c => <CampaignRow key={c.id} campaign={c} onDelete={handleDeleteCampaign} />)}
                 </tbody>
               </table>
             </div>

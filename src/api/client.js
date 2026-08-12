@@ -642,6 +642,7 @@ export const getHandwryttenSends      = (params={}) => {
 }
 export const getHandwryttenContactSends = (contactId) =>
   req('GET', `/handwrytten/sends/contact/${contactId}`)
+export const deleteHandwryttenCampaign = (id)      => req('DELETE', `/handwrytten/campaigns/${id}`)
 export const getHandwryttenCampaigns  = (params={}) => {
   const qs = new URLSearchParams(params).toString()
   return req('GET', `/handwrytten/campaigns${qs ? '?' + qs : ''}`)
