@@ -36,13 +36,16 @@ export function checkBooksHealth(transactions = [], opts = {}) {
       `Reports show a loan balance of ${usd(bs.loanBalance)}. A loan can't be negative — this almost always means the loan-proceeds line is marked "matched" (so reports drop it) while the payoff is still counted. Set the loan-proceeds line back to "recorded".`)
   }
 
-  // 2 — Primary entries excluded from reports because they aren't "recorded".
-  const dropped = txs.filter(t => !isReported(t) && PRIMARY_CATS.has(t.category) && Math.abs(Number(t.amount)) >= 100)
+  // 2 — Primary entries still in limbo: sitting in "needs review", neither recorded
+  // nor matched, so they're silently excluded. (A 'matched' primary is a
+  // deliberately-reconciled duplicate — that's fine and not flagged here; the
+  // loan-balance check above still catches a wrongly-matched loan proceeds.)
+  const dropped = txs.filter(t => t.review_status === 'needs_review' && PRIMARY_CATS.has(t.category) && Math.abs(Number(t.amount)) >= 100)
   if (dropped.length) {
     const net = dropped.reduce((s, t) => s + Number(t.amount), 0)
     add('error', 'dropped_primary',
-      `${dropped.length} key ${dropped.length === 1 ? 'entry is' : 'entries are'} being left out of your reports`,
-      `Reports only include "recorded" transactions. These core entries are marked "matched" or "needs review" and are excluded (net ${usd(net)}): ${dropped.slice(0, 4).map(oneLine).join('  •  ')}${dropped.length > 4 ? '  •  …' : ''}. Confirm each is real and set it to "recorded" — or if it duplicates another line, delete the duplicate instead.`,
+      `${dropped.length} key ${dropped.length === 1 ? 'entry is' : 'entries are'} still in "needs review"`,
+      `These core entries haven't been recorded or matched yet, so they're excluded from every report (net ${usd(net)}): ${dropped.slice(0, 4).map(oneLine).join('  •  ')}${dropped.length > 4 ? '  •  …' : ''}. Record each real one — or if it duplicates another line, match or delete it.`,
       dropped)
   }
 
