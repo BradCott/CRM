@@ -56,8 +56,14 @@ export function checkBooksHealth(transactions = [], opts = {}) {
   }
 
   // 4 — Income mis-tagged as an expense (money IN sitting in an expense/debt line).
+  // Exclude 'Other' (dual-use: a positive Other is legitimate other-income), and
+  // exclude refunds/credits/overages (a positive amount there is a valid reversal
+  // of the expense, e.g. a refunded interest payment — not a mis-tag).
+  const REFUND_RE = /refund|reversal|rebate|overage|chargeback|credit\b/i
   const EXP = new Set([...EXPENSE_CATEGORIES, 'Mortgage Principal'])
-  const posExpense = recorded.filter(t => EXP.has(t.category) && Number(t.amount) >= 1)
+  EXP.delete('Other')
+  const posExpense = recorded.filter(t => EXP.has(t.category) && Number(t.amount) >= 1
+    && !REFUND_RE.test(t.description || ''))
   if (posExpense.length) {
     add('warning', 'income_as_expense',
       `${posExpense.length} positive amount${posExpense.length === 1 ? '' : 's'} tagged as an expense`,
