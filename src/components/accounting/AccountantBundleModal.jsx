@@ -1,11 +1,11 @@
 // Accountant Bundle — one Excel workbook (Ledger, Balance Sheet, P&L, Cash Flow,
 // Schedule E, Depreciation, 1099 vendors) that you download and/or email straight
 // to the CPA from your connected Google account.
-import { useState } from 'react'
-import { X, Loader2, Download, Send, FileSpreadsheet, CheckCircle, AlertTriangle } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { X, Loader2, Download, Send, FileSpreadsheet, CheckCircle, AlertTriangle, FileText, Upload, Paperclip } from 'lucide-react'
 import Button from '../ui/Button'
 import { downloadBundle, bundleBase64, bundleFilename } from '../../utils/accountingExport'
-import { emailAccountantBundle } from '../../api/client'
+import { emailAccountantBundle, getSettlementDocs, uploadSettlementDoc, settlementDocFileUrl } from '../../api/client'
 import SendFromPicker from './SendFromPicker'
 
 const SHEETS = ['Ledger', 'Balance Sheet', 'P&L', 'Cash Flow', 'Schedule E', 'Depreciation', 'Vendors (1099)']
@@ -22,6 +22,28 @@ export default function AccountantBundleModal({ property, transactions = [], inv
   const [sent, setSent]       = useState(false)
   const [error, setError]     = useState(null)
 
+  const [docs, setDocs]             = useState(null)   // stored settlement PDFs
+  const [includeSettlements, setIncludeSettlements] = useState(true)
+  const [uploadingKind, setUploadingKind] = useState(null)
+  const buyInputRef  = useRef(null)
+  const saleInputRef = useRef(null)
+
+  const loadDocs = () => {
+    getSettlementDocs(property.id).then(setDocs).catch(() => setDocs([]))
+  }
+  useEffect(() => { loadDocs() /* eslint-disable-next-line */ }, [property.id])
+
+  const buyDoc  = (docs || []).find(d => d.kind === 'buy'  && d.has_file)
+  const saleDoc = (docs || []).find(d => d.kind === 'sale' && d.has_file)
+
+  const uploadKind = async (kind, file) => {
+    if (!file) return
+    setUploadingKind(kind); setError(null)
+    try { await uploadSettlementDoc(property.id, kind, file); loadDocs() }
+    catch (e) { setError(e.message || 'Upload failed') }
+    finally { setUploadingKind(null) }
+  }
+
   const download = () => {
     try { downloadBundle(property, transactions, investors) }
     catch (e) { setError(e.message || 'Could not build the file') }
@@ -36,6 +58,7 @@ export default function AccountantBundleModal({ property, transactions = [], inv
       await emailAccountantBundle(property.id, {
         to: to.trim(), cc: cc.trim() || undefined, account: account || undefined,
         subject, body, filename: bundleFilename(property), attachment_base64,
+        include_settlements: includeSettlements,
       })
       setSent(true)
     } catch (e) {
@@ -70,6 +93,45 @@ export default function AccountantBundleModal({ property, transactions = [], inv
               <div className="flex flex-wrap gap-1.5">
                 {SHEETS.map(s => <span key={s} className="text-xs bg-white border border-slate-200 rounded px-2 py-0.5 text-slate-600">{s}</span>)}
               </div>
+            </div>
+
+            <div className="border border-slate-200 rounded-lg px-3 py-2.5">
+              <label className="flex items-center gap-2 mb-2 cursor-pointer">
+                <input type="checkbox" checked={includeSettlements} onChange={e => setIncludeSettlements(e.target.checked)}
+                  className="rounded border-slate-300 text-emerald-600 focus:ring-emerald-400" />
+                <span className="text-xs font-medium text-slate-600 flex items-center gap-1.5">
+                  <Paperclip className="w-3.5 h-3.5 text-slate-400" /> Attach settlement statements (PDF)
+                </span>
+              </label>
+              {docs === null ? (
+                <p className="text-xs text-slate-400 flex items-center gap-1.5"><Loader2 className="w-3.5 h-3.5 animate-spin" /> Checking for stored statements…</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {[{ kind: 'buy', label: 'Buy settlement', doc: buyDoc, ref: buyInputRef },
+                    { kind: 'sale', label: 'Sale settlement', doc: saleDoc, ref: saleInputRef }].map(({ kind, label, doc, ref }) => (
+                    <div key={kind} className="flex items-center justify-between gap-2 text-xs">
+                      <span className="flex items-center gap-1.5 min-w-0">
+                        <FileText className={`w-3.5 h-3.5 shrink-0 ${doc ? 'text-emerald-600' : 'text-slate-300'}`} />
+                        <span className="text-slate-500">{label}:</span>
+                        {doc ? (
+                          <a href={settlementDocFileUrl(property.id, doc.id)} target="_blank" rel="noreferrer"
+                            className="text-emerald-700 hover:underline truncate">{doc.file_name || 'on file'}</a>
+                        ) : (
+                          <span className="text-slate-400 italic">not on file</span>
+                        )}
+                      </span>
+                      <button onClick={() => ref.current?.click()} disabled={uploadingKind === kind}
+                        className="inline-flex items-center gap-1 text-slate-500 hover:text-slate-700 shrink-0">
+                        {uploadingKind === kind ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                        {doc ? 'Replace' : 'Upload'}
+                      </button>
+                      <input ref={ref} type="file" accept="application/pdf,.pdf" className="hidden"
+                        onChange={e => { uploadKind(kind, e.target.files?.[0]); e.target.value = '' }} />
+                    </div>
+                  ))}
+                  <p className="text-[11px] text-slate-400 pt-0.5">Statements uploaded when you recorded the buy/sale are attached automatically.</p>
+                </div>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">

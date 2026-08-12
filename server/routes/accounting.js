@@ -1,7 +1,9 @@
 import { Router } from 'express'
 import multer from 'multer'
 import * as XLSX from 'xlsx'
-import db from '../db.js'
+import { mkdirSync, writeFileSync, readFileSync, createReadStream, existsSync, unlink } from 'node:fs'
+import { join } from 'node:path'
+import db, { DATA_DIR } from '../db.js'
 import { autoLinkInvestors, investorRosterWithAliases, matchInvestorWire, normalizeName, nameSimilarity } from '../services/investorMatch.js'
 import { categorizeBatch, learnRules, ruleConfidence } from '../utils/categorize.js'
 import { generateSchedule, matchMortgageSplit, markRowConsumed } from '../utils/amortization.js'
@@ -9,6 +11,30 @@ import { sendMail } from '../services/mailer.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
+
+const SETTLEMENT_DIR = join(DATA_DIR, 'settlement-docs')
+
+// Persist a raw settlement PDF for a property, keyed by kind ('buy' | 'sale').
+// A re-upload replaces the prior file (both the row and the file on disk) so
+// there's always exactly one current buy and one current sale statement.
+function storeSettlementDoc(propertyId, kind, file) {
+  if (!file?.buffer) return
+  const dir = join(SETTLEMENT_DIR, String(propertyId))
+  try { mkdirSync(dir, { recursive: true }) } catch (_) {}
+  const safe  = (file.originalname || `${kind}-settlement.pdf`).replace(/[^\w.\-]+/g, '_')
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
+  const filePath = join(dir, `${kind}-${stamp}-${safe}`)
+  try { writeFileSync(filePath, file.buffer) } catch (_) { return }
+  // Remove the previous file on disk for this kind before replacing the row.
+  const prev = db.prepare(`SELECT file_path FROM settlement_documents WHERE property_id = ? AND kind = ?`).get(propertyId, kind)
+  if (prev?.file_path && prev.file_path !== filePath) { try { unlink(prev.file_path, () => {}) } catch (_) {} }
+  db.prepare(`INSERT INTO settlement_documents (property_id, kind, file_name, file_path, mime)
+              VALUES (?, ?, ?, ?, ?)
+              ON CONFLICT(property_id, kind) DO UPDATE SET
+                file_name = excluded.file_name, file_path = excluded.file_path,
+                mime = excluded.mime, uploaded_at = datetime('now')`)
+    .run(propertyId, kind, file.originalname || safe, filePath, file.mimetype || 'application/pdf')
+}
 
 const BUILTIN_CATEGORIES = [
   'Equity Contribution', 'Purchase', 'Loan', 'Loan Payment', 'Member Loan', 'Distribution', 'Rent', 'Mortgage', 'Mortgage Interest',
@@ -1449,6 +1475,48 @@ router.post('/:propertyId/investors/upload', upload.single('file'), async (req, 
   }
 })
 
+// ── Stored settlement PDFs (buy + sale) — auto-attached to the accountant pkg ──
+
+// What buy/sale statements are on file for this property (metadata only).
+router.get('/:propertyId/settlement-docs', (req, res) => {
+  const rows = db.prepare(
+    `SELECT id, kind, file_name, mime, uploaded_at, file_path FROM settlement_documents WHERE property_id = ? ORDER BY kind`
+  ).all(req.params.propertyId)
+  res.json(rows.map(d => ({
+    id: d.id, kind: d.kind, file_name: d.file_name, mime: d.mime,
+    uploaded_at: d.uploaded_at, has_file: !!(d.file_path && existsSync(d.file_path)),
+  })))
+})
+
+// Stream one stored settlement PDF (view/download).
+router.get('/:propertyId/settlement-docs/:docId/file', (req, res) => {
+  const d = db.prepare(`SELECT file_name, file_path, mime FROM settlement_documents WHERE id = ? AND property_id = ?`)
+    .get(req.params.docId, req.params.propertyId)
+  if (!d || !d.file_path || !existsSync(d.file_path)) return res.status(404).json({ error: 'Document not found' })
+  res.setHeader('Content-Type', d.mime || 'application/pdf')
+  res.setHeader('X-Content-Type-Options', 'nosniff')
+  res.setHeader('Content-Disposition', `inline; filename="${(d.file_name || 'settlement.pdf').replace(/"/g, '')}"`)
+  createReadStream(d.file_path).pipe(res)
+})
+
+// Manually attach a settlement PDF (kind=buy|sale) — for statements uploaded
+// outside the normal parse flow, or to replace the stored one.
+router.post('/:propertyId/settlement-docs', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  const kind = req.body?.kind === 'sale' ? 'sale' : 'buy'
+  try { storeSettlementDoc(req.params.propertyId, kind, req.file) }
+  catch (e) { return res.status(500).json({ error: e.message }) }
+  res.json({ ok: true })
+})
+
+router.delete('/:propertyId/settlement-docs/:docId', (req, res) => {
+  const d = db.prepare(`SELECT file_path FROM settlement_documents WHERE id = ? AND property_id = ?`)
+    .get(req.params.docId, req.params.propertyId)
+  if (d?.file_path) { try { unlink(d.file_path, () => {}) } catch (_) {} }
+  db.prepare(`DELETE FROM settlement_documents WHERE id = ? AND property_id = ?`).run(req.params.docId, req.params.propertyId)
+  res.json({ ok: true })
+})
+
 // ── Settlement record (persisted snapshot for the Settlement tab) ─────────────
 
 router.get('/:propertyId/settlement-record', (req, res) => {
@@ -1552,6 +1620,7 @@ router.post('/:propertyId/settlement', upload.single('file'), async (req, res) =
   try {
     const result = await parseSettlementStatement(buffer, apiKey)
     console.log('[accounting] Settlement parse result:', JSON.stringify(result, null, 2))
+    try { storeSettlementDoc(req.params.propertyId, 'buy', req.file) } catch (e) { console.error('[accounting] store buy settlement:', e.message) }
     res.json({ ok: true, ...result })
   } catch (err) {
     console.error('[accounting] Settlement parse error:', err)
@@ -1568,6 +1637,7 @@ router.post('/:propertyId/sale-settlement', upload.single('file'), async (req, r
   if (!apiKey) return res.status(500).json({ error: 'ANTHROPIC_API_KEY is not set' })
   try {
     const result = await parseSaleSettlement(req.file.buffer, req.file.originalname, apiKey)
+    try { storeSettlementDoc(req.params.propertyId, 'sale', req.file) } catch (e) { console.error('[accounting] store sale settlement:', e.message) }
     res.json({ ok: true, ...result })
   } catch (err) {
     console.error('[accounting] Sale settlement parse error:', err.message)
@@ -1640,6 +1710,29 @@ router.post('/:propertyId/email-bundle', async (req, res) => {
   if (!b.to) return res.status(400).json({ error: 'A recipient email is required' })
   if (!b.attachment_base64) return res.status(400).json({ error: 'Missing the attachment' })
   try {
+    const attachments = [{
+      filename:    b.filename || 'accountant_bundle.xlsx',
+      content:     Buffer.from(b.attachment_base64, 'base64'),
+      contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    }]
+
+    // Auto-attach the stored buy/sell settlement statement PDFs, unless the
+    // caller opted out. Skips any whose file has gone missing from disk.
+    if (b.include_settlements !== false) {
+      const docs = db.prepare(
+        `SELECT kind, file_name, file_path, mime FROM settlement_documents WHERE property_id = ? ORDER BY kind`
+      ).all(req.params.propertyId)
+      for (const d of docs) {
+        if (!d.file_path || !existsSync(d.file_path)) continue
+        const label = d.kind === 'sale' ? 'Sale' : 'Buy'
+        attachments.push({
+          filename:    d.file_name || `${label}-Settlement-Statement.pdf`,
+          content:     readFileSync(d.file_path),
+          contentType: d.mime || 'application/pdf',
+        })
+      }
+    }
+
     await sendMail({
       to:      String(b.to).trim(),
       cc:      b.cc ? String(b.cc).trim() : undefined,
@@ -1649,11 +1742,7 @@ router.post('/:propertyId/email-bundle', async (req, res) => {
       subject: b.subject || 'Accountant package',
       text:    b.body || '',
       html:    emailTextToHtml(b.body || ''),
-      attachments: [{
-        filename:    b.filename || 'accountant_bundle.xlsx',
-        content:     Buffer.from(b.attachment_base64, 'base64'),
-        contentType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      }],
+      attachments,
     })
     res.json({ ok: true })
   } catch (err) {
@@ -1865,6 +1954,7 @@ router.post('/:propertyId/settlement/rebalance', upload.single('file'), async (r
   try {
     // Fresh, from-scratch parse (Sonnet + column-based rules) — the reliable path.
     const fresh = await parseSettlementStatement(req.file.buffer, apiKey)
+    try { storeSettlementDoc(req.params.propertyId, 'buy', req.file) } catch (e) { console.error('[accounting] store buy settlement:', e.message) }
     const line_items = fresh.line_items || []
     const rec = reconcileLines(line_items)          // server-computed truth
     const changes = bucketDiff(currentLines, line_items)

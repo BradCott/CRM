@@ -321,6 +321,17 @@ export async function uploadBankStatement(propertyId, file) {
   return req('POST', `/accounting/${propertyId}/bank-statement`, fd)
 }
 
+// Stored settlement-statement PDFs (buy + sale) — auto-attached to accountant pkg
+export const getSettlementDocs   = (propertyId)        => req('GET',    `/accounting/${propertyId}/settlement-docs`)
+export const deleteSettlementDoc = (propertyId, docId) => req('DELETE', `/accounting/${propertyId}/settlement-docs/${docId}`)
+export const settlementDocFileUrl = (propertyId, docId) => `${BASE}/accounting/${propertyId}/settlement-docs/${docId}/file`
+export async function uploadSettlementDoc(propertyId, kind, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  fd.append('kind', kind)
+  return req('POST', `/accounting/${propertyId}/settlement-docs`, fd)
+}
+
 // Settlement record (persisted snapshot for the Settlement tab)
 export const getSettlementRecord  = (propertyId)    => req('GET',  `/accounting/${propertyId}/settlement-record`)
 export const saveSettlementRecord = (propertyId, d) => req('POST', `/accounting/${propertyId}/settlement-record`, d)

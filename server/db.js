@@ -947,6 +947,21 @@ const migrations = [
     completed_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
     UNIQUE(entity_type, entity_id, kind, date)
   )`,
+  // The raw buy/sell settlement-statement PDFs uploaded to a property. We used to
+  // parse these and throw the file away; now we keep the original so the
+  // accountant package can auto-attach the closing docs. One row per kind
+  // ('buy' | 'sale') per property — a re-upload replaces the prior file.
+  `CREATE TABLE IF NOT EXISTS settlement_documents (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    kind        TEXT    NOT NULL,
+    file_name   TEXT,
+    file_path   TEXT,
+    mime        TEXT,
+    uploaded_at TEXT    DEFAULT (datetime('now')),
+    UNIQUE(property_id, kind)
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_settlement_docs ON settlement_documents(property_id)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────
