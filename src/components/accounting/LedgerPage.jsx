@@ -958,7 +958,7 @@ export default function LedgerPage() {
       {/* Books Health Check — fail-safe, only in ledger view */}
       {activeView === 'ledger' && transactions.length > 0 && (
         <div className="shrink-0 mx-6 mt-3">
-          <BooksHealthCheck transactions={transactions} investors={investors} />
+          <BooksHealthCheck transactions={transactions} investors={investors} collapsible />
         </div>
       )}
 
