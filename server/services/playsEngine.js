@@ -347,34 +347,43 @@ Rules:
 - If nothing needs action, return { "items": [] }
 - Return ONLY the JSON object`
 
-export async function runMorningDigest() {
-  const tokenRow = db.prepare(`SELECT * FROM oauth_tokens WHERE provider = 'google'`).get()
-  if (!tokenRow?.access_token) return
-
-  let auth
-  try { auth = getAuthedClient(tokenRow) } catch { return }
-  const gmail = google.gmail({ version: 'v1', auth })
-
-  // Known CRM contacts (brokers, owners, attorneys — anyone with an email)
+// Map of every known CRM contact email → contact. Shared across all users so we
+// only surface mail from people already in the CRM.
+function buildContactEmailMap() {
   const contacts = db.prepare(`SELECT id, name, email, email2 FROM people WHERE email IS NOT NULL OR email2 IS NOT NULL`).all()
   const emailMap = new Map()
   for (const c of contacts) {
     if (c.email)  emailMap.set(c.email.toLowerCase().trim(), c)
     if (c.email2) emailMap.set(c.email2.toLowerCase().trim(), c)
   }
-  if (emailMap.size === 0) return
+  return emailMap
+}
+
+// Run the email digest for a SINGLE user against their OWN connected Gmail
+// (provider='gmail:<userId>'). Suggested plays are assigned to that user, so each
+// person only ever sees action items from their own inbox. Returns the number of
+// suggested plays created. Dedupe key is per-user so the same email landing in two
+// people's inboxes yields a suggestion for each.
+export async function runDigestForUser(userId, emailMap = null) {
+  const tokenRow = db.prepare(`SELECT * FROM oauth_tokens WHERE provider = ?`).get(`gmail:${userId}`)
+  if (!tokenRow?.access_token) return 0
+
+  let auth
+  try { auth = getAuthedClient(tokenRow) } catch { return 0 }
+  const gmail = google.gmail({ version: 'v1', auth })
+
+  const map = emailMap || buildContactEmailMap()
+  if (map.size === 0) return 0
 
   const listRes = await gmail.users.messages.list({ userId: 'me', q: 'newer_than:1d in:inbox', maxResults: 50 })
   const messages = listRes.data.messages || []
-  if (!messages.length) return
-
-  // Suggested plays go to the first admin (the connected Google account's owner)
-  const admin = db.prepare(`SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY id LIMIT 1`).get()
+  if (!messages.length) return 0
 
   const candidates = []
   for (const msg of messages) {
-    // Skip if already turned into a play
-    const exists = db.prepare(`SELECT id FROM plays WHERE dedupe_key = ?`).get(`email:${msg.id}`)
+    // Skip if this user already has a play for this email (in any status —
+    // so an accepted/dismissed suggestion never comes back).
+    const exists = db.prepare(`SELECT id FROM plays WHERE dedupe_key = ?`).get(`email:${userId}:${msg.id}`)
     if (exists) continue
     const detail = await gmail.users.messages.get({
       userId: 'me', id: msg.id, format: 'metadata',
@@ -383,7 +392,7 @@ export async function runMorningDigest() {
     const headers = {}
     for (const h of detail.data.payload?.headers || []) headers[h.name] = h.value
     const fromEmail = (headers.From?.match(/<([^>]+)>/)?.[1] || headers.From || '').toLowerCase().trim()
-    const contact = emailMap.get(fromEmail)
+    const contact = map.get(fromEmail)
     if (!contact) continue   // only emails from known CRM contacts
     candidates.push({
       id: msg.id,
@@ -392,7 +401,7 @@ export async function runMorningDigest() {
       snippet: detail.data.snippet || '',
     })
   }
-  if (!candidates.length) return
+  if (!candidates.length) return 0
 
   const block = candidates.map((c, i) =>
     `[${i}] From: ${c.from} | Subject: ${c.subject}\nPreview: ${c.snippet}`
@@ -402,8 +411,8 @@ export async function runMorningDigest() {
   try {
     result = await claudeJson(`${EMAIL_PROMPT}\n\nEmails:\n\n${block}`)
   } catch (e) {
-    console.error('[plays] email digest failed:', e.message)
-    return
+    console.error(`[plays] email digest failed for user ${userId}:`, e.message)
+    return 0
   }
 
   let created = 0
@@ -412,14 +421,29 @@ export async function runMorningDigest() {
     // Find the candidate this refers to (match by subject)
     const cand = candidates.find(c => c.subject === item.subject) || candidates[0]
     addPlay({
-      user_id: admin?.id ?? null, source: 'email', play_type: 'email',
+      user_id: userId, source: 'email', play_type: 'email',
       title: item.task,
       detail: `Email from ${item.from_name || cand.from}: "${cand.subject}"`,
       priority: item.urgent ? 85 : 45,
       status: 'suggested',
-      dedupe_key: `email:${cand.id}`,
+      dedupe_key: `email:${userId}:${cand.id}`,
     })
     created++
   }
-  console.log(`[plays] morning digest: ${candidates.length} emails screened, ${created} plays suggested`)
+  console.log(`[plays] digest user ${userId} (${tokenRow.email}): ${candidates.length} screened, ${created} suggested`)
+  return created
+}
+
+// Morning digest across everyone who has connected their personal Gmail. Each
+// user's inbox is scanned independently and its plays are routed to that user.
+export async function runMorningDigest() {
+  const rows = db.prepare(`SELECT provider FROM oauth_tokens WHERE provider LIKE 'gmail:%'`).all()
+  if (!rows.length) return
+  const emailMap = buildContactEmailMap()
+  for (const r of rows) {
+    const userId = parseInt(r.provider.slice('gmail:'.length), 10)
+    if (!Number.isFinite(userId)) continue
+    try { await runDigestForUser(userId, emailMap) }
+    catch (e) { console.error(`[plays] digest user ${userId} error:`, e.message) }
+  }
 }

@@ -151,6 +151,39 @@ router.get('/google/send-account', (req, res) => {
   res.redirect(url)
 })
 
+// ── Per-user Gmail connection for Today's Plays ───────────────────────────────
+// Each user connects their OWN inbox so the morning digest reads their mail (not
+// the shared Drive/sync account) and routes the suggested plays back to them.
+// Stored as provider='gmail:<userId>' — one row per user, separate from the
+// shared 'google' account (which still powers Drive + contact-sync, untouched).
+const GMAIL_USER_SCOPES = [
+  'https://www.googleapis.com/auth/gmail.readonly',
+  'https://www.googleapis.com/auth/userinfo.email',
+]
+
+router.get('/google/gmail', requireAuth, (req, res) => {
+  const auth = getOAuth2Client()
+  const url  = auth.generateAuthUrl({
+    access_type: 'offline',
+    prompt:      'select_account consent',
+    scope:       GMAIL_USER_SCOPES,
+    state:       `gmailuser:${req.user.sub}`,
+  })
+  res.redirect(url)
+})
+
+// Connection status for the signed-in user
+router.get('/google/gmail/status', requireAuth, (req, res) => {
+  const row = db.prepare(`SELECT email, updated_at FROM oauth_tokens WHERE provider = ?`).get(`gmail:${req.user.sub}`)
+  res.json({ connected: !!row, email: row?.email || null, updated_at: row?.updated_at || null })
+})
+
+// Disconnect the signed-in user's Gmail
+router.delete('/google/gmail', requireAuth, (req, res) => {
+  db.prepare(`DELETE FROM oauth_tokens WHERE provider = ?`).run(`gmail:${req.user.sub}`)
+  res.json({ ok: true })
+})
+
 // ── Unified Google callback — handles both login and Drive ────────────────────
 
 router.get('/google/callback', async (req, res) => {
@@ -159,6 +192,8 @@ router.get('/google/callback', async (req, res) => {
   const isSender = state === 'sender'
   const isSendAcct = typeof state === 'string' && state.startsWith('sendacct:')
   const sendAcctReturn = isSendAcct ? decodeURIComponent(state.slice('sendacct:'.length)) : null
+  const isGmailUser = typeof state === 'string' && state.startsWith('gmailuser:')
+  const gmailUserId = isGmailUser ? parseInt(state.slice('gmailuser:'.length), 10) : null
   const isSignup = typeof state === 'string' && state.startsWith('signup:')
   const inviteToken = isSignup ? state.slice('signup:'.length) : null
 
@@ -169,6 +204,7 @@ router.get('/google/callback', async (req, res) => {
       return res.redirect(clientUrl(`${base}?error=${code}`))
     }
     if (isLogin) return res.redirect(clientUrl(`/login?error=${code}`))
+    if (isGmailUser) return res.redirect(clientUrl('/settings?gmail=error'))
     if (isSender) return res.redirect(clientUrl('/settings?sender=error'))
     if (isSendAcct) return res.redirect(clientUrl(`${sendAcctReturn}${sendAcctReturn.includes('?') ? '&' : '?'}sendaccount=error`))
     return res.redirect(clientUrl('/settings?google=error'))
@@ -217,6 +253,24 @@ router.get('/google/callback', async (req, res) => {
       console.log(`[auth] Additional send account connected: ${email}`)
       const ret = sendAcctReturn || '/settings'
       return res.redirect(clientUrl(`${ret}${ret.includes('?') ? '&' : '?'}sendaccount=connected&email=${encodeURIComponent(email)}`))
+    }
+
+    if (isGmailUser) {
+      // ── Per-user Gmail for Today's Plays ──────────────────────────────────────
+      if (!Number.isFinite(gmailUserId)) return errorRedirect('gmail_user_invalid')
+      const provider = `gmail:${gmailUserId}`
+      db.prepare(`
+        INSERT INTO oauth_tokens (provider, access_token, refresh_token, expiry_date, email, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'))
+        ON CONFLICT(provider) DO UPDATE SET
+          access_token  = excluded.access_token,
+          refresh_token = COALESCE(excluded.refresh_token, refresh_token),
+          expiry_date   = excluded.expiry_date,
+          email         = excluded.email,
+          updated_at    = datetime('now')
+      `).run(provider, tokens.access_token, tokens.refresh_token ?? null, tokens.expiry_date ?? null, email)
+      console.log(`[auth] Personal Gmail connected for user ${gmailUserId}: ${email}`)
+      return res.redirect(clientUrl('/settings?gmail=connected'))
     }
 
     if (isSignup) {

@@ -205,6 +205,11 @@ export const getEmailFrom     = ()     => req('GET',    '/auth/email-settings')
 export const setEmailFrom     = (from) => req('PUT',    '/auth/email-settings', { from })
 export const getSenderStatus  = ()     => req('GET',    '/auth/google/sender/status')
 export const disconnectSender = ()     => req('DELETE', '/auth/google/sender')
+// Per-user Gmail for Today's Plays
+export const getMyGmailStatus = ()     => req('GET',    '/auth/google/gmail/status')
+export const disconnectMyGmail = ()    => req('DELETE', '/auth/google/gmail')
+export const refreshMyDigest  = ()     => req('POST',   '/plays/gmail/refresh')
+export const connectMyGmailUrl = '/api/auth/google/gmail'
 export const getSendAccounts  = ()     => req('GET',    '/auth/send-accounts')
 export const connectSendAccountUrl = (returnPath) => `/api/auth/google/send-account?return=${encodeURIComponent(returnPath || '/accounting')}`
 export const diagnoseDrive    = ()       => req('GET',  '/loi-import/diagnose')
