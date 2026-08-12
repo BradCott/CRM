@@ -282,8 +282,15 @@ export default function LedgerPage() {
 
   const [matchingId, setMatchingId]         = useState(null)  // tx.id whose match menu is open
   const [matchCandidates, setMatchCandidates] = useState([])  // candidate entries to match against
-  function openMatch(tx) {
+  const [matchUp, setMatchUp]               = useState(false) // open the menu upward near the bottom
+  function openMatch(tx, e) {
     if (matchingId === tx.id) { setMatchingId(null); return }
+    // If the trigger sits low in the viewport, open the menu upward so it doesn't
+    // fall off the bottom of the screen (behind the Copilot button).
+    try {
+      const rect = e?.currentTarget?.getBoundingClientRect()
+      setMatchUp(rect ? rect.bottom > window.innerHeight * 0.5 : false)
+    } catch { setMatchUp(false) }
     setMatchingId(tx.id)
     setMatchCandidates([])
     getMatchCandidates(propertyId, Math.abs(Number(tx.amount) || 0), tx.id).then(setMatchCandidates).catch(() => {})
@@ -1298,7 +1305,7 @@ export default function LedgerPage() {
                                 </button>
                                 <div className="relative">
                                   <button
-                                    onClick={() => openMatch(tx)}
+                                    onClick={(e) => openMatch(tx, e)}
                                     disabled={recordingId === tx.id}
                                     className="flex items-center gap-1 text-xs font-medium text-slate-500 px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-50 transition-colors disabled:opacity-50"
                                     title="Match to something already in the books (e.g. the settlement) — reconciles it without double-counting"
@@ -1307,8 +1314,8 @@ export default function LedgerPage() {
                                   </button>
                                   {matchingId === tx.id && (
                                     <>
-                                      <div className="fixed inset-0 z-10" onClick={() => setMatchingId(null)} />
-                                      <div className="absolute right-0 top-8 z-20 w-72 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-xs">
+                                      <div className="fixed inset-0 z-[65]" onClick={() => setMatchingId(null)} />
+                                      <div className={`absolute right-0 z-[70] w-72 max-h-80 overflow-y-auto bg-white border border-slate-200 rounded-xl shadow-lg py-1 text-xs ${matchUp ? 'bottom-8' : 'top-8'}`}>
                                         <p className="px-3 py-1 text-[10px] font-semibold text-slate-400 uppercase tracking-wide">Match to an entry already in the books</p>
                                         {matchCandidates.length === 0 ? (
                                           <p className="px-3 py-1.5 text-slate-400 italic">No recorded entries yet</p>
