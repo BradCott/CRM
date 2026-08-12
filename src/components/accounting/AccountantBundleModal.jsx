@@ -5,10 +5,10 @@ import { useState, useEffect, useRef } from 'react'
 import { X, Loader2, Download, Send, FileSpreadsheet, CheckCircle, AlertTriangle, FileText, Upload, Paperclip } from 'lucide-react'
 import Button from '../ui/Button'
 import { downloadBundle, bundleBase64, bundleFilename } from '../../utils/accountingExport'
-import { emailAccountantBundle, getSettlementDocs, uploadSettlementDoc, settlementDocFileUrl } from '../../api/client'
+import { emailAccountantBundle, getSettlementDocs, uploadSettlementDoc, settlementDocFileUrl, getCapitalAccounts } from '../../api/client'
 import SendFromPicker from './SendFromPicker'
 
-const SHEETS = ['Ledger', 'Balance Sheet', 'P&L', 'Cash Flow', 'Schedule E', 'Depreciation', 'Vendors (1099)']
+const SHEETS = ['Ledger', 'Balance Sheet', 'P&L', 'Cash Flow', 'Schedule E', 'Depreciation', 'Vendors (1099)', 'Capital Accounts']
 
 export default function AccountantBundleModal({ property, transactions = [], investors = [], onClose }) {
   const addr = property?.address || 'this property'
@@ -17,11 +17,12 @@ export default function AccountantBundleModal({ property, transactions = [], inv
   const [account, setAccount] = useState('')
   const [subject, setSubject] = useState(`Accountant package — ${addr}`)
   const [body, setBody]       = useState(
-    `Hi,\n\nAttached is the full accounting package for ${addr} — ledger, balance sheet, P&L, cash flow, Schedule E, depreciation schedule, and 1099 vendor summary.\n\nLet me know if you need anything else.\n\nThanks,\nBrad`)
+    `Hi,\n\nAttached is the full accounting package for ${addr} — ledger, balance sheet, P&L, cash flow, Schedule E, depreciation schedule, 1099 vendor summary, and a per-investor capital accounts schedule (contributions & distributions).\n\nLet me know if you need anything else.\n\nThanks,\nBrad`)
   const [sending, setSending] = useState(false)
   const [sent, setSent]       = useState(false)
   const [error, setError]     = useState(null)
 
+  const [caps, setCaps]             = useState([])     // per-investor capital accounts
   const [docs, setDocs]             = useState(null)   // stored settlement PDFs
   const [includeSettlements, setIncludeSettlements] = useState(true)
   const [uploadingKind, setUploadingKind] = useState(null)
@@ -31,7 +32,11 @@ export default function AccountantBundleModal({ property, transactions = [], inv
   const loadDocs = () => {
     getSettlementDocs(property.id).then(setDocs).catch(() => setDocs([]))
   }
-  useEffect(() => { loadDocs() /* eslint-disable-next-line */ }, [property.id])
+  useEffect(() => {
+    loadDocs()
+    getCapitalAccounts(property.id).then(r => setCaps(Array.isArray(r) ? r : [])).catch(() => setCaps([]))
+    /* eslint-disable-next-line */
+  }, [property.id])
 
   const buyDoc  = (docs || []).find(d => d.kind === 'buy'  && d.has_file)
   const saleDoc = (docs || []).find(d => d.kind === 'sale' && d.has_file)
@@ -45,7 +50,7 @@ export default function AccountantBundleModal({ property, transactions = [], inv
   }
 
   const download = () => {
-    try { downloadBundle(property, transactions, investors) }
+    try { downloadBundle(property, transactions, investors, caps) }
     catch (e) { setError(e.message || 'Could not build the file') }
   }
 
@@ -54,7 +59,7 @@ export default function AccountantBundleModal({ property, transactions = [], inv
     if (!window.confirm(`Email the accountant package for ${addr} to ${to}?`)) return
     setSending(true); setError(null)
     try {
-      const attachment_base64 = bundleBase64(property, transactions, investors)
+      const attachment_base64 = bundleBase64(property, transactions, investors, caps)
       await emailAccountantBundle(property.id, {
         to: to.trim(), cc: cc.trim() || undefined, account: account || undefined,
         subject, body, filename: bundleFilename(property), attachment_base64,

@@ -83,6 +83,22 @@ export function scheduleERows(recorded, year) {
   ]
 }
 
+// Per-investor capital accounts (committed, contributed, distributions paid,
+// ending balance, still-unfunded). `caps` comes from GET .../capital-accounts —
+// the same source the app's Capital Accounts tab uses, so the numbers agree.
+export function capitalAccountsRows(caps) {
+  const head = ['Investor', 'Committed', 'Contributed Capital', 'Distributions Paid', 'Ending Capital Balance', 'Unfunded']
+  const list = Array.isArray(caps) ? caps : []
+  const body = list.map(c => [
+    c.name || 'Investor', money(c.committed), money(c.contributed),
+    money(c.distributions), money(c.capital_balance), money(c.unfunded),
+  ])
+  const sum = k => list.reduce((t, c) => t + (Number(c[k]) || 0), 0)
+  const total = ['TOTAL', money(sum('committed')), money(sum('contributed')),
+    money(sum('distributions')), money(sum('capital_balance')), money(sum('unfunded'))]
+  return body.length ? [head, ...body, total] : [head, ['No investors on the cap table', '', '', '', '', '']]
+}
+
 function buildReports(property, transactions, investors) {
   const recorded = transactions.filter(t => t.review_status === 'recorded')
   const year = new Date().getFullYear()
@@ -176,7 +192,7 @@ function vendorRows(transactions) {
     ...vs.map(v => [v.vendor, v.total, v.count, v.total >= 600 ? 'Yes' : ''])]
 }
 
-export function buildBundleWorkbook(property, transactions, investors) {
+export function buildBundleWorkbook(property, transactions, investors, caps) {
   const r = buildReports(property, transactions, investors)
   const wb = XLSX.utils.book_new()
   const add = (name, rows) => XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rows), name.slice(0, 28))
@@ -186,7 +202,7 @@ export function buildBundleWorkbook(property, transactions, investors) {
     ['Generated', new Date().toLocaleDateString()],
     ['Tax year', r.year],
     [],
-    ['Included: Ledger, Balance Sheet, P&L, Cash Flow, Schedule E, Depreciation, Vendors (1099).'],
+    ['Included: Ledger, Balance Sheet, P&L, Cash Flow, Schedule E, Depreciation, Vendors (1099), Capital Accounts.'],
   ])
   add('Ledger', r.ledger.rows)
   add('Balance Sheet', r.balanceSheet.rows)
@@ -195,15 +211,16 @@ export function buildBundleWorkbook(property, transactions, investors) {
   add('Schedule E', r.scheduleE.rows)
   add('Depreciation', depreciationRows(transactions, property))
   add('Vendors (1099)', vendorRows(transactions))
+  add('Capital Accounts', capitalAccountsRows(caps))
   return wb
 }
 
 export const bundleFilename = (property) => `${fileBase(property)}_accountant_bundle.xlsx`
-export function downloadBundle(property, transactions, investors) {
-  XLSX.writeFile(buildBundleWorkbook(property, transactions, investors), bundleFilename(property))
+export function downloadBundle(property, transactions, investors, caps) {
+  XLSX.writeFile(buildBundleWorkbook(property, transactions, investors, caps), bundleFilename(property))
 }
-export function bundleBase64(property, transactions, investors) {
-  return XLSX.write(buildBundleWorkbook(property, transactions, investors), { type: 'base64', bookType: 'xlsx' })
+export function bundleBase64(property, transactions, investors, caps) {
+  return XLSX.write(buildBundleWorkbook(property, transactions, investors, caps), { type: 'base64', bookType: 'xlsx' })
 }
 
 // ── PDF (styled print view — user saves as PDF) ───────────────────────────────
