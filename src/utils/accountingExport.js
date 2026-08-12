@@ -106,19 +106,24 @@ export function scheduleERows(recorded, year) {
   ]
 }
 
-// Per-investor capital accounts (committed, contributed, distributions paid,
-// ending balance, still-unfunded). `caps` comes from GET .../capital-accounts —
-// the same source the app's Capital Accounts tab uses, so the numbers agree.
+// Per-investor contributions & returns summary. Purely factual — committed,
+// contributed, distributions paid, net profit (distributions − contributed) and
+// MOIC (distributions ÷ contributed) — with NO assumption about how book income
+// is allocated. This avoids the misleading "negative ending balance" a naive
+// contributed−distributions capital account shows on a profitable, sold deal.
+// `caps` comes from GET .../capital-accounts (the app's own numbers).
 export function capitalAccountsRows(caps) {
-  const head = ['Investor', 'Committed', 'Contributed Capital', 'Distributions Paid', 'Ending Capital Balance', 'Unfunded']
+  const head = ['Investor', 'Committed', 'Contributed', 'Distributions Paid', 'Net Profit', 'MOIC']
   const list = Array.isArray(caps) ? caps : []
-  const body = list.map(c => [
-    c.name || 'Investor', money(c.committed), money(c.contributed),
-    money(c.distributions), money(c.capital_balance), money(c.unfunded),
-  ])
+  const moic = (dist, contrib) => (contrib > 0 ? Number((dist / contrib).toFixed(2)) : '')
+  const body = list.map(c => {
+    const contributed = Number(c.contributed) || 0
+    const dist = Number(c.distributions) || 0
+    return [c.name || 'Investor', money(c.committed), money(contributed), money(dist), money(dist - contributed), moic(dist, contributed)]
+  })
   const sum = k => list.reduce((t, c) => t + (Number(c[k]) || 0), 0)
-  const total = ['TOTAL', money(sum('committed')), money(sum('contributed')),
-    money(sum('distributions')), money(sum('capital_balance')), money(sum('unfunded'))]
+  const totContrib = sum('contributed'), totDist = sum('distributions')
+  const total = ['TOTAL', money(sum('committed')), money(totContrib), money(totDist), money(totDist - totContrib), moic(totDist, totContrib)]
   return body.length ? [head, ...body, total] : [head, ['No investors on the cap table', '', '', '', '', '']]
 }
 
@@ -225,7 +230,7 @@ export function buildBundleWorkbook(property, transactions, investors, caps) {
     ['Generated', new Date().toLocaleDateString()],
     ['Tax year', r.year],
     [],
-    ['Included: Ledger, Balance Sheet, P&L, Cash Flow, Schedule E, Depreciation, Vendors (1099), Capital Accounts.'],
+    ['Included: Ledger, Balance Sheet, P&L, Cash Flow, Schedule E, Depreciation, Vendors (1099), Investor Summary.'],
   ])
   add('Ledger', r.ledger.rows)
   add('Balance Sheet', r.balanceSheet.rows)
@@ -234,7 +239,7 @@ export function buildBundleWorkbook(property, transactions, investors, caps) {
   add('Schedule E', r.scheduleE.rows)
   add('Depreciation', depreciationRows(transactions, property))
   add('Vendors (1099)', vendorRows(transactions))
-  add('Capital Accounts', capitalAccountsRows(caps))
+  add('Investor Summary', capitalAccountsRows(caps))
   return wb
 }
 

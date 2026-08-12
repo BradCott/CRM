@@ -6,6 +6,7 @@ import OpeningBalancesModal from './OpeningBalancesModal'
 import { ALL_CATEGORIES } from '../../utils/accounting'
 import Button from '../ui/Button'
 import AddTransactionModal from './AddTransactionModal'
+import BooksHealthCheck from './BooksHealthCheck'
 import SettlementUpload from './SettlementUpload'
 import BankStatementReview from './BankStatementReview'
 import { exportAccountingExcel, exportAccountingPdf, ledgerRows } from '../../utils/accountingExport'
@@ -951,6 +952,13 @@ export default function LedgerPage() {
             </tfoot>
           </table>
           )}
+        </div>
+      )}
+
+      {/* Books Health Check — fail-safe, only in ledger view */}
+      {activeView === 'ledger' && transactions.length > 0 && (
+        <div className="shrink-0 mx-6 mt-3">
+          <BooksHealthCheck transactions={transactions} investors={investors} />
         </div>
       )}
 

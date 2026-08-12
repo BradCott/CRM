@@ -1,14 +1,16 @@
 // Accountant Bundle — one Excel workbook (Ledger, Balance Sheet, P&L, Cash Flow,
 // Schedule E, Depreciation, 1099 vendors) that you download and/or email straight
 // to the CPA from your connected Google account.
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import { X, Loader2, Download, Send, FileSpreadsheet, CheckCircle, AlertTriangle, FileText, Upload, Paperclip } from 'lucide-react'
 import Button from '../ui/Button'
 import { downloadBundle, bundleBase64, bundleFilename } from '../../utils/accountingExport'
 import { emailAccountantBundle, getSettlementDocs, uploadSettlementDoc, settlementDocFileUrl, getCapitalAccounts } from '../../api/client'
 import SendFromPicker from './SendFromPicker'
+import BooksHealthCheck from './BooksHealthCheck'
+import { checkBooksHealth } from '../../utils/booksHealth'
 
-const SHEETS = ['Ledger', 'Balance Sheet', 'P&L', 'Cash Flow', 'Schedule E', 'Depreciation', 'Vendors (1099)', 'Capital Accounts']
+const SHEETS = ['Ledger', 'Balance Sheet', 'P&L', 'Cash Flow', 'Schedule E', 'Depreciation', 'Vendors (1099)', 'Investor Summary']
 
 export default function AccountantBundleModal({ property, transactions = [], investors = [], onClose }) {
   const addr = property?.address || 'this property'
@@ -17,7 +19,7 @@ export default function AccountantBundleModal({ property, transactions = [], inv
   const [account, setAccount] = useState('')
   const [subject, setSubject] = useState(`Accountant package — ${addr}`)
   const [body, setBody]       = useState(
-    `Hi,\n\nAttached is the full accounting package for ${addr} — ledger, balance sheet, P&L, cash flow, Schedule E, depreciation schedule, 1099 vendor summary, and a per-investor capital accounts schedule (contributions & distributions).\n\nLet me know if you need anything else.\n\nThanks,\nBrad`)
+    `Hi,\n\nAttached is the full accounting package for ${addr} — ledger, balance sheet, P&L, cash flow, Schedule E, depreciation schedule, 1099 vendor summary, and a per-investor summary of contributions & distributions.\n\nLet me know if you need anything else.\n\nThanks,\nBrad`)
   const [sending, setSending] = useState(false)
   const [sent, setSent]       = useState(false)
   const [error, setError]     = useState(null)
@@ -54,8 +56,14 @@ export default function AccountantBundleModal({ property, transactions = [], inv
     catch (e) { setError(e.message || 'Could not build the file') }
   }
 
+  const health = useMemo(() => checkBooksHealth(transactions, { investors }), [transactions, investors])
+
   const send = async () => {
     if (!to.trim()) { setError("Enter the accountant's email"); return }
+    // Fail-safe: don't let a package with known-bad books go out silently.
+    if (health.errors > 0 && !window.confirm(
+      `The Books Health Check found ${health.errors} ${health.errors === 1 ? 'issue' : 'issues'} that will make this package wrong (e.g. a negative loan or entries left out of the reports).\n\nSend to ${to} anyway?`
+    )) return
     if (!window.confirm(`Email the accountant package for ${addr} to ${to}?`)) return
     setSending(true); setError(null)
     try {
@@ -93,6 +101,8 @@ export default function AccountantBundleModal({ property, transactions = [], inv
           </div>
         ) : (
           <div className="px-5 py-4 space-y-4 overflow-y-auto">
+            <BooksHealthCheck transactions={transactions} investors={investors} />
+
             <div className="bg-slate-50 rounded-lg px-3 py-2.5">
               <p className="text-xs font-medium text-slate-500 mb-1.5">Included in the workbook</p>
               <div className="flex flex-wrap gap-1.5">
