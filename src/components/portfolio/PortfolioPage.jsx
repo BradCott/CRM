@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Landmark, Plus, MoreHorizontal, Pencil, Trash2, Loader2,
   ChevronLeft, ChevronRight, AlertCircle, Upload, Download, X, CheckCircle2, Settings2, FileText, Mail,
@@ -10,7 +11,6 @@ import Button from '../ui/Button'
 import Modal from '../ui/Modal'
 import ConfirmDialog from '../ui/ConfirmDialog'
 import PropertyForm from '../properties/PropertyForm'
-import PropertyDetail from '../properties/PropertyDetail'
 import AddViaSettlementModal from './AddViaSettlementModal'
 import InvestorEmailComposer from '../accounting/InvestorEmailComposer'
 import ColumnCustomizer, {
@@ -102,6 +102,7 @@ const PRESET_VIEWS = [
 // ── Main component ────────────────────────────────────────────────────────────
 export default function PortfolioPage() {
   const { tenantBrands, propertyStates, addProperty, editProperty, removeProperty } = useApp()
+  const navigate = useNavigate()
 
   const [rows, setRows]                 = useState([])
   const [total, setTotal]               = useState(0)
@@ -113,7 +114,6 @@ export default function PortfolioPage() {
   const [showForm, setShowForm]         = useState(false)
   const [editTarget, setEditTarget]     = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
-  const [detailId, setDetailId]         = useState(null)
   const [openMenu, setOpenMenu]         = useState(null)
   const [showImport, setShowImport]         = useState(false)
   const [showAddSettlement, setShowAddSettlement] = useState(false)
@@ -249,7 +249,7 @@ export default function PortfolioPage() {
                 </thead>
                 <tbody>
                   {rows.map((p, i) => (
-                    <tr key={p.id} onClick={() => { setDetailId(p.id); setShowCustomizer(false) }}
+                    <tr key={p.id} onClick={() => navigate(`/property/${p.id}`)}
                       className={`border-b border-slate-100 last:border-0 hover:bg-blue-50/40 transition-colors cursor-pointer ${i%2===0?'bg-white':'bg-slate-50/40'}`}>
                       {activeCols.map(key => COLUMN_DEFS[key].td(p, key))}
                       <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
@@ -310,13 +310,6 @@ export default function PortfolioPage() {
         />
       )}
 
-      {detailId && (
-        <>
-          <div className="fixed inset-0 z-30 bg-black/10" onClick={() => setDetailId(null)} />
-          <PropertyDetail propertyId={detailId} onClose={() => setDetailId(null)} onPortfolioChange={handlePortfolioChange}
-            onEdit={() => { const p=rows.find(r=>r.id===detailId); if(p){setEditTarget(p);setShowForm(true)} setDetailId(null) }} />
-        </>
-      )}
       {openMenu && <div className="fixed inset-0 z-0" onClick={() => setOpenMenu(null)} />}
       {showImport && (
         <PortfolioImportModal onClose={() => setShowImport(false)}

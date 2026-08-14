@@ -12,6 +12,7 @@ import {
 import { useApp } from '../../context/AppContext'
 import SendLetterModal from '../handwrytten/SendLetterModal'
 import ExtractedFieldsModal from '../management/ExtractedFieldsModal'
+import InvestorEmailComposer from '../accounting/InvestorEmailComposer'
 
 const PIPELINE_STAGES = [
   { key: 'loi',             label: 'LOI' },
@@ -77,7 +78,12 @@ function leaseLabel(m) {
   return mos > 0 ? `${yrs}y ${mos}mo remaining` : `${yrs}yr remaining`
 }
 
-export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfolioChange }) {
+export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfolioChange, embedded = false }) {
+  const [showEmail, setShowEmail] = useState(false)
+  // Panel vs. embedded (a tab inside the full-page property workspace).
+  const shell = embedded
+    ? 'w-full h-full bg-white flex flex-col overflow-y-auto'
+    : 'fixed inset-y-0 right-0 w-[520px] bg-white border-l border-slate-200 shadow-2xl z-40 flex flex-col'
   const { addDeal } = useApp()
   const navigate = useNavigate()
   const [data, setData] = useState(null)
@@ -194,7 +200,7 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
   }
 
   if (!data) return (
-    <div className="fixed inset-y-0 right-0 w-[520px] bg-white border-l border-slate-200 shadow-2xl z-40 flex items-center justify-center">
+    <div className={embedded ? 'w-full h-full bg-white flex items-center justify-center' : 'fixed inset-y-0 right-0 w-[520px] bg-white border-l border-slate-200 shadow-2xl z-40 flex items-center justify-center'}>
       <div className="w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
     </div>
   )
@@ -202,7 +208,7 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
   const lm = leaseMonths(data.lease_end)
 
   return (
-    <div className="fixed inset-y-0 right-0 w-[520px] bg-white border-l border-slate-200 shadow-2xl z-40 flex flex-col">
+    <div className={shell}>
       {/* ── Header ─────────────────────────────────────────────── */}
       <div className="px-6 pt-5 pb-4 border-b border-slate-100 shrink-0">
         <div className="flex items-start justify-between gap-3">
@@ -257,9 +263,20 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
             >
               <TrendingUp className="w-3.5 h-3.5" /> Add to Pipeline
             </button>
-            <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100">
-              <X className="w-4 h-4" />
-            </button>
+            {data?.is_portfolio && (
+              <button
+                onClick={() => setShowEmail(true)}
+                title="Email this property's investors an update"
+                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-emerald-200 bg-emerald-50 text-emerald-700 hover:bg-emerald-100 transition-colors"
+              >
+                <Mail className="w-3.5 h-3.5" /> Email Investors
+              </button>
+            )}
+            {onClose && (
+              <button onClick={onClose} className="w-8 h-8 rounded-lg flex items-center justify-center text-slate-400 hover:bg-slate-100">
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -632,6 +649,15 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
           property={data}
           onClose={() => setShowLetterModal(false)}
           onSent={() => setShowLetterModal(false)}
+        />
+      )}
+
+      {showEmail && (
+        <InvestorEmailComposer
+          propertyId={propertyId}
+          property={data}
+          purpose="update"
+          onClose={() => setShowEmail(false)}
         />
       )}
 
