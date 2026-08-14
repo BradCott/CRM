@@ -206,6 +206,7 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
   )
 
   const lm = leaseMonths(data.lease_end)
+  const mapQuery = [data.address, data.city, data.state, data.zip].filter(Boolean).join(', ')
 
   return (
     <div className={shell}>
@@ -408,6 +409,25 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
             <EF label="State"   field="state"   value={data.state}   save={saveField} saving={savingField} />
             <EF label="ZIP"     field="zip"     value={data.zip}     save={saveField} saving={savingField} />
           </Grid2>
+          {data.address && (
+            <div className="mt-3">
+              <iframe
+                title="Property location map"
+                className="w-full h-64 rounded-xl border border-slate-200"
+                loading="lazy"
+                referrerPolicy="no-referrer-when-downgrade"
+                src={`https://maps.google.com/maps?q=${encodeURIComponent(mapQuery)}&z=15&output=embed`}
+              />
+              <a
+                href={`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(mapQuery)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 mt-2 text-xs font-medium text-blue-600 hover:text-blue-700"
+              >
+                <ExternalLink className="w-3 h-3" /> View larger map
+              </a>
+            </div>
+          )}
         </Section>
 
         {/* Building */}
