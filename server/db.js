@@ -273,6 +273,17 @@ const migrations = [
     created_at   TEXT DEFAULT (datetime('now'))
   )`,
   `CREATE INDEX IF NOT EXISTS idx_ins_docs ON insurance_documents(insurance_id)`,
+  // Documents attached to a property — e.g. an uploaded Offering Memorandum.
+  `CREATE TABLE IF NOT EXISTS property_documents (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    property_id  INTEGER NOT NULL REFERENCES properties(id) ON DELETE CASCADE,
+    doc_type     TEXT DEFAULT 'OM',
+    file_name    TEXT,
+    file_path    TEXT,
+    mime         TEXT,
+    created_at   TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_prop_docs ON property_documents(property_id)`,
   // Task priority
   `ALTER TABLE property_tasks ADD COLUMN priority TEXT NOT NULL DEFAULT 'normal'`,
   // Link a follow-up task to the specific insurance policy it tracks (reimbursement checks).

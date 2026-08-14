@@ -92,6 +92,22 @@ export const markPropertySold      = (id, data)  => req('PATCH', `/properties/${
 export const updateHistorical      = (id, data)  => req('PATCH', `/properties/${id}/historical`, data)
 export const createHistorical      = (data)      => req('POST',  '/properties/historical', data)
 
+// Offering Memorandum upload (Market Properties page): parse+match, then commit.
+export async function parseOM(file) {
+  const fd = new FormData(); fd.append('file', file)
+  return req('POST', '/properties/om/parse', fd)          // { extracted, match, action }
+}
+export async function commitOM(file, fields, propertyId) {
+  const fd = new FormData()
+  fd.append('file', file)
+  fd.append('fields', JSON.stringify(fields || {}))
+  if (propertyId) fd.append('property_id', String(propertyId))
+  return req('POST', '/properties/om/commit', fd)         // { property, action, filled }
+}
+export const getPropertyDocuments   = (id)    => req('GET',    `/properties/${id}/documents`)
+export const propertyDocUrl         = (docId) => `/api/properties/documents/${docId}`
+export const deletePropertyDocument = (docId) => req('DELETE', `/properties/documents/${docId}`)
+
 // Deals
 export const getDeals       = ()       => req('GET',    '/deals')
 export const getDeal        = (id)     => req('GET',    `/deals/${id}`)
