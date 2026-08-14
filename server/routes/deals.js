@@ -24,6 +24,7 @@ const SELECT = `
     d.renewal_options, d.renewal_notice, d.security_deposit, d.lease_notes, d.lease_abstract,
     d.renewal_option_count, d.renewal_option_length, d.renewal_option_increase,
     d.psa_abstract, d.effective_date, d.earnest_due_date, d.title_objection_date,
+    d.is_multi_tenant,
     p.address    AS property_address,
     p.list_price AS property_list_price,
     p.lease_end,
@@ -165,7 +166,21 @@ function dealResponse(id) {
   if (!row) return null
   const proposals = db.prepare('SELECT * FROM deal_proposals WHERE deal_id = ? ORDER BY id').all(id)
     .map(p => ({ ...p, order_by_date: minusDays(row.dd_deadline, p.turnaround_days) }))
-  return { ...row, proposals }
+  const tenants = db.prepare('SELECT * FROM deal_tenants WHERE deal_id = ? ORDER BY id').all(id)
+  return { ...row, proposals, tenants }
+}
+
+// For a multi-tenant deal, roll the rent roll up onto the deal: NOI + annual rent
+// = sum of tenant rents, and cap rate = NOI ÷ purchase price. Keeps the pipeline
+// table, deal header, and returns calculator in sync with the tenant rows.
+function recomputeRentRoll(dealId) {
+  const deal = db.prepare('SELECT is_multi_tenant, purchase_price, offer_price FROM deals WHERE id = ?').get(dealId)
+  if (!deal || !deal.is_multi_tenant) return
+  const { total } = db.prepare('SELECT COALESCE(SUM(annual_rent), 0) AS total FROM deal_tenants WHERE deal_id = ?').get(dealId)
+  const price = deal.purchase_price || deal.offer_price || null
+  const cap = price ? Math.round((total / price) * 10000) / 100 : null
+  db.prepare('UPDATE deals SET noi = ?, annual_rent = ?, cap_rate = COALESCE(?, cap_rate), updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+    .run(total || null, total || null, cap, dealId)
 }
 
 router.get('/:id', (req, res) => {
@@ -455,6 +470,24 @@ router.post('/:id/parse', upload.array('files', 12), async (req, res) => {
       return res.json({ deal: dealResponse(dealId), docType, applied: cols })
     }
 
+    // On a multi-tenant deal, a lease becomes a rent-roll row instead of
+    // overwriting the deal's single-tenant lease fields.
+    if (docType === 'lease' && db.prepare('SELECT is_multi_tenant FROM deals WHERE id = ?').get(dealId)?.is_multi_tenant) {
+      const docs = files.map(f => ({ buffer: f.buffer, mediaType: f.mimetype || 'application/pdf', name: f.originalname, doc_type: 'lease' }))
+      const sm = (await abstractLease(docs))?.summary || {}
+      const t = {
+        tenant_name: s_str(sm.tenant), lease_type: normalizeLeaseType(sm.lease_type),
+        annual_rent: s_annual(sm.base_rent), lease_start: s_date(sm.commencement_date),
+        lease_end: s_date(sm.expiration_date), rent_escalations: yesNo(sm.escalations_in_term) || s_str(sm.rent_escalations),
+        renewal_options: s_str(sm.renewal_options),
+      }
+      const cols = Object.keys(t).filter(k => t[k] != null && t[k] !== '')
+      db.prepare(`INSERT INTO deal_tenants (deal_id${cols.length ? ', ' + cols.join(', ') : ''}) VALUES (?${cols.map(() => ', ?').join('')})`)
+        .run(dealId, ...cols.map(k => t[k]))
+      recomputeRentRoll(dealId)
+      return res.json({ deal: dealResponse(dealId), docType, tenantAdded: t.tenant_name || 'tenant' })
+    }
+
     // OM / lease → auto-fill deal fields.
     let patch
     if (docType === 'om') {
@@ -480,6 +513,57 @@ router.post('/:id/parse', upload.array('files', 12), async (req, res) => {
 // DELETE /api/deals/:id/proposals/:pid — remove a DD proposal.
 router.delete('/:id/proposals/:pid', (req, res) => {
   db.prepare('DELETE FROM deal_proposals WHERE id = ? AND deal_id = ?').run(req.params.pid, req.params.id)
+  res.json(dealResponse(req.params.id))
+})
+
+// ── Multi-tenant rent roll ────────────────────────────────────────────────────
+
+// Editable rent-roll columns per tenant, with coercion types.
+const TENANT_FIELDS = {
+  tenant_name:'text', suite:'text', square_feet:'real', lease_type:'text', annual_rent:'real',
+  lease_start:'date', lease_end:'date', rent_escalations:'text', renewal_options:'text',
+}
+
+// PATCH /api/deals/:id/multi-tenant  body: { on } — flip the deal to multi-tenant.
+router.patch('/:id/multi-tenant', (req, res) => {
+  const on = req.body?.on ? 1 : 0
+  const r = db.prepare('UPDATE deals SET is_multi_tenant = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(on, req.params.id)
+  if (r.changes === 0) return res.status(404).json({ error: 'Deal not found' })
+  if (on) recomputeRentRoll(req.params.id)
+  res.json(dealResponse(req.params.id))
+})
+
+// POST /api/deals/:id/tenants — add a rent-roll row (optionally with fields).
+router.post('/:id/tenants', (req, res) => {
+  const dealId = parseInt(req.params.id, 10)
+  if (!db.prepare('SELECT id FROM deals WHERE id = ?').get(dealId)) return res.status(404).json({ error: 'Deal not found' })
+  const body = req.body || {}
+  const cols = Object.keys(TENANT_FIELDS).filter(k => body[k] != null && body[k] !== '')
+  const vals = cols.map(k => coerce(TENANT_FIELDS[k], body[k]))
+  db.prepare(`INSERT INTO deal_tenants (deal_id${cols.length ? ', ' + cols.join(', ') : ''}) VALUES (?${cols.map(() => ', ?').join('')})`)
+    .run(dealId, ...vals)
+  // Adding a tenant implies multi-tenant.
+  db.prepare('UPDATE deals SET is_multi_tenant = 1 WHERE id = ?').run(dealId)
+  recomputeRentRoll(dealId)
+  res.json(dealResponse(dealId))
+})
+
+// PATCH /api/deals/:id/tenants/:tid  body: { column, value } — edit one cell.
+router.patch('/:id/tenants/:tid', (req, res) => {
+  const { column, value } = req.body || {}
+  const type = TENANT_FIELDS[column]
+  if (!type) return res.status(400).json({ error: `Field "${column}" is not editable` })
+  const r = db.prepare(`UPDATE deal_tenants SET ${column} = ? WHERE id = ? AND deal_id = ?`)
+    .run(coerce(type, value), req.params.tid, req.params.id)
+  if (r.changes === 0) return res.status(404).json({ error: 'Tenant not found' })
+  recomputeRentRoll(req.params.id)
+  res.json(dealResponse(req.params.id))
+})
+
+// DELETE /api/deals/:id/tenants/:tid — remove a rent-roll row.
+router.delete('/:id/tenants/:tid', (req, res) => {
+  db.prepare('DELETE FROM deal_tenants WHERE id = ? AND deal_id = ?').run(req.params.tid, req.params.id)
+  recomputeRentRoll(req.params.id)
   res.json(dealResponse(req.params.id))
 })
 

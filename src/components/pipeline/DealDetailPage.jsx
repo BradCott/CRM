@@ -3,10 +3,13 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Loader2, Building2, CalendarDays, DollarSign, User, Link2, FileText,
   TrendingUp, Sparkles, ScrollText, AlertCircle, CheckCircle2, Pencil, FileSignature, CalendarClock,
-  ExternalLink, ClipboardCheck, X, UploadCloud, Users, Mail,
+  ExternalLink, ClipboardCheck, X, UploadCloud, Users, Mail, Plus, Building,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
-import { getDeal, updateDealField, parseDealDoc, deleteDealProposal, getInvestorRecipients } from '../../api/client'
+import {
+  getDeal, updateDealField, parseDealDoc, deleteDealProposal, getInvestorRecipients,
+  setDealMultiTenant, addDealTenant, updateDealTenantField, deleteDealTenant,
+} from '../../api/client'
 import ReturnsCalculator from './ReturnsCalculator'
 import InvestorUpload from '../accounting/InvestorUpload'
 import InvestorEmailComposer from '../accounting/InvestorEmailComposer'
@@ -46,6 +49,16 @@ function termRemaining(iso) {
   if (months < 12) return `${months} mo`
   const y = Math.floor(months / 12), m = months % 12
   return m ? `${y}y ${m}mo` : `${y} yr`
+}
+// Numeric years remaining (for WALT), 0 if expired/unknown.
+function yearsRemaining(iso) {
+  const days = daysUntil(iso)
+  return days == null ? null : Math.max(0, days / 365.25)
+}
+function waltLabel(years) {
+  if (years == null) return '—'
+  if (years < 1) return `${Math.round(years * 12)} mo`
+  return `${years.toFixed(1)} yrs`
 }
 
 function formatEditable(type, v) {
@@ -116,7 +129,7 @@ export default function DealDetailPage() {
     try {
       const res = await parseDealDoc(dealId, files)   // auto-classified
       setDeal(res.deal)
-      setApplied({ docType: res.docType, count: res.applied?.length, proposal: res.proposal })
+      setApplied({ docType: res.docType, count: res.applied?.length, proposal: res.proposal, tenantAdded: res.tenantAdded })
     } catch (err) {
       setDocError(err.message)
     } finally {
@@ -127,6 +140,23 @@ export default function DealDetailPage() {
   async function removeProposal(pid) {
     try { setDeal(await deleteDealProposal(dealId, pid)) }
     catch (err) { setSaveError(err.message) }
+  }
+
+  // ── Multi-tenant rent roll ──
+  async function toggleMultiTenant(on) {
+    try { setDeal(await setDealMultiTenant(dealId, on)) } catch (err) { setSaveError(err.message) }
+  }
+  async function addTenant() {
+    try { setDeal(await addDealTenant(dealId)) } catch (err) { setSaveError(err.message) }
+  }
+  async function removeTenant(tid) {
+    try { setDeal(await deleteDealTenant(dealId, tid)) } catch (err) { setSaveError(err.message) }
+  }
+  async function saveTenant(tid, column, value) {
+    setSavingField(`t${tid}:${column}`)
+    try { setDeal(await updateDealTenantField(dealId, tid, column, value)) }
+    catch (err) { setSaveError(err.message); getDeal(dealId).then(setDeal).catch(() => {}) }
+    finally { setSavingField(null) }
   }
 
   if (loading) return (
@@ -207,7 +237,9 @@ export default function DealDetailPage() {
           {applied && (
             <div className="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-700">
               <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
-              {applied.proposal
+              {applied.tenantAdded
+                ? <>Added {applied.tenantAdded} to the rent roll.</>
+                : applied.proposal
                 ? <>Added {applied.proposal.kind} proposal{applied.proposal.vendor ? ` (${applied.proposal.vendor})` : ''} — see Third-Party Reports below.</>
                 : applied.docType === 'psa'
                 ? <>Read the PSA · escrow dates calculated from the effective date. Click any cell to adjust.</>
@@ -297,6 +329,21 @@ export default function DealDetailPage() {
 
         {/* Lease abstract */}
         <Card icon={ScrollText} title="Lease Abstract">
+          {/* Single- vs multi-tenant toggle */}
+          <div className="flex items-center justify-end -mt-1 mb-4">
+            <span className="flex items-center gap-2 text-xs font-medium text-slate-500">
+              <Building className="w-3.5 h-3.5 text-slate-400" /> Multi-tenant
+              <button type="button" role="switch" aria-checked={!!deal.is_multi_tenant}
+                onClick={() => toggleMultiTenant(!deal.is_multi_tenant)}
+                className={`relative w-9 h-5 rounded-full transition-colors ${deal.is_multi_tenant ? 'bg-blue-600' : 'bg-slate-200'}`}>
+                <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform ${deal.is_multi_tenant ? 'translate-x-4' : ''}`} />
+              </button>
+            </span>
+          </div>
+
+          {deal.is_multi_tenant ? (
+            <RentRoll deal={deal} saving={savingField} onCell={saveTenant} onAdd={addTenant} onRemove={removeTenant} />
+          ) : (<>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-4">
             <EF label="Lease Type" field="lease_type" value={deal.lease_type} type="select"
               options={['Ground Lease', 'NNN', 'NN', 'Modified Gross', 'Gross']} {...efProps} />
@@ -351,6 +398,7 @@ export default function DealDetailPage() {
             <p className="text-xs font-semibold text-slate-400 uppercase tracking-wide mb-1">Lease Notes</p>
             <EF label="" field="lease_notes" value={deal.lease_notes} type="textarea" placeholder="Notes on the lease…" {...efProps} />
           </div>
+          </>)}
         </Card>
 
         {/* Investors — upload the calculator, review the cap table, email them */}
@@ -416,6 +464,134 @@ export default function DealDetailPage() {
         />
       )}
     </div>
+  )
+}
+
+// ── Multi-tenant rent roll ────────────────────────────────────────────────────
+
+const LEASE_TYPES = ['Ground Lease', 'NNN', 'NN', 'Modified Gross', 'Gross']
+
+function RentRoll({ deal, saving, onCell, onAdd, onRemove }) {
+  const tenants = deal.tenants || []
+  const totalRent = tenants.reduce((s, t) => s + (Number(t.annual_rent) || 0), 0)
+  const totalSF   = tenants.reduce((s, t) => s + (Number(t.square_feet) || 0), 0)
+  const w = tenants.reduce((a, t) => {
+    const yrs = yearsRemaining(t.lease_end), rent = Number(t.annual_rent) || 0
+    if (yrs != null && rent > 0) { a.num += rent * yrs; a.den += rent }
+    return a
+  }, { num: 0, den: 0 })
+  const walt = w.den > 0 ? w.num / w.den : null
+
+  return (
+    <div>
+      {/* Rollup summary */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+        <Stat label="Tenants" value={String(tenants.length)} />
+        <Stat label="Total SF" value={totalSF ? Math.round(totalSF).toLocaleString() : '—'} />
+        <Stat label="Total Rent (NOI)" value={fmt$(totalRent) || '—'} accent />
+        <Stat label="WALT (rent-wtd)" value={waltLabel(walt)} />
+      </div>
+      {/* Rent roll table */}
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm border-collapse min-w-[760px]">
+          <thead>
+            <tr className="text-[11px] text-slate-400 border-b border-slate-100">
+              <th className="text-left font-medium py-1.5 pr-2">Tenant</th>
+              <th className="text-left font-medium py-1.5 px-2">Suite</th>
+              <th className="text-right font-medium py-1.5 px-2">SF</th>
+              <th className="text-left font-medium py-1.5 px-2">Lease Type</th>
+              <th className="text-right font-medium py-1.5 px-2">Annual Rent</th>
+              <th className="text-left font-medium py-1.5 px-2">Start</th>
+              <th className="text-left font-medium py-1.5 px-2">End</th>
+              <th className="text-left font-medium py-1.5 px-2">Esc.</th>
+              <th className="text-left font-medium py-1.5 px-2">Options</th>
+              <th className="w-6" />
+            </tr>
+          </thead>
+          <tbody>
+            {tenants.length === 0 ? (
+              <tr><td colSpan={10} className="py-4 text-center text-slate-400">No tenants yet — add one, or drop a lease into the uploader above.</td></tr>
+            ) : tenants.map(t => (
+              <tr key={t.id} className="border-b border-slate-50">
+                <TCell t={t} col="tenant_name"     saving={saving} onSave={onCell} placeholder="Tenant" />
+                <TCell t={t} col="suite"           saving={saving} onSave={onCell} />
+                <TCell t={t} col="square_feet"     type="number"  align="right" saving={saving} onSave={onCell} />
+                <TCell t={t} col="lease_type"      type="select"  options={LEASE_TYPES} saving={saving} onSave={onCell} />
+                <TCell t={t} col="annual_rent"     type="currency" align="right" saving={saving} onSave={onCell} />
+                <TCell t={t} col="lease_start"     type="date"    saving={saving} onSave={onCell} />
+                <TCell t={t} col="lease_end"       type="date"    saving={saving} onSave={onCell} />
+                <TCell t={t} col="rent_escalations" type="select" options={['Yes', 'No']} saving={saving} onSave={onCell} />
+                <TCell t={t} col="renewal_options" saving={saving} onSave={onCell} />
+                <td className="text-right"><button onClick={() => onRemove(t.id)} title="Remove tenant" className="text-slate-300 hover:text-red-500"><X className="w-3.5 h-3.5" /></button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <button onClick={onAdd} className="mt-3 flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-medium">
+        <Plus className="w-4 h-4" /> Add tenant
+      </button>
+      <p className="text-[11px] text-slate-400 mt-2">NOI, annual rent, and cap rate roll up from this rent roll and feed the returns calculator. Drop a lease into the uploader above and it's added here automatically.</p>
+    </div>
+  )
+}
+
+function Stat({ label, value, accent }) {
+  return (
+    <div className="rounded-xl border border-slate-100 bg-slate-50/60 px-3 py-2">
+      <p className="text-[11px] text-slate-400">{label}</p>
+      <p className={`text-sm font-bold ${accent ? 'text-emerald-700' : 'text-slate-800'} tabular-nums`}>{value}</p>
+    </div>
+  )
+}
+
+// Compact inline-edit cell for the rent-roll table.
+function TCell({ t, col, type = 'text', options, align, saving, onSave, placeholder }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState('')
+  const ref = useRef(null)
+  const value = t[col]
+  const busy = saving === `t${t.id}:${col}`
+  useEffect(() => { if (editing) { ref.current?.focus(); ref.current?.select?.() } }, [editing])
+
+  function begin() { if (busy) return; setDraft(value == null ? '' : String(value)); setEditing(true) }
+  function commit(raw) {
+    setEditing(false)
+    const next = String(raw ?? draft).trim(), orig = value == null ? '' : String(value)
+    if (next === orig) return
+    onSave(t.id, col, next === '' ? null : next)
+  }
+  const display = type === 'currency' ? fmt$(value)
+    : type === 'date' ? fmtDate(value)
+    : type === 'number' ? (value != null && value !== '' ? Number(value).toLocaleString() : null)
+    : (value || null)
+  const cls = `py-1 px-2 align-middle ${align === 'right' ? 'text-right' : 'text-left'}`
+  const inputBase = 'w-full text-sm border border-blue-300 rounded px-1 py-0.5 bg-white focus:outline-none'
+
+  if (editing) {
+    return (
+      <td className={cls}>
+        {type === 'select' ? (
+          <select ref={ref} value={draft} onChange={e => { setDraft(e.target.value); commit(e.target.value) }} onBlur={() => commit()}
+            onKeyDown={e => { if (e.key === 'Escape') setEditing(false) }} className={inputBase}>
+            <option value="">—</option>{options.map(o => <option key={o} value={o}>{o}</option>)}
+          </select>
+        ) : (
+          <input ref={ref} type={type === 'date' ? 'date' : type === 'currency' || type === 'number' ? 'number' : 'text'}
+            step="any" value={draft} onChange={e => setDraft(e.target.value)} onBlur={() => commit()}
+            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
+            className={`${inputBase} ${align === 'right' ? 'text-right' : ''}`} />
+        )}
+      </td>
+    )
+  }
+  return (
+    <td className={cls}>
+      <button onClick={begin} disabled={busy} className={`group w-full flex items-center gap-1 ${align === 'right' ? 'justify-end' : ''}`}>
+        <span className={`text-sm truncate ${display == null ? 'text-slate-300' : 'text-slate-800'}`}>{display == null ? (placeholder || '—') : display}</span>
+        {busy ? <Loader2 className="w-3 h-3 text-blue-400 animate-spin shrink-0" /> : <Pencil className="w-2.5 h-2.5 text-slate-300 opacity-0 group-hover:opacity-100 shrink-0" />}
+      </button>
+    </td>
   )
 }
 

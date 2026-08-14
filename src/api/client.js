@@ -119,6 +119,11 @@ export async function parseDealDoc(id, files, docType = 'auto') {
   return req('POST', `/deals/${id}/parse`, fd)   // { deal, docType, applied|proposal }
 }
 export const deleteDealProposal = (dealId, pid) => req('DELETE', `/deals/${dealId}/proposals/${pid}`)
+// Multi-tenant rent roll
+export const setDealMultiTenant   = (dealId, on)              => req('PATCH',  `/deals/${dealId}/multi-tenant`, { on })
+export const addDealTenant        = (dealId, fields = {})     => req('POST',   `/deals/${dealId}/tenants`, fields)
+export const updateDealTenantField = (dealId, tid, column, value) => req('PATCH', `/deals/${dealId}/tenants/${tid}`, { column, value })
+export const deleteDealTenant     = (dealId, tid)            => req('DELETE', `/deals/${dealId}/tenants/${tid}`)
 export const getDroppedDeals = ()      => req('GET',    '/deals/dropped')
 export const createDeal     = (data)   => req('POST',   '/deals', data)
 export const updateDeal     = (id, d)  => req('PUT',    `/deals/${id}`, d)

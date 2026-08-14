@@ -405,6 +405,23 @@ const migrations = [
     notes TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   )`,
+  // Multi-tenant deals — a rent roll of tenants/leases. When on, the deal's NOI
+  // and annual rent roll up from the sum of these rows.
+  `ALTER TABLE deals ADD COLUMN is_multi_tenant INTEGER DEFAULT 0`,
+  `CREATE TABLE IF NOT EXISTS deal_tenants (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    deal_id INTEGER NOT NULL,
+    tenant_name TEXT,
+    suite TEXT,
+    square_feet REAL,
+    lease_type TEXT,
+    annual_rent REAL,
+    lease_start TEXT,
+    lease_end TEXT,
+    rent_escalations TEXT,
+    renewal_options TEXT,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`,
   `ALTER TABLE oauth_tokens ADD COLUMN notes_folder_id  TEXT`,
   `ALTER TABLE oauth_tokens ADD COLUMN notes_processed  TEXT`,
   `CREATE TABLE IF NOT EXISTS plays (
