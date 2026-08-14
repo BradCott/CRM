@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import {
   Landmark, Plus, MoreHorizontal, Pencil, Trash2, Loader2,
-  ChevronLeft, ChevronRight, AlertCircle, Upload, Download, X, CheckCircle2, Settings2, FileText,
+  ChevronLeft, ChevronRight, AlertCircle, Upload, Download, X, CheckCircle2, Settings2, FileText, Mail,
 } from 'lucide-react'
 import { getProperties, getPropertyFeeSummary } from '../../api/client'
 import { useApp } from '../../context/AppContext'
@@ -12,6 +12,7 @@ import ConfirmDialog from '../ui/ConfirmDialog'
 import PropertyForm from '../properties/PropertyForm'
 import PropertyDetail from '../properties/PropertyDetail'
 import AddViaSettlementModal from './AddViaSettlementModal'
+import InvestorEmailComposer from '../accounting/InvestorEmailComposer'
 import ColumnCustomizer, {
   buildPanelCols, loadSavedCols, detectPreset, saveColsToStorage,
 } from '../ui/ColumnCustomizer'
@@ -116,6 +117,7 @@ export default function PortfolioPage() {
   const [openMenu, setOpenMenu]         = useState(null)
   const [showImport, setShowImport]         = useState(false)
   const [showAddSettlement, setShowAddSettlement] = useState(false)
+  const [emailTarget, setEmailTarget]   = useState(null)   // property whose investors we're emailing
   const [feeSummary, setFeeSummary]     = useState(null)
   const [showCustomizer, setShowCustomizer] = useState(false)
 
@@ -258,6 +260,7 @@ export default function PortfolioPage() {
                           {openMenu===p.id && (
                             <div className="absolute right-0 top-9 w-44 bg-white border border-slate-200 rounded-xl shadow-lg z-10 py-1 text-sm">
                               <button className="flex items-center gap-2 w-full px-3 py-2 text-slate-700 hover:bg-slate-50" onClick={() => { setEditTarget(p); setShowForm(true); setOpenMenu(null) }}><Pencil className="w-3.5 h-3.5"/> Edit</button>
+                              <button className="flex items-center gap-2 w-full px-3 py-2 text-slate-700 hover:bg-slate-50" onClick={() => { setEmailTarget(p); setOpenMenu(null) }}><Mail className="w-3.5 h-3.5"/> Email Investors</button>
                               <button className="flex items-center gap-2 w-full px-3 py-2 text-red-600 hover:bg-red-50" onClick={() => { setDeleteTarget(p); setOpenMenu(null) }}><Trash2 className="w-3.5 h-3.5"/> Delete</button>
                             </div>
                           )}
@@ -298,6 +301,15 @@ export default function PortfolioPage() {
         <PropertyForm property={editTarget} onSave={handleSave} onClose={() => { setShowForm(false); setEditTarget(null) }} />
       </Modal>
       <ConfirmDialog isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={handleDelete} title="Remove from portfolio?" message={`"${deleteTarget?.address}" will be permanently deleted.`} />
+      {emailTarget && (
+        <InvestorEmailComposer
+          propertyId={emailTarget.id}
+          property={emailTarget}
+          purpose="update"
+          onClose={() => setEmailTarget(null)}
+        />
+      )}
+
       {detailId && (
         <>
           <div className="fixed inset-0 z-30 bg-black/10" onClick={() => setDetailId(null)} />

@@ -1827,6 +1827,48 @@ router.get('/:propertyId/investor-returns', (req, res) => {
   res.json(rows)
 })
 
+// Recipients for any investor email (property update, closing, accounting) — the
+// property's CAP-TABLE investors, one row per investor, with all known emails.
+// Unlike investor-returns (which needs recorded sale distributions), this works at
+// any time, so a "property update" can go out long before a sale.
+router.get('/:propertyId/investor-recipients', (req, res) => {
+  const pid = req.params.propertyId
+  const rows = capTableWithResolvedInvestorId(pid)
+  const contactStmt = db.prepare(`SELECT email FROM investor_contacts WHERE investor_id = ? AND email IS NOT NULL AND email != ''`)
+  const invStmt     = db.prepare(`SELECT name, email FROM investors WHERE id = ?`)
+  const byInvestor = new Map()   // investor_id -> one recipient (merges GP+LP positions)
+  const standalone = []          // cap-table rows not linked to a global investor
+  for (const r of rows) {
+    if (r.investor_id != null) {
+      if (!byInvestor.has(r.investor_id)) {
+        const inv = invStmt.get(r.investor_id)
+        const emails = []
+        if (inv?.email) emails.push(inv.email)
+        for (const c of contactStmt.all(r.investor_id)) if (c.email && !emails.includes(c.email)) emails.push(c.email)
+        byInvestor.set(r.investor_id, { id: `inv-${r.investor_id}`, investor_id: r.investor_id, name: inv?.name || r.name, emails, email: emails[0] || '', contribution: 0 })
+      }
+      byInvestor.get(r.investor_id).contribution += Number(r.contribution) || 0
+    } else {
+      standalone.push({ id: `row-${r.id}`, investor_id: null, name: r.name, emails: [], email: '', contribution: Number(r.contribution) || 0 })
+    }
+  }
+  res.json([...byInvestor.values(), ...standalone])
+})
+
+const PROPERTY_UPDATE_PROMPT = `You draft a warm, professional PROPERTY UPDATE email from a real-estate sponsor (Knox Capital) to the investors in one of its properties. This is a GENERAL update — NOT a sale or distribution notice.
+
+Keep these merge tokens EXACTLY as written so each recipient is personalized:
+{{first_name}} — investor's first name / greeting
+{{property}} — property name/address
+
+Requirements:
+- Professional, appreciative, concise; a sponsor-to-investor voice.
+- Cover what the sponsor asks for in their instructions (leasing news, operations, capital projects, financing, market color, a milestone, etc.).
+- Do NOT invent specific numbers, dates, tenants, or facts that weren't provided. If the sponsor gives specifics, use them; otherwise keep it general and leave clear [bracketed placeholders] for the sponsor to fill.
+- End with a friendly sign-off from the Knox Capital team.
+
+Respond with ONLY a JSON object: {"subject": "...", "body": "..."}. The body is plain text with \\n line breaks and the merge tokens.`
+
 const INVESTOR_EMAIL_PROMPT = `You draft a warm, professional email from a real-estate sponsor (Knox Capital) to an investor when a property they invested in has just SOLD.
 
 Write a REUSABLE TEMPLATE that will be sent to every investor — keep these merge tokens EXACTLY as written so each investor's numbers can be filled in:
@@ -1858,8 +1900,12 @@ router.post('/:propertyId/draft-investor-email', async (req, res) => {
     b.current_body ? `Current draft to revise:\n${b.current_body}` : '',
     b.instructions ? `The sponsor wants these changes / additions: ${b.instructions}` : 'Write a fresh first draft.',
   ].filter(Boolean).join('\n\n')
+  // Pick the template by purpose. Default stays the closing/sale email for the
+  // existing caller; 'update' drafts a general property update.
+  const PROMPTS = { closing: INVESTOR_EMAIL_PROMPT, update: PROPERTY_UPDATE_PROMPT }
+  const prompt = PROMPTS[b.purpose] || INVESTOR_EMAIL_PROMPT
   try {
-    const result = await callClaudeTextJson(apiKey, context, INVESTOR_EMAIL_PROMPT)
+    const result = await callClaudeTextJson(apiKey, context, prompt)
     res.json({ ok: true, subject: result.subject || '', body: result.body || '' })
   } catch (err) {
     console.error('[accounting] draft-investor-email:', err.message)

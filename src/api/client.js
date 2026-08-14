@@ -302,6 +302,7 @@ export const getCashAdjustments       = ()  => req('GET',  '/accounting/cash-adj
 export const clearCashAdjustments     = (d) => req('POST', '/accounting/cash-adjustments/clear', d)  // { ids } or { all: true }
 export const emailAccountantBundle    = (propertyId, d) => req('POST', `/accounting/${propertyId}/email-bundle`, d)
 export const getInvestorReturns       = (propertyId) => req('GET',  `/accounting/${propertyId}/investor-returns`)
+export const getInvestorRecipients    = (propertyId) => req('GET',  `/accounting/${propertyId}/investor-recipients`)
 export const draftInvestorEmail       = (propertyId, d) => req('POST', `/accounting/${propertyId}/draft-investor-email`, d)
 export const emailInvestors           = (propertyId, d) => req('POST', `/accounting/${propertyId}/email-investors`, d)
 export const getCloseoutStatus        = (propertyId) => req('GET',  `/accounting/${propertyId}/closeout-status`)
