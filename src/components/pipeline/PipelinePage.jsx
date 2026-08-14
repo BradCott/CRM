@@ -32,7 +32,7 @@ function saveView(v) {
 }
 
 export default function PipelinePage() {
-  const { deals, stages, addDeal, editDeal, removeDeal, moveDeal, closeDeal, dropDeal, linkPropertyToDeal, loading } = useApp()
+  const { deals, stages, addDeal, editDeal, removeDeal, moveDeal, closeDeal, dropDeal, linkPropertyToDeal, createPropertyForDeal, loading } = useApp()
   const [view, setView]               = useState(loadView)
   const [showForm, setShowForm]       = useState(false)
   const [editTarget, setEditTarget]   = useState(null)
@@ -94,6 +94,12 @@ export default function PipelinePage() {
   const handleUnlinkProperty = async () => {
     if (!linkTarget) return
     await linkPropertyToDeal(linkTarget.id, null)
+    setLinkTarget(null)
+  }
+
+  const handleCreateProperty = async (overrides) => {
+    if (!linkTarget) return
+    await createPropertyForDeal(linkTarget.id, overrides)
     setLinkTarget(null)
   }
 
@@ -224,6 +230,7 @@ export default function PipelinePage() {
           deal={linkTarget}
           onLink={handleLinkProperty}
           onUnlink={handleUnlinkProperty}
+          onCreate={handleCreateProperty}
           onClose={() => setLinkTarget(null)}
         />
       )}

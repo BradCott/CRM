@@ -2,6 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import db from '../db.js'
 import { parseMarketingBuffer, abstractLease, parsePsaBuffer, parseProposalBuffer, classifyDealDocument } from './management.js'
+import { normalizeAddr } from '../utils/normalize.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
@@ -209,6 +210,40 @@ router.patch('/:id/link-property', (req, res) => {
   const { property_id } = req.body
   db.prepare('UPDATE deals SET property_id = ? WHERE id = ?').run(property_id ?? null, req.params.id)
   res.json(db.prepare(SELECT + ' WHERE d.id = ?').get(req.params.id))
+})
+
+// POST /:id/create-property — create a NEW market property from this deal's own
+// details (address/city/state/tenant, with optional body overrides) and link it
+// to the deal in one step. For deals whose property isn't in the CRM yet, so you
+// don't have to go create it in the Properties section first.
+router.post('/:id/create-property', (req, res) => {
+  const deal = db.prepare('SELECT * FROM deals WHERE id = ?').get(req.params.id)
+  if (!deal) return res.status(404).json({ error: 'Deal not found' })
+
+  const address = toStr(req.body?.address ?? deal.address)?.trim()
+  const city    = toStr(req.body?.city    ?? deal.city)
+  const state   = toStr(req.body?.state   ?? deal.state)
+  const tenant  = toStr(req.body?.tenant  ?? deal.tenant)
+  if (!address) return res.status(400).json({ error: 'An address is required to create a property.' })
+
+  // Resolve tenant name → tenant_brand_id (find existing or create), mirroring
+  // how the rest of the app links tenant brands.
+  let tenantBrandId = null
+  if (tenant && tenant.trim()) {
+    const name = tenant.trim()
+    const brand = db.prepare('SELECT id FROM tenant_brands WHERE LOWER(name) = LOWER(?)').get(name)
+    tenantBrandId = brand ? brand.id
+      : Number(db.prepare('INSERT INTO tenant_brands (name) VALUES (?)').run(name).lastInsertRowid)
+  }
+
+  const r = db.prepare(`
+    INSERT INTO properties (address, city, state, tenant_brand_id, is_portfolio, addr_key)
+    VALUES (?, ?, ?, ?, 0, ?)
+  `).run(address, city, state, tenantBrandId, normalizeAddr(address, city || '', state || '', '') || null)
+
+  const propertyId = Number(r.lastInsertRowid)
+  db.prepare('UPDATE deals SET property_id = ? WHERE id = ?').run(propertyId, deal.id)
+  res.status(201).json(db.prepare(SELECT + ' WHERE d.id = ?').get(deal.id))
 })
 
 router.patch('/:id/stage', (req, res) => {

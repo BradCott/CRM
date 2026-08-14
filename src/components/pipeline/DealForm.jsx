@@ -1,8 +1,75 @@
-import { useState } from 'react'
+import { useState, useRef, useMemo, useEffect } from 'react'
 import { Input, Textarea, Select } from '../ui/Input'
 import Button from '../ui/Button'
 import { useApp } from '../../context/AppContext'
 import { TABLE_STAGES } from './DealTable'
+
+const propLabel = p => [p.tenant_brand_name, p.address, p.city, p.state].filter(Boolean).join(' — ')
+
+// Type-to-search property picker — replaces a giant <select> of every property.
+// Type to filter by address/city/tenant; click to pick; ✕ to clear back to none.
+function PropertyCombobox({ label, value, onChange, properties }) {
+  const selected = properties.find(p => String(p.id) === String(value)) || null
+  const [query, setQuery] = useState('')
+  const [open, setOpen]   = useState(false)
+  const boxRef = useRef(null)
+
+  useEffect(() => {
+    const h = e => { if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    const list = q
+      ? properties.filter(p => [p.address, p.city, p.state, p.tenant_brand_name]
+          .some(v => String(v || '').toLowerCase().includes(q)))
+      : properties
+    return list.slice(0, 50)
+  }, [properties, query])
+
+  const displayValue = open ? query : (selected ? propLabel(selected) : '')
+
+  const choose = p => { onChange(p ? String(p.id) : ''); setQuery(''); setOpen(false) }
+
+  return (
+    <div className="flex flex-col gap-1" ref={boxRef}>
+      <label className="text-sm font-medium text-slate-700">{label}</label>
+      <div className="relative">
+        <input
+          value={displayValue}
+          placeholder="Search address, city, or tenant… (optional)"
+          onFocus={() => { setQuery(''); setOpen(true) }}
+          onChange={e => { setQuery(e.target.value); setOpen(true) }}
+          className="block w-full rounded-lg border px-3 py-2 pr-8 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-colors border-slate-300 bg-white hover:border-slate-400"
+        />
+        {selected && !open && (
+          <button type="button" tabIndex={-1} onClick={() => choose(null)} title="Clear"
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">✕</button>
+        )}
+        {open && (
+          <ul className="absolute z-20 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-slate-200 bg-white shadow-lg text-sm">
+            <li>
+              <button type="button" onClick={() => choose(null)}
+                className="w-full text-left px-3 py-2 text-slate-500 hover:bg-slate-50">None / standalone LOI deal</button>
+            </li>
+            {filtered.length === 0 ? (
+              <li className="px-3 py-2 text-slate-400">No properties match</li>
+            ) : filtered.map(p => (
+              <li key={p.id}>
+                <button type="button" onClick={() => choose(p)}
+                  className={`w-full text-left px-3 py-2 hover:bg-blue-50 ${String(p.id) === String(value) ? 'bg-blue-50/60 font-medium' : ''}`}>
+                  {propLabel(p)}
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  )
+}
 
 const EMPTY = {
   property_id: '', stage: 'loi',
@@ -76,15 +143,13 @@ export default function DealForm({ deal, initialStage, prefill, onSave, onClose 
 
   return (
     <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
-      {/* Linked property (optional for LOI deals) */}
-      <Select label="Linked property" value={form.property_id} onChange={set('property_id')}>
-        <option value="">None / standalone LOI deal</option>
-        {sortedProps.map(p => (
-          <option key={p.id} value={p.id}>
-            {[p.tenant_brand_name, p.address, p.city, p.state].filter(Boolean).join(' — ')}
-          </option>
-        ))}
-      </Select>
+      {/* Linked property (optional for LOI deals) — type to search */}
+      <PropertyCombobox
+        label="Linked property"
+        value={form.property_id}
+        onChange={id => setForm(f => ({ ...f, property_id: id }))}
+        properties={sortedProps}
+      />
 
       <Select label="Stage" value={form.stage} onChange={set('stage')}>
         {TABLE_STAGES.map(s => <option key={s.key} value={s.key}>{s.label}</option>)}
