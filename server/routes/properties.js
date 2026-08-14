@@ -1,13 +1,18 @@
 import { Router } from 'express'
+import multer from 'multer'
+import { join } from 'node:path'
+import { mkdirSync, writeFileSync, createReadStream, existsSync, unlink } from 'node:fs'
 import nodemailer from 'nodemailer'
-import db from '../db.js'
+import db, { DATA_DIR } from '../db.js'
 import { requireRole } from '../middleware/auth.js'
-import { seedDefaultTasks } from './management.js'
+import { seedDefaultTasks, parseMarketingBuffer } from './management.js'
 import { normalizeAddr, tokenSearch } from '../utils/normalize.js'
 import { searchDriveForProperty, searchDriveDocs, fetchDriveFile } from '../services/driveSearch.js'
 import { sendMail } from '../services/mailer.js'
 
 const router = Router()
+const upload  = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
+const PROP_DOCS_DIR = join(DATA_DIR, 'property-docs')
 
 // Resolve a free-text owner name to a people.id.
 // If the name matches an existing person, returns their id.
@@ -314,6 +319,126 @@ router.get('/check-duplicate', (req, res) => {
     `SELECT id, address, city, state FROM properties WHERE addr_key = ? LIMIT 1`
   ).get(addrKey)
   res.json(row ? { exists: true, property: row } : { exists: false })
+})
+
+// ── Offering Memorandum upload (from the Market Properties page) ───────────────
+// Upload an OM PDF; if the property already exists (matched by address) the OM is
+// attached to it and only its BLANK fields are filled; otherwise a new market
+// property is created from the OM. Two steps so the user confirms before commit.
+
+// Scalar columns copied straight from a parsed OM into a property.
+const OM_SCALAR_COLS = [
+  'city', 'state', 'zip', 'building_size', 'land_area', 'year_built',
+  'property_type', 'construction_type', 'lease_type', 'lease_start', 'lease_end',
+  'annual_rent', 'rent_bumps', 'renewal_options', 'noi', 'cap_rate', 'list_price',
+]
+
+function findPropertyByAddress(address, city, state, zip) {
+  const addrKey = normalizeAddr(address || '', city || '', state || '', zip || '')
+  if (!addrKey) return null
+  return db.prepare(`${BASE_SELECT} WHERE p.addr_key = ? LIMIT 1`).get(addrKey) || null
+}
+
+function resolveTenantBrandId(name) {
+  const n = (name || '').trim()
+  if (!n) return null
+  const b = db.prepare('SELECT id FROM tenant_brands WHERE LOWER(name) = LOWER(?)').get(n)
+  return b ? b.id : Number(db.prepare('INSERT INTO tenant_brands (name) VALUES (?)').run(n).lastInsertRowid)
+}
+
+// Step 1 — parse + match (no writes). Returns extracted fields + any matched
+// property so the client can confirm before committing.
+router.post('/om/parse', upload.single('file'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  let extracted
+  try {
+    extracted = await parseMarketingBuffer(req.file.buffer, req.file.mimetype || 'application/pdf')
+  } catch (e) {
+    return res.status(422).json({ error: 'Could not read the OM: ' + e.message })
+  }
+  if (!extracted?.address) {
+    return res.status(422).json({ error: 'No property address could be read from this document.', extracted })
+  }
+  const match = findPropertyByAddress(extracted.address, extracted.city, extracted.state, extracted.zip)
+  res.json({ extracted, match, action: match ? 'attach' : 'create' })
+})
+
+// Step 2 — commit. Multipart: file + fields (JSON of the confirmed data) +
+// optional property_id. Existing property → attach + fill blanks only; otherwise
+// create a new market property. The OM file is stored either way.
+router.post('/om/commit', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  let fields = {}
+  try { fields = req.body.fields ? JSON.parse(req.body.fields) : {} } catch { fields = {} }
+  const wantId = req.body.property_id ? parseInt(req.body.property_id, 10) : null
+  const isBlank = v => v === null || v === undefined || v === ''
+
+  let propertyId, action, filled = []
+  if (wantId) {
+    const prop = db.prepare('SELECT * FROM properties WHERE id = ?').get(wantId)
+    if (!prop) return res.status(404).json({ error: 'Property not found' })
+    propertyId = wantId
+    action = 'attached'
+    const sets = [], vals = []
+    for (const col of OM_SCALAR_COLS) {
+      if (!isBlank(fields[col]) && isBlank(prop[col])) { sets.push(`${col} = ?`); vals.push(fields[col]); filled.push(col) }
+    }
+    if (isBlank(prop.tenant_brand_id) && (fields.tenant || '').trim()) {
+      sets.push('tenant_brand_id = ?'); vals.push(resolveTenantBrandId(fields.tenant)); filled.push('tenant')
+    }
+    if (sets.length) { vals.push(propertyId); db.prepare(`UPDATE properties SET ${sets.join(', ')} WHERE id = ?`).run(...vals) }
+  } else {
+    const address = (fields.address || '').trim()
+    if (!address) return res.status(400).json({ error: 'An address is required to create a property.' })
+    const cols = ['address', 'tenant_brand_id', 'is_portfolio', 'addr_key', ...OM_SCALAR_COLS]
+    const vals = [
+      address,
+      resolveTenantBrandId(fields.tenant),
+      0,
+      normalizeAddr(address, fields.city || '', fields.state || '', fields.zip || '') || null,
+      ...OM_SCALAR_COLS.map(c => (isBlank(fields[c]) ? null : fields[c])),
+    ]
+    const r = db.prepare(`INSERT INTO properties (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...vals)
+    propertyId = Number(r.lastInsertRowid)
+    action = 'created'
+  }
+
+  // Store the OM file on disk + record it.
+  try {
+    mkdirSync(PROP_DOCS_DIR, { recursive: true })
+    const safe = (req.file.originalname || 'offering-memorandum.pdf').replace(/[^\w.\-]+/g, '_')
+    const filePath = join(PROP_DOCS_DIR, `${propertyId}-${Date.now()}-${safe}`)
+    writeFileSync(filePath, req.file.buffer)
+    db.prepare(`INSERT INTO property_documents (property_id, doc_type, file_name, file_path, mime) VALUES (?, 'OM', ?, ?, ?)`)
+      .run(propertyId, req.file.originalname || safe, filePath, req.file.mimetype || 'application/pdf')
+  } catch (e) {
+    return res.status(500).json({ error: 'Property saved but the OM file could not be stored: ' + e.message })
+  }
+
+  const property = db.prepare(`${BASE_SELECT} WHERE p.id = ?`).get(propertyId)
+  res.status(action === 'created' ? 201 : 200).json({ property, action, filled })
+})
+
+// List documents attached to a property.
+router.get('/:id/documents', (req, res) => {
+  res.json(db.prepare(`SELECT id, doc_type, file_name, mime, created_at FROM property_documents WHERE property_id = ? ORDER BY created_at DESC`).all(req.params.id))
+})
+
+// Stream a property document (inline, so the browser can preview a PDF).
+router.get('/documents/:docId', (req, res) => {
+  const doc = db.prepare('SELECT * FROM property_documents WHERE id = ?').get(req.params.docId)
+  if (!doc || !doc.file_path || !existsSync(doc.file_path)) return res.status(404).json({ error: 'Document not found' })
+  res.setHeader('Content-Type', doc.mime || 'application/octet-stream')
+  res.setHeader('Content-Disposition', `inline; filename="${(doc.file_name || 'document').replace(/"/g, '')}"`)
+  createReadStream(doc.file_path).pipe(res)
+})
+
+// Remove a property document.
+router.delete('/documents/:docId', (req, res) => {
+  const doc = db.prepare('SELECT * FROM property_documents WHERE id = ?').get(req.params.docId)
+  if (doc?.file_path) { try { unlink(doc.file_path, () => {}) } catch (_) {} }
+  db.prepare('DELETE FROM property_documents WHERE id = ?').run(req.params.docId)
+  res.status(204).end()
 })
 
 // Whole completed months between two YYYY-MM-DD dates.

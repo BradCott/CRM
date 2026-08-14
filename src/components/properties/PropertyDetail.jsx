@@ -8,6 +8,7 @@ import {
 import {
   getProperty, togglePortfolio, clearOwnershipReview, parseMarketingPackage, parseSettlementPdf,
   updatePropertyField, updatePropertyRelation, getTenantBrands, getOperators, getAllPeople,
+  getPropertyDocuments, propertyDocUrl, deletePropertyDocument,
 } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import SendLetterModal from '../handwrytten/SendLetterModal'
@@ -87,6 +88,7 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
   const { addDeal } = useApp()
   const navigate = useNavigate()
   const [data, setData] = useState(null)
+  const [docs, setDocs] = useState([])
   const [toggling, setToggling] = useState(false)
 
   const [showLetterModal, setShowLetterModal] = useState(false)
@@ -116,7 +118,14 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
     if (!propertyId) return
     setData(null)
     getProperty(propertyId).then(setData).catch(console.error)
+    getPropertyDocuments(propertyId).then(setDocs).catch(() => setDocs([]))
   }, [propertyId])
+
+  async function handleDeleteDoc(id) {
+    if (!confirm('Remove this document from the property?')) return
+    try { await deletePropertyDocument(id); setDocs(d => d.filter(x => x.id !== id)) }
+    catch (err) { alert('Error: ' + err.message) }
+  }
 
   async function saveField(column, value) {
     setSavingField(column); setSaveError(null)
@@ -383,6 +392,28 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
           <input ref={omInputRef}   type="file" accept=".pdf" className="hidden" onChange={e => { handleDocFile('marketing', e.target.files?.[0]); e.target.value = '' }} />
           <input ref={settInputRef} type="file" accept=".pdf" className="hidden" onChange={e => { handleDocFile('settlement', e.target.files?.[0]); e.target.value = '' }} />
         </div>
+
+        {/* Attached documents (e.g. uploaded OMs) */}
+        {docs.length > 0 && (
+          <Section icon={FileText} title={`Documents (${docs.length})`}>
+            <div className="space-y-1.5">
+              {docs.map(d => (
+                <div key={d.id} className="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white">
+                  <FileText className="w-4 h-4 text-slate-400 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <a href={propertyDocUrl(d.id)} target="_blank" rel="noopener noreferrer" className="text-sm font-medium text-blue-600 hover:underline truncate block">
+                      {d.file_name || 'Document'}
+                    </a>
+                    <p className="text-[11px] text-slate-400">{d.doc_type}{d.created_at ? ` · ${new Date(String(d.created_at).replace(' ', 'T') + 'Z').toLocaleDateString()}` : ''}</p>
+                  </div>
+                  <button onClick={() => handleDeleteDoc(d.id)} className="p-1 rounded hover:bg-red-50 text-slate-400 hover:text-red-500 shrink-0" title="Remove document">
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          </Section>
+        )}
 
         {/* Tenant & Operator */}
         <Section icon={User} title="Tenant & Operator">

@@ -3,7 +3,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Building2, Plus, MoreHorizontal, Pencil, Trash2, Loader2,
   ChevronLeft, ChevronRight, ChevronUp, ChevronDown, ChevronsUpDown,
-  AlertCircle, Settings2, Upload, Mail, ShieldAlert, Check, Download,
+  AlertCircle, Settings2, Upload, Mail, ShieldAlert, Check, Download, FileText,
 } from 'lucide-react'
 import { getProperties, bulkDeleteProperties, exportPropertiesUrl } from '../../api/client'
 import { useApp } from '../../context/AppContext'
@@ -14,6 +14,7 @@ import ConfirmDialog from '../ui/ConfirmDialog'
 import EmptyState from '../ui/EmptyState'
 import PropertyForm from './PropertyForm'
 import PropertyDetail from './PropertyDetail'
+import OmUploadModal from './OmUploadModal'
 import BulkSendModal from '../handwrytten/BulkSendModal'
 import OperatorManager from './OperatorManager'
 import ColumnCustomizer, {
@@ -300,8 +301,10 @@ const PRESET_VIEWS = [
 
 // ── Main component ────────────────────────────────────────────────────────────
 export default function PropertiesPage() {
-  const { tenantBrands, propertyStates, operators, addProperty, editProperty, removeProperty } = useApp()
+  const { tenantBrands, propertyStates, operators, addProperty, editProperty, removeProperty, notify } = useApp()
   const navigate = useNavigate()
+  const omInputRef = useRef(null)
+  const [omFile, setOmFile] = useState(null)   // OM PDF selected for upload → confirm modal
   const [searchParams, setSearchParams] = useSearchParams()
   const [showBulkSend, setShowBulkSend] = useState(false)
 
@@ -382,6 +385,17 @@ export default function PropertiesPage() {
     const marketData = { ...data, is_portfolio: 0 }
     if (editTarget) await editProperty(editTarget.id, marketData); else await addProperty(marketData)
     load(search, tenantFilters, stateFilters, operatorFilters, needsReviewFilter, page, sortCol, sortDir)
+  }
+
+  function handleOmDone(res) {
+    setOmFile(null)
+    load(search, tenantFilters, stateFilters, operatorFilters, needsReviewFilter, page, sortCol, sortDir)
+    if (res?.action === 'created') {
+      notify?.(`Created “${res.property.address}” from the OM.`)
+    } else {
+      const n = res?.filled?.length || 0
+      notify?.(`Attached the OM to “${res.property.address}”${n ? `, filled ${n} blank field${n === 1 ? '' : 's'}` : ''}.`)
+    }
   }
   const handleDelete = async () => {
     await removeProperty(deleteTarget.id); load(search, tenantFilters, stateFilters, operatorFilters, needsReviewFilter, page, sortCol, sortDir)
@@ -543,6 +557,21 @@ export default function PropertiesPage() {
               <Upload className="w-4 h-4" />
               Import Properties
             </button>
+            <input
+              ref={omInputRef}
+              type="file"
+              accept=".pdf,image/*"
+              className="hidden"
+              onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) setOmFile(f) }}
+            />
+            <button
+              onClick={() => omInputRef.current?.click()}
+              title="Upload an Offering Memorandum — attaches to the matching property, or creates a new one"
+              className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium border rounded-lg transition-colors text-slate-600 border-slate-200 hover:bg-slate-50"
+            >
+              <FileText className="w-4 h-4" />
+              Upload OM
+            </button>
             <Button onClick={() => { setEditTarget(null); setShowForm(true) }}>
               <Plus className="w-4 h-4" /> New property
             </Button>
@@ -673,6 +702,9 @@ export default function PropertiesPage() {
           <PropertyDetail propertyId={detailId} onClose={() => setDetailId(null)}
             onEdit={(full) => { const p = full || rows.find(r=>r.id===detailId); if(p){setEditTarget(p);setShowForm(true)} setDetailId(null) }} />
         </>
+      )}
+      {omFile && (
+        <OmUploadModal file={omFile} onClose={() => setOmFile(null)} onDone={handleOmDone} />
       )}
       {openMenu && <div className="fixed inset-0 z-0" onClick={() => setOpenMenu(null)} />}
       {showBulkSend && (
