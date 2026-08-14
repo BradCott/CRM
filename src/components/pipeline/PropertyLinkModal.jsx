@@ -1,11 +1,23 @@
 import { useState, useMemo, useEffect, useRef } from 'react'
-import { Search, Link2, Unlink, X } from 'lucide-react'
+import { Search, Link2, Unlink, X, Plus, Loader2 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 
-export default function PropertyLinkModal({ deal, onLink, onUnlink, onClose }) {
+export default function PropertyLinkModal({ deal, onLink, onUnlink, onCreate, onClose }) {
   const { allProperties } = useApp()
   const [q, setQ] = useState('')
+  const [creating, setCreating] = useState(false)
   const inputRef  = useRef()
+
+  // Address for the "create new" action: the deal's own address, or whatever the
+  // user typed in the search box if the deal has none.
+  const createAddress = (deal.address || '').trim() || q.trim()
+
+  async function handleCreate() {
+    if (!onCreate || !createAddress) return
+    setCreating(true)
+    try { await onCreate({ address: createAddress }) }   // parent closes the modal
+    catch (e) { alert('Could not create the property: ' + (e?.message || e)); setCreating(false) }
+  }
 
   useEffect(() => { inputRef.current?.focus() }, [])
 
@@ -113,6 +125,26 @@ export default function PropertyLinkModal({ deal, onLink, onUnlink, onClose }) {
             })
           )}
         </ul>
+
+        {/* Create-new footer — for deals whose property isn't in the CRM yet */}
+        {onCreate && (
+          <div className="px-4 py-3 border-t border-slate-100 bg-slate-50 shrink-0">
+            <button
+              onClick={handleCreate}
+              disabled={creating || !createAddress}
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 disabled:cursor-not-allowed transition-colors"
+            >
+              {creating
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating…</>
+                : <><Plus className="w-4 h-4" /> {createAddress ? `Create new property “${createAddress}”` : 'Create new property'}</>}
+            </button>
+            <p className="text-[11px] text-slate-400 text-center mt-1.5">
+              {createAddress
+                ? 'Adds it to your properties (from this deal’s details) and links it here.'
+                : 'Type an address above to create a new property for this deal.'}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   )

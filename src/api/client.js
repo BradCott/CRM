@@ -112,6 +112,8 @@ export const closeDealApi   = (id)     => req('POST',   `/deals/${id}/close`)
 export const dropDealApi    = (id)     => req('POST',   `/deals/${id}/drop`)
 export const restoreDealApi    = (id)           => req('POST',  `/deals/${id}/restore`)
 export const linkDealProperty  = (id, propId)   => req('PATCH', `/deals/${id}/link-property`, { property_id: propId })
+// Create a new market property from a deal's own details and link it in one step.
+export const createPropertyFromDeal = (id, data = {}) => req('POST', `/deals/${id}/create-property`, data)
 
 // Reports
 export const getReports       = (params = {}) => {

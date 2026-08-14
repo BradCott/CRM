@@ -6,7 +6,7 @@ import {
   getAllProperties, getPropertyStates,
   createProperty, updateProperty, deleteProperty,
   getDeals, createDeal, updateDeal, patchDealStage, deleteDeal,
-  closeDealApi, dropDealApi, restoreDealApi, linkDealProperty,
+  closeDealApi, dropDealApi, restoreDealApi, linkDealProperty, createPropertyFromDeal,
   getImportStats, getCategories, createCategory, deleteCategory,
 } from '../api/client'
 import { DEFAULT_STAGES } from '../utils/constants'
@@ -203,6 +203,16 @@ export function AppProvider({ children }) {
     notify(propertyId ? 'Property linked' : 'Property unlinked')
   }, [notify])
 
+  // Create a brand-new market property from a deal's own details and link it.
+  const createPropertyForDeal = useCallback(async (dealId, overrides = {}) => {
+    const row = await createPropertyFromDeal(dealId, overrides)
+    setDeals(prev => prev.map(x => x.id === dealId ? row : x))
+    // Refresh the property list so the new one is immediately searchable/linkable.
+    try { setAllProperties(await getAllProperties()) } catch { /* non-fatal */ }
+    notify('Property created & linked')
+    return row
+  }, [notify])
+
   const moveDeal = useCallback(async (id, newStage) => {
     setDeals(prev => prev.map(d => d.id === id ? { ...d, stage: newStage } : d))
     try {
@@ -241,7 +251,7 @@ export function AppProvider({ children }) {
       allPeople, addPerson, editPerson, removePerson,
       allProperties, addProperty, editProperty, removeProperty,
       propertyStates,
-      deals, addDeal, editDeal, removeDeal, moveDeal, closeDeal, dropDeal, restoreDeal, linkPropertyToDeal,
+      deals, addDeal, editDeal, removeDeal, moveDeal, closeDeal, dropDeal, restoreDeal, linkPropertyToDeal, createPropertyForDeal,
       stages,
       customCategories, addCategory, removeCategory,
       toast, notify,
