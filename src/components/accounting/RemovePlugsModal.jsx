@@ -38,7 +38,7 @@ export default function RemovePlugsModal({ onClose, onCleared }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] flex flex-col" onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 shrink-0">
           <h3 className="text-base font-semibold text-slate-900">Remove reconciliation plugs</h3>

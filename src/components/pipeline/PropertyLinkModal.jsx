@@ -29,7 +29,6 @@ export default function PropertyLinkModal({ deal, onLink, onUnlink, onClose }) {
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/40"
-      onMouseDown={e => { if (e.target === e.currentTarget) onClose() }}
     >
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md mx-4 overflow-hidden flex flex-col max-h-[80vh]">
 

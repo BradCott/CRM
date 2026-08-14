@@ -1282,7 +1282,7 @@ export default function BulkSendModal({ onClose, onDone }) {
       {/* Full contact info — opens above the campaign modal */}
       {viewId && (
         <div className="fixed inset-0 z-[60]">
-          <div className="absolute inset-0 bg-black/40" onClick={() => setViewId(null)} />
+          <div className="absolute inset-0 bg-black/40" />
           <PersonDetail personId={viewId} onClose={() => setViewId(null)} onEdit={() => setViewId(null)} />
         </div>
       )}
