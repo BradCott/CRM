@@ -148,7 +148,7 @@ export default function DealDetailPage() {
                 {stage && <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${stage.cls}`}>{stage.label}</span>}
               </div>
               {deal.property_id ? (
-                <button onClick={() => navigate(`/properties?open=${deal.property_id}`)}
+                <button onClick={() => navigate(`/properties/${deal.property_id}`)}
                   className="group inline-flex items-center gap-1.5 text-left">
                   <h1 className="text-xl font-bold text-slate-900 leading-snug group-hover:text-blue-700 group-hover:underline">{deal.address || 'Untitled deal'}</h1>
                   <ExternalLink className="w-4 h-4 text-slate-400 group-hover:text-blue-600 shrink-0" />

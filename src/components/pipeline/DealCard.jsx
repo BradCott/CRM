@@ -29,7 +29,7 @@ export default function DealCard({ deal, index, onEdit, onDelete, onLink }) {
           <div className="flex items-start justify-between gap-2 mb-1.5">
             {deal.property_id ? (
               <button
-                onClick={e => { e.stopPropagation(); navigate(`/properties?open=${deal.property_id}`) }}
+                onClick={e => { e.stopPropagation(); navigate(`/properties/${deal.property_id}`) }}
                 className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full hover:bg-blue-100 hover:underline text-left"
               >
                 {deal.tenant_brand_name || 'No tenant'}
@@ -71,7 +71,7 @@ export default function DealCard({ deal, index, onEdit, onDelete, onLink }) {
               <MapPin className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
               {deal.property_id ? (
                 <button
-                  onClick={e => { e.stopPropagation(); navigate(`/properties?open=${deal.property_id}`) }}
+                  onClick={e => { e.stopPropagation(); navigate(`/properties/${deal.property_id}`) }}
                   className="text-sm font-medium text-blue-700 leading-snug hover:underline text-left"
                 >
                   {address}

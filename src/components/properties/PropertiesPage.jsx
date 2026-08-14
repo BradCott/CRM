@@ -13,7 +13,6 @@ import Modal from '../ui/Modal'
 import ConfirmDialog from '../ui/ConfirmDialog'
 import EmptyState from '../ui/EmptyState'
 import PropertyForm from './PropertyForm'
-import PropertyDetail from './PropertyDetail'
 import BulkSendModal from '../handwrytten/BulkSendModal'
 import OperatorManager from './OperatorManager'
 import ColumnCustomizer, {
@@ -319,10 +318,12 @@ export default function PropertiesPage() {
   const [showForm, setShowForm]         = useState(false)
   const [editTarget, setEditTarget]     = useState(null)
   const [deleteTarget, setDeleteTarget] = useState(null)
-  const [detailId, setDetailId]         = useState(() => {
-    const id = new URLSearchParams(window.location.search).get('open')
-    return id ? Number(id) : null
-  })
+  // Legacy `?open=<id>` deep-links (older links from deals/people) → redirect to
+  // the full-page property detail.
+  useEffect(() => {
+    const id = searchParams.get('open')
+    if (id) navigate(`/properties/${id}`, { replace: true })
+  }, [])   // eslint-disable-line react-hooks/exhaustive-deps
   const [openMenu, setOpenMenu]         = useState(null)
   const [showCustomizer, setShowCustomizer] = useState(false)
   const [selected, setSelected]         = useState(() => new Set())
@@ -612,7 +613,7 @@ export default function PropertiesPage() {
                 </thead>
                 <tbody>
                   {rows.map((p, i) => (
-                    <tr key={p.id} onClick={() => { setDetailId(p.id); setShowCustomizer(false) }}
+                    <tr key={p.id} onClick={() => navigate(`/properties/${p.id}`)}
                       className={`border-b border-slate-100 last:border-0 hover:bg-blue-50/40 transition-colors cursor-pointer ${selected.has(p.id) ? 'bg-blue-50/60' : i%2===0?'bg-white':'bg-slate-50/40'}`}>
                       <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
                         <input type="checkbox" checked={selected.has(p.id)} onChange={() => toggleRow(p.id)}
@@ -667,13 +668,6 @@ export default function PropertiesPage() {
         <PropertyForm property={editTarget} onSave={handleSave} onClose={() => { setShowForm(false); setEditTarget(null) }} />
       </Modal>
       <ConfirmDialog isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={handleDelete} title="Delete property?" message={`"${deleteTarget?.address}" will be permanently deleted.`} />
-      {detailId && (
-        <>
-          <div className="fixed inset-0 z-30 bg-black/10" onClick={() => setDetailId(null)} />
-          <PropertyDetail propertyId={detailId} onClose={() => setDetailId(null)}
-            onEdit={(full) => { const p = full || rows.find(r=>r.id===detailId); if(p){setEditTarget(p);setShowForm(true)} setDetailId(null) }} />
-        </>
-      )}
       {openMenu && <div className="fixed inset-0 z-0" onClick={() => setOpenMenu(null)} />}
       {showBulkSend && (
         <BulkSendModal

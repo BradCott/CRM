@@ -12,6 +12,7 @@ import ImportPage       from './components/import/ImportPage'
 import ReportsPage      from './components/reports/ReportsPage'
 import PortfolioPage    from './components/portfolio/PortfolioPage'
 import PropertyWorkspacePage from './components/properties/PropertyWorkspacePage'
+import MarketPropertyPage from './components/properties/MarketPropertyPage'
 import HistoricalTransactionsPage from './components/historical/HistoricalTransactionsPage'
 import InvestorsPage          from './components/investors/InvestorsPage'
 import InvestorProfilePage   from './components/investors/InvestorProfilePage'
@@ -102,6 +103,7 @@ export default function App() {
               <Route path="/tenant-contacts" element={<TenantContactsPage />} />
               <Route path="/extension"  element={<ExtensionPage />} />
               <Route path="/properties" element={<PropertiesPage />} />
+              <Route path="/properties/:id" element={<MarketPropertyPage />} />
               <Route path="/pipeline"   element={<PipelinePage />} />
               <Route path="/pipeline/:dealId" element={<DealDetailPage />} />
               <Route path="/critical-dates" element={<CriticalDatesPage />} />
