@@ -268,7 +268,8 @@ export default function BulkSendModal({ onClose, onDone }) {
   const [filterOperators,  setFilterOperators]  = useState([])       // operator names — target Corporate vs a franchisee
   const [filterLeaseStart, setFilterLeaseStart] = useState('')       // optional
   const [filterLeaseEnd,   setFilterLeaseEnd]   = useState('')       // optional
-  const [filterBuiltBefore, setFilterBuiltBefore] = useState('')     // only properties built before this year (nulls included)
+  const [builtMode,        setBuiltMode]        = useState('')       // required: '' unset | 'all' (no filter) | 'before'
+  const [filterBuiltBefore, setFilterBuiltBefore] = useState('')     // year for builtMode==='before' (nulls always included)
   const [remailOnly,       setRemailOnly]       = useState(false)    // only owners with a freshly corrected address
 
   // ── Recipients state ───────────────────────────────────────────────────────
@@ -390,9 +391,9 @@ export default function BulkSendModal({ onClose, onDone }) {
         filtered = filtered.filter(p => p.lease_end && p.lease_end <= filterLeaseEnd)
       }
 
-      // Year built — only mail properties built before this year. Properties with
-      // NO registered year built are INCLUDED (we still want to reach them).
-      if (filterBuiltBefore) {
+      // Year built — only when the user chose "built before". Properties with NO
+      // registered year built are ALWAYS included (we still want to reach them).
+      if (builtMode === 'before' && filterBuiltBefore) {
         const yr = Number(filterBuiltBefore)
         filtered = filtered.filter(p => p.year_built == null || p.year_built === '' || Number(p.year_built) < yr)
       }
@@ -453,7 +454,7 @@ export default function BulkSendModal({ onClose, onDone }) {
     } finally {
       setLoadingRec(false)
     }
-  }, [filterStates, filterTenant, filterOwnerTypes, filterOperators, filterLeaseStart, filterLeaseEnd, filterBuiltBefore, remailOnly])
+  }, [filterStates, filterTenant, filterOwnerTypes, filterOperators, filterLeaseStart, filterLeaseEnd, builtMode, filterBuiltBefore, remailOnly])
 
   // Recipients actually getting mailed this round (excluded ones removed)
   const includedRecipients = useMemo(
@@ -601,14 +602,17 @@ export default function BulkSendModal({ onClose, onDone }) {
     filterTenant.trim() !== '',
     filterOwnerTypes.length > 0,
     filterLeaseStart !== '' || filterLeaseEnd !== '',
-    filterBuiltBefore !== '',
+    builtMode === 'before' && filterBuiltBefore !== '',
   ].filter(Boolean).length
+
+  // Year-built is a required, conscious choice before previewing recipients.
+  const builtChoiceReady = builtMode === 'all' || (builtMode === 'before' && Number(filterBuiltBefore) > 0)
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl flex flex-col max-h-[90vh]">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-5xl h-[92vh] flex flex-col">
 
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
@@ -639,7 +643,7 @@ export default function BulkSendModal({ onClose, onDone }) {
           <>
             <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
               <p className="text-sm text-slate-500">
-                Narrow which property owners receive letters. All filters are optional — leave everything blank to include every owner with a valid mailing address.
+                Narrow which property owners receive letters. Everything except the Year Built choice is optional — leave the rest blank to include every owner with a valid mailing address.
               </p>
 
               {/* Re-mail queue — owners whose address was just corrected */}
@@ -732,31 +736,32 @@ export default function BulkSendModal({ onClose, onDone }) {
                 </div>
               </div>
 
-              {/* Year built — target older properties; unknowns are still mailed */}
-              <div>
-                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">
-                  Year Built <span className="ml-1 text-slate-400 normal-case font-normal">(optional)</span>
+              {/* Year built — REQUIRED choice so the user consciously decides */}
+              <div className={`rounded-xl border px-3 py-3 ${builtMode === '' ? 'border-amber-300 bg-amber-50/40' : 'border-slate-200'}`}>
+                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-2">
+                  Year Built <span className="ml-1 text-red-500 normal-case font-normal">(required — pick one)</span>
                 </label>
-                <div className="flex items-center gap-2">
-                  <span className="text-sm text-slate-500 shrink-0">Built before</span>
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    placeholder="e.g. 2000"
-                    value={filterBuiltBefore}
-                    onChange={e => setFilterBuiltBefore(e.target.value)}
-                    className="w-28 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                  {filterBuiltBefore && (
-                    <button
-                      onClick={() => setFilterBuiltBefore('')}
-                      className="text-xs text-slate-400 hover:text-slate-600 shrink-0"
-                    >Clear</button>
-                  )}
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="builtMode" checked={builtMode === 'all'} onChange={() => setBuiltMode('all')} className="accent-blue-600" />
+                    <span className="text-sm text-slate-700">Mail all — <span className="text-slate-500">don't filter by year built</span></span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input type="radio" name="builtMode" checked={builtMode === 'before'} onChange={() => setBuiltMode('before')} className="accent-blue-600" />
+                    <span className="text-sm text-slate-700">Only properties built before</span>
+                    <input
+                      type="number" inputMode="numeric" placeholder="2000"
+                      value={filterBuiltBefore}
+                      onFocus={() => setBuiltMode('before')}
+                      onChange={e => { setFilterBuiltBefore(e.target.value); setBuiltMode('before') }}
+                      className="w-24 text-sm border border-slate-200 rounded-lg px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-slate-50 disabled:text-slate-400"
+                      disabled={builtMode !== 'before'}
+                    />
+                  </label>
                 </div>
-                {filterBuiltBefore && (
-                  <p className="text-[11px] text-slate-400 mt-1">Includes properties with no year built on file, so none are missed.</p>
-                )}
+                <div className="mt-2.5 rounded-lg bg-blue-50 border border-blue-100 px-3 py-2">
+                  <p className="text-[11px] text-blue-800 font-medium">Properties with no year built on file are always mailed — regardless of this setting — so none are missed.</p>
+                </div>
               </div>
 
               {activeFilterCount === 0 && (
@@ -768,15 +773,18 @@ export default function BulkSendModal({ onClose, onDone }) {
 
             <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100">
               <button onClick={onClose} className="text-sm text-slate-500 hover:text-slate-700">Cancel</button>
-              <Button
-                onClick={async () => { await buildRecipients(); setStep('preview') }}
-                disabled={loadingRec}
-              >
-                {loadingRec
-                  ? <><Loader2 className="w-4 h-4 animate-spin" /> Loading…</>
-                  : <>Preview Recipients <ChevronRight className="w-4 h-4" /></>
-                }
-              </Button>
+              <div className="flex items-center gap-3">
+                {!builtChoiceReady && <span className="text-xs text-amber-600">Choose a Year Built option to continue</span>}
+                <Button
+                  onClick={async () => { await buildRecipients(); setStep('preview') }}
+                  disabled={loadingRec || !builtChoiceReady}
+                >
+                  {loadingRec
+                    ? <><Loader2 className="w-4 h-4 animate-spin" /> Loading…</>
+                    : <>Preview Recipients <ChevronRight className="w-4 h-4" /></>
+                  }
+                </Button>
+              </div>
             </div>
           </>
         )}
