@@ -325,18 +325,15 @@ export default function BulkSendModal({ onClose, onDone }) {
         setFonts(fontList)
         setSignatures(sigList)
         setReturnAddrs(raList)
-        const defRet = raList.find(r => r.is_default) || raList[0] || null
-        setSelectedReturn(defRet?.id ?? null)
+        // Signature + return address start UNCHOSEN — the sender must pick both.
         const defCard = cardList.find(c => (c.name || '').toLowerCase().includes('knox 1')) || cardList[0] || null
         const defFont = fontList.find(f =>
           (f.label || '').toLowerCase().includes('jokester') ||
           (f.label || '').toLowerCase().includes('jarrod') ||
           (f.label || '').toLowerCase().includes('jared')
         ) || fontList[0] || null
-        const defSig = sigList.find(s => s.is_default) || sigList[0] || null
         setSelectedCard(defCard?.id ?? null)
         setSelectedFont(defFont?.label ?? null)
-        setSelectedSig(defSig?.id ?? null)
       })
       .catch(() => {})
       .finally(() => setLoadingMeta(false))
@@ -517,6 +514,8 @@ export default function BulkSendModal({ onClose, onDone }) {
       await downloadHandwryttenBulkFile({
         recipients: includedRecipients.map(r => ({ contact_id: r.contact_id, property_id: r.property_id })),
         message,
+        sign_off: `Sincerely,\r\n${sigSuffix.trim()}`,
+        return_address_id: selectedReturn,
       })
     } catch (err) {
       setSendError(err.message)
@@ -1083,13 +1082,14 @@ export default function BulkSendModal({ onClose, onDone }) {
 
               {/* Signature */}
               <div>
-                <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5 block">Signature</label>
+                <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5 block">Signature <span className="text-red-500 normal-case font-normal">(required)</span></label>
                 {signatures.length > 0 ? (
                   <select
                     value={selectedSig ?? ''}
                     onChange={e => setSelectedSig(e.target.value ? Number(e.target.value) : null)}
-                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className={`w-full text-sm border rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${selectedSig ? 'border-slate-200' : 'border-amber-300'}`}
                   >
+                    <option value="">— Choose a signature —</option>
                     {signatures.map(s => <option key={s.id} value={s.id}>{s.label}{s.is_default ? ' (default)' : ''}</option>)}
                   </select>
                 ) : (
@@ -1102,13 +1102,14 @@ export default function BulkSendModal({ onClose, onDone }) {
 
               {/* Return address */}
               <div>
-                <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5 block">Return Address</label>
+                <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5 block">Return Address <span className="text-red-500 normal-case font-normal">(required)</span></label>
                 {returnAddrs.length > 0 ? (
                   <select
                     value={selectedReturn ?? ''}
                     onChange={e => setSelectedReturn(e.target.value ? Number(e.target.value) : null)}
-                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className={`w-full text-sm border rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 ${selectedReturn ? 'border-slate-200' : 'border-amber-300'}`}
                   >
+                    <option value="">— Choose a return address —</option>
                     {returnAddrs.map(r => <option key={r.id} value={r.id}>{r.label}{r.is_default ? ' (default)' : ''} — {[r.first_name, r.last_name].filter(Boolean).join(' ')}, {[r.city, r.state].filter(Boolean).join(', ')}</option>)}
                   </select>
                 ) : (
@@ -1199,24 +1200,27 @@ export default function BulkSendModal({ onClose, onDone }) {
             <div className="flex items-center justify-between px-6 py-4 border-t border-slate-100">
               <button onClick={() => setStep('filters')} className="text-sm text-slate-500 hover:text-slate-700">← Back</button>
               <div className="flex items-center gap-3">
+                {!(selectedSig && selectedReturn) && (
+                  <span className="text-xs text-amber-600">Choose a signature and return address</span>
+                )}
                 <span className="text-xs text-slate-400">
                   {includedRecipients.length} letters · est. ${(includedRecipients.length * COST_LOW).toFixed(0)}–${(includedRecipients.length * COST_HIGH).toFixed(0)}
                 </span>
                 {/* Download a Handwrytten bulk-upload spreadsheet → one order on their site */}
                 <button
                   onClick={handleDownloadBulk}
-                  disabled={includedRecipients.length === 0 || overLimit || downloading}
+                  disabled={includedRecipients.length === 0 || overLimit || downloading || !selectedSig || !selectedReturn}
                   title="Download a ready-to-upload Handwrytten bulk file (one batched order). Pick the card & font on their site, then upload this."
                   className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100 transition-colors disabled:opacity-50"
                 >
                   {downloading ? <><Loader2 className="w-4 h-4 animate-spin" /> Building…</> : <>⬇ Handwrytten bulk file</>}
                 </button>
                 {sendMode === 'drip' ? (
-                  <Button onClick={handleScheduleDrip} disabled={includedRecipients.length === 0 || overLimit || sending}>
+                  <Button onClick={handleScheduleDrip} disabled={includedRecipients.length === 0 || overLimit || sending || !selectedSig || !selectedReturn}>
                     {sending ? <><Loader2 className="w-4 h-4 animate-spin" /> Scheduling…</> : <><Mail className="w-4 h-4" /> Start Drip ({batchSize}/{intervalDays}d)</>}
                   </Button>
                 ) : (
-                  <Button onClick={handleSend} disabled={includedRecipients.length === 0 || overLimit}>
+                  <Button onClick={handleSend} disabled={includedRecipients.length === 0 || overLimit || !selectedSig || !selectedReturn}>
                     <Mail className="w-4 h-4" /> Send {includedRecipients.length} Letter{includedRecipients.length !== 1 ? 's' : ''}
                   </Button>
                 )}
