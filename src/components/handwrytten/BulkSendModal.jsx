@@ -268,6 +268,7 @@ export default function BulkSendModal({ onClose, onDone }) {
   const [filterOperators,  setFilterOperators]  = useState([])       // operator names — target Corporate vs a franchisee
   const [filterLeaseStart, setFilterLeaseStart] = useState('')       // optional
   const [filterLeaseEnd,   setFilterLeaseEnd]   = useState('')       // optional
+  const [filterBuiltBefore, setFilterBuiltBefore] = useState('')     // only properties built before this year (nulls included)
   const [remailOnly,       setRemailOnly]       = useState(false)    // only owners with a freshly corrected address
 
   // ── Recipients state ───────────────────────────────────────────────────────
@@ -389,6 +390,13 @@ export default function BulkSendModal({ onClose, onDone }) {
         filtered = filtered.filter(p => p.lease_end && p.lease_end <= filterLeaseEnd)
       }
 
+      // Year built — only mail properties built before this year. Properties with
+      // NO registered year built are INCLUDED (we still want to reach them).
+      if (filterBuiltBefore) {
+        const yr = Number(filterBuiltBefore)
+        filtered = filtered.filter(p => p.year_built == null || p.year_built === '' || Number(p.year_built) < yr)
+      }
+
       // ── Diagnostic breakdown ──────────────────────────────────────────────
       const totalFiltered  = filtered.length + needsReviewCount
       const noOwner        = filtered.filter(p => !p.owner_id).length
@@ -445,7 +453,7 @@ export default function BulkSendModal({ onClose, onDone }) {
     } finally {
       setLoadingRec(false)
     }
-  }, [filterStates, filterTenant, filterOwnerTypes, filterOperators, filterLeaseStart, filterLeaseEnd, remailOnly])
+  }, [filterStates, filterTenant, filterOwnerTypes, filterOperators, filterLeaseStart, filterLeaseEnd, filterBuiltBefore, remailOnly])
 
   // Recipients actually getting mailed this round (excluded ones removed)
   const includedRecipients = useMemo(
@@ -593,6 +601,7 @@ export default function BulkSendModal({ onClose, onDone }) {
     filterTenant.trim() !== '',
     filterOwnerTypes.length > 0,
     filterLeaseStart !== '' || filterLeaseEnd !== '',
+    filterBuiltBefore !== '',
   ].filter(Boolean).length
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -721,6 +730,33 @@ export default function BulkSendModal({ onClose, onDone }) {
                     >Clear</button>
                   )}
                 </div>
+              </div>
+
+              {/* Year built — target older properties; unknowns are still mailed */}
+              <div>
+                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">
+                  Year Built <span className="ml-1 text-slate-400 normal-case font-normal">(optional)</span>
+                </label>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm text-slate-500 shrink-0">Built before</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    placeholder="e.g. 2000"
+                    value={filterBuiltBefore}
+                    onChange={e => setFilterBuiltBefore(e.target.value)}
+                    className="w-28 text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  {filterBuiltBefore && (
+                    <button
+                      onClick={() => setFilterBuiltBefore('')}
+                      className="text-xs text-slate-400 hover:text-slate-600 shrink-0"
+                    >Clear</button>
+                  )}
+                </div>
+                {filterBuiltBefore && (
+                  <p className="text-[11px] text-slate-400 mt-1">Includes properties with no year built on file, so none are missed.</p>
+                )}
               </div>
 
               {activeFilterCount === 0 && (
