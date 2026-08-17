@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ShieldCheck, UserPlus, Loader2, AlertCircle, CheckCircle, X, Copy, Check, GitMerge } from 'lucide-react'
+import { ShieldCheck, UserPlus, Loader2, AlertCircle, CheckCircle, X, Copy, Check, GitMerge, Building2 } from 'lucide-react'
+import CostarEnrichModal from './CostarEnrichModal'
 import { useAuth } from '../../context/AuthContext'
 import { getTenantBrands, mergeTenantBrands } from '../../api/client'
 
@@ -248,6 +249,27 @@ function InviteModal({ onClose, onInvited }) {
   )
 }
 
+// One-off tool: bulk-fill property attributes (year built, size, etc.) from a
+// CoStar export. Lives in Admin because it touches ALL properties and is used
+// rarely, not as part of day-to-day portfolio work.
+function CostarEnrichCard() {
+  const [show, setShow] = useState(false)
+  return (
+    <div className="mt-6 bg-white border border-slate-200 rounded-xl p-5">
+      <div className="flex items-start justify-between gap-4 flex-wrap">
+        <div className="min-w-0">
+          <h2 className="text-sm font-semibold text-slate-700 flex items-center gap-1.5"><Building2 className="w-4 h-4 text-blue-600" /> Enrich properties from CoStar</h2>
+          <p className="text-xs text-slate-500 mt-1 max-w-xl">Upload a CoStar export (CSV or Excel) to bulk-fill year built, building size, land area, property type &amp; construction across all matching properties. Matches on address; you review every change before it applies.</p>
+        </div>
+        <button onClick={() => setShow(true)} className="shrink-0 inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700">
+          <Building2 className="w-3.5 h-3.5" /> Upload CoStar export
+        </button>
+      </div>
+      {show && <CostarEnrichModal onClose={() => setShow(false)} />}
+    </div>
+  )
+}
+
 export default function AdminPage() {
   const { user: me } = useAuth()
   const [users, setUsers]       = useState([])
@@ -407,6 +429,7 @@ export default function AdminPage() {
         )}
 
         <BrandMergeCard />
+        <CostarEnrichCard />
       </div>
 
       {showInvite && (

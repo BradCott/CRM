@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   Landmark, Plus, MoreHorizontal, Pencil, Trash2, Loader2,
-  ChevronLeft, ChevronRight, AlertCircle, Upload, Download, X, CheckCircle2, Settings2, FileText, Mail, Building2,
+  ChevronLeft, ChevronRight, AlertCircle, Upload, Download, X, CheckCircle2, Settings2, FileText, Mail,
 } from 'lucide-react'
 import { getProperties, getPropertyFeeSummary } from '../../api/client'
 import { useApp } from '../../context/AppContext'
@@ -13,7 +13,6 @@ import ConfirmDialog from '../ui/ConfirmDialog'
 import PropertyForm from '../properties/PropertyForm'
 import AddViaSettlementModal from './AddViaSettlementModal'
 import InvestorEmailComposer from '../accounting/InvestorEmailComposer'
-import CostarEnrichModal from './CostarEnrichModal'
 import ColumnCustomizer, {
   buildPanelCols, loadSavedCols, detectPreset, saveColsToStorage,
 } from '../ui/ColumnCustomizer'
@@ -118,7 +117,6 @@ export default function PortfolioPage() {
   const [openMenu, setOpenMenu]         = useState(null)
   const [showImport, setShowImport]         = useState(false)
   const [showAddSettlement, setShowAddSettlement] = useState(false)
-  const [showEnrich, setShowEnrich]     = useState(false)
   const [emailTarget, setEmailTarget]   = useState(null)   // property whose investors we're emailing
   const [feeSummary, setFeeSummary]     = useState(null)
   const [showCustomizer, setShowCustomizer] = useState(false)
@@ -219,9 +217,6 @@ export default function PortfolioPage() {
             <button onClick={() => setShowImport(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">
               <Upload className="w-4 h-4" /> Import CSV
             </button>
-            <button onClick={() => setShowEnrich(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">
-              <Building2 className="w-4 h-4" /> Enrich (CoStar)
-            </button>
             <button onClick={() => setShowAddSettlement(true)} className="flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-600 border border-slate-200 rounded-lg hover:bg-slate-50">
               <FileText className="w-4 h-4" /> Add via Settlement
             </button>
@@ -306,13 +301,6 @@ export default function PortfolioPage() {
         <PropertyForm property={editTarget} onSave={handleSave} onClose={() => { setShowForm(false); setEditTarget(null) }} />
       </Modal>
       <ConfirmDialog isOpen={!!deleteTarget} onClose={() => setDeleteTarget(null)} onConfirm={handleDelete} title="Remove from portfolio?" message={`"${deleteTarget?.address}" will be permanently deleted.`} />
-      {showEnrich && (
-        <CostarEnrichModal
-          onClose={() => setShowEnrich(false)}
-          onApplied={() => load(search, tenantFilter, stateFilter, page)}
-        />
-      )}
-
       {emailTarget && (
         <InvestorEmailComposer
           propertyId={emailTarget.id}
