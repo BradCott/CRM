@@ -45,7 +45,9 @@ const PORT = process.env.PORT || 3001
 const isProd = process.env.NODE_ENV === 'production'
 
 app.use(cors({ origin: true, credentials: true }))
-app.use(express.json())
+// 25mb so large JSON bodies work — bulk imports (e.g. a 2,000-row CoStar enrich
+// apply) and base64-encoded email attachments (accountant bundle). Default is 100kb.
+app.use(express.json({ limit: '25mb' }))
 app.use(cookieParser())
 
 // ── Production: serve built React app for all non-API routes ──────────────────

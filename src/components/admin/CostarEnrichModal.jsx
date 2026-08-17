@@ -88,17 +88,22 @@ export default function CostarEnrichModal({ onClose, onApplied }) {
         ) : (
           <div className="flex-1 min-h-0 flex flex-col">
             <div className="px-5 py-3 border-b border-slate-100 shrink-0 flex items-center justify-between flex-wrap gap-2">
-              <div className="text-sm text-slate-600">
-                <span className="font-semibold text-slate-800">{preview.matched.length}</span> matched
-                {conflicts > 0 && <> · <span className="text-amber-600 font-medium">{conflicts} with existing values</span></>}
-                {preview.unmatched.length > 0 && <> · <button onClick={() => setShowUnmatched(s => !s)} className="text-slate-500 underline">{preview.unmatched.length} unmatched</button></>}
+              <div className="text-sm text-slate-600 flex items-center gap-x-1.5 flex-wrap">
+                <span className="text-slate-400">{preview.counts.total.toLocaleString()} rows:</span>
+                <span className="font-semibold text-emerald-700">{preview.counts.to_update.toLocaleString()} to update</span>
+                {conflicts > 0 && <span className="text-amber-600">· {conflicts} overwrite existing</span>}
+                {preview.counts.already_current > 0 && <span className="text-slate-500">· {preview.counts.already_current.toLocaleString()} already current / blank</span>}
+                {preview.counts.unmatched > 0 && <span className="text-slate-500">· <button onClick={() => setShowUnmatched(s => !s)} className="underline hover:text-slate-700">{preview.counts.unmatched.toLocaleString()} not found</button></span>}
               </div>
               <div className="text-xs text-slate-400">Mapped: {preview.detected.map(d => LABELS[d.field]).join(', ')}</div>
             </div>
 
             {showUnmatched && preview.unmatched.length > 0 && (
-              <div className="px-5 py-2 bg-slate-50 border-b border-slate-100 shrink-0 max-h-28 overflow-y-auto">
-                <p className="text-[11px] font-semibold text-slate-400 uppercase mb-1">Not found in your portfolio</p>
+              <div className="px-5 py-2 bg-slate-50 border-b border-slate-100 shrink-0 max-h-44 overflow-y-auto">
+                <div className="flex items-center justify-between mb-1 sticky top-0 bg-slate-50 py-0.5">
+                  <p className="text-[11px] font-semibold text-slate-400 uppercase">Not found in your CRM by address ({preview.unmatched.length})</p>
+                  <button onClick={() => navigator.clipboard?.writeText(preview.unmatched.join('\n'))} className="text-[11px] text-blue-600 hover:underline">Copy list</button>
+                </div>
                 {preview.unmatched.map((u, i) => <p key={i} className="text-xs text-slate-500">{u}</p>)}
               </div>
             )}

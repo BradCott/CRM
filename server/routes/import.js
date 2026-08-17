@@ -930,12 +930,13 @@ router.post('/costar-enrich/preview', upload.single('file'), (req, res) => {
   }
 
   const matched = [], unmatched = []
+  let noAddress = 0, alreadyCurrent = 0
   for (const row of rows) {
     const addr = row[addrKey], city = cityKey ? row[cityKey] : '', state = stateKey ? row[stateKey] : ''
-    if (!addr) continue
+    if (!addr) { noAddress++; continue }
     const norm = normalizeAddr(addr), exp = expandAbbrevs(norm)
     const prop = bestMatch(exactMap.get(norm), city, state) || bestMatch(expandedMap.get(exp), city, state)
-    if (!prop) { if (unmatched.length < 200) unmatched.push([addr, city, state].filter(Boolean).join(', ')); continue }
+    if (!prop) { unmatched.push([addr, city, state].filter(Boolean).join(', ')); continue }
     const fields = {}
     for (const f of detected) {
       const val = coerce(f, row[f.col])
@@ -946,8 +947,14 @@ router.post('/costar-enrich/preview', upload.single('file'), (req, res) => {
       fields[f.field] = { old: old ?? null, val, conflict: old != null && old !== '' }
     }
     if (Object.keys(fields).length) matched.push({ property_id: prop.id, address: prop.address, city: prop.city, state: prop.state, fields })
+    else alreadyCurrent++   // matched a property, but nothing to change (already correct, or blank in the file)
   }
-  res.json({ detected: detected.map(d => ({ field: d.field, col: d.col, unit: d.unit })), matched, unmatched, total: rows.length })
+  // full accounting so every uploaded row is visible: to-update + already-current + unmatched + no-address = total
+  res.json({
+    detected: detected.map(d => ({ field: d.field, col: d.col, unit: d.unit })),
+    matched, unmatched,
+    counts: { total: rows.length, to_update: matched.length, already_current: alreadyCurrent, unmatched: unmatched.length, no_address: noAddress },
+  })
 })
 
 router.post('/costar-enrich/apply', (req, res) => {
