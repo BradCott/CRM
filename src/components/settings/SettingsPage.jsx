@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle, Download, Database, Mail, Loader2, Trash2, PenLine } from 'lucide-react'
-import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, syncGmailNow, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl, getEmailFrom, setEmailFrom, getSenderStatus, disconnectSender, getHwSignatures, addHwSignature, setDefaultHwSignature, deleteHwSignature, getMyGmailStatus, disconnectMyGmail, refreshMyDigest, connectMyGmailUrl } from '../../api/client'
+import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, syncGmailNow, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl, getEmailFrom, setEmailFrom, getSenderStatus, disconnectSender, getHwSignatures, addHwSignature, setDefaultHwSignature, deleteHwSignature, getMyGmailStatus, disconnectMyGmail, refreshMyDigest, connectMyGmailUrl, getMyMailProfile, saveMyMailProfile } from '../../api/client'
 import Button from '../ui/Button'
 
 // Preset "From" addresses for outbound app email. Sending as management@
@@ -26,6 +26,40 @@ export default function SettingsPage() {
   const [sender, setSender]         = useState(null)   // dedicated send mailbox status
   const [myGmail, setMyGmail]       = useState(null)   // my personal Gmail for Today's Plays
   const [digestBusy, setDigestBusy] = useState(false)
+  const [mail, setMail]             = useState(null)   // my handwritten-mail return-address profile
+  const [mailSaving, setMailSaving] = useState(false)
+  const [mailNote, setMailNote]     = useState('')
+
+  useEffect(() => {
+    getMyMailProfile()
+      .then(r => setMail({
+        mail_from_first:      r.profile?.mail_from_first      || '',
+        mail_from_last:       r.profile?.mail_from_last       || '',
+        mail_return_business: r.profile?.mail_return_business || '',
+        mail_return_line1:    r.profile?.mail_return_line1    || '',
+        mail_return_line2:    r.profile?.mail_return_line2    || '',
+        mail_return_city:     r.profile?.mail_return_city     || '',
+        mail_return_state:    r.profile?.mail_return_state    || '',
+        mail_return_zip:      r.profile?.mail_return_zip      || '',
+        mail_signature_id:    r.profile?.mail_signature_id    || '',
+      }))
+      .catch(() => setMail({}))
+  }, [])
+
+  const setMailField = f => e => setMail(m => ({ ...m, [f]: e.target.value }))
+
+  async function handleSaveMail(e) {
+    e.preventDefault()
+    setMailSaving(true); setMailNote('')
+    try {
+      await saveMyMailProfile(mail)
+      setMailNote('Saved — your mailers will now use this return address and signature.')
+    } catch (err) {
+      setMailNote('Error: ' + err.message)
+    } finally {
+      setMailSaving(false)
+    }
+  }
 
   const loadSender = () => getSenderStatus().then(setSender).catch(() => setSender({ connected: false }))
   const loadMyGmail = () => getMyGmailStatus().then(setMyGmail).catch(() => setMyGmail({ connected: false }))
@@ -376,6 +410,33 @@ export default function SettingsPage() {
             )}
           </Card>
 
+          {/* Per-user handwritten-mail return address + signature */}
+          <Card title="Handwritten Mail — My Return Address" subtitle="Your handwritten mailers (single letters, campaigns, drips) go out with YOUR return address, name, and signature. Each person sets their own here; leave blank to fall back to the Knox default.">
+            {mail === null ? (
+              <p className="text-sm text-slate-400">Loading…</p>
+            ) : (
+              <form onSubmit={handleSaveMail} className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <MailField label="From — First name" value={mail.mail_from_first} onChange={setMailField('mail_from_first')} placeholder="Cole" />
+                  <MailField label="From — Last name"  value={mail.mail_from_last}  onChange={setMailField('mail_from_last')}  placeholder="Howard" />
+                </div>
+                <MailField label="Business (optional)" value={mail.mail_return_business} onChange={setMailField('mail_return_business')} placeholder="Knox Capital" />
+                <MailField label="Return address — line 1" value={mail.mail_return_line1} onChange={setMailField('mail_return_line1')} placeholder="9747 Forestridge Cir" />
+                <MailField label="Line 2 (optional)" value={mail.mail_return_line2} onChange={setMailField('mail_return_line2')} placeholder="Suite / Unit" />
+                <div className="grid grid-cols-3 gap-3">
+                  <MailField label="City"  value={mail.mail_return_city}  onChange={setMailField('mail_return_city')}  placeholder="Dallas" />
+                  <MailField label="State" value={mail.mail_return_state} onChange={setMailField('mail_return_state')} placeholder="TX" />
+                  <MailField label="ZIP"   value={mail.mail_return_zip}   onChange={setMailField('mail_return_zip')}   placeholder="75238" />
+                </div>
+                <MailField label="Signature ID / code" value={mail.mail_signature_id} onChange={setMailField('mail_signature_id')} placeholder="e.g. 1427BC" hint="Your Handwrytten signature code (or a <sig:CODE> tag). Leave blank to use the account default." />
+                <div className="flex items-center gap-3 pt-1">
+                  <Button type="submit" disabled={mailSaving}>{mailSaving ? 'Saving…' : 'Save my mailing profile'}</Button>
+                  {mailNote && <span className={`text-xs ${mailNote.startsWith('Error') ? 'text-red-600' : 'text-emerald-600'}`}>{mailNote}</span>}
+                </div>
+              </form>
+            )}
+          </Card>
+
           <Card title="Outbound Email" subtitle="Which address the CRM sends from — reimbursement requests, tenant notices, portal invites, and reminders.">
             <div className="space-y-3">
               <div className="grid grid-cols-2 gap-2">
@@ -583,6 +644,21 @@ function SignaturesCard() {
         </div>
       </div>
     </Card>
+  )
+}
+
+function MailField({ label, value, onChange, placeholder, hint }) {
+  return (
+    <label className="block">
+      <span className="text-xs font-medium text-slate-600">{label}</span>
+      <input
+        value={value || ''}
+        onChange={onChange}
+        placeholder={placeholder}
+        className="mt-1 w-full px-3 py-2 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+      />
+      {hint && <span className="text-[11px] text-slate-400 mt-1 block">{hint}</span>}
+    </label>
   )
 }
 

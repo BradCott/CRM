@@ -973,6 +973,17 @@ const migrations = [
     UNIQUE(property_id, kind)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_settlement_docs ON settlement_documents(property_id)`,
+  // Per-user handwritten-mail profile — each user's own return address, from-name,
+  // and signature, so mailers go out AS them instead of a hardcoded default.
+  `ALTER TABLE users ADD COLUMN mail_from_first      TEXT`,
+  `ALTER TABLE users ADD COLUMN mail_from_last       TEXT`,
+  `ALTER TABLE users ADD COLUMN mail_return_business TEXT`,
+  `ALTER TABLE users ADD COLUMN mail_return_line1    TEXT`,
+  `ALTER TABLE users ADD COLUMN mail_return_line2    TEXT`,
+  `ALTER TABLE users ADD COLUMN mail_return_city     TEXT`,
+  `ALTER TABLE users ADD COLUMN mail_return_state    TEXT`,
+  `ALTER TABLE users ADD COLUMN mail_return_zip      TEXT`,
+  `ALTER TABLE users ADD COLUMN mail_signature_id    TEXT`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

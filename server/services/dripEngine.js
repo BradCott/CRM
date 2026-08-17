@@ -6,6 +6,7 @@
 import db from '../db.js'
 import { addressKey, REMAIL_BLACKOUT_MONTHS } from '../utils/addressKey.js'
 import { sigSuffix } from '../utils/hwSignature.js'
+import { getMailProfile, senderFields, KNOX_DEFAULTS } from '../utils/mailProfile.js'
 
 const HW_BASE = 'https://api.handwrytten.com/v2'
 const HW_KEY  = process.env.HANDWRYTTEN_API_KEY
@@ -100,7 +101,9 @@ async function sendQueued(drip, qrow) {
       WHERE p.id = ?`).get(qrow.property_id)
   }
 
-  const resolvedMessage = resolveMergeFields(drip.message_template, person, property) + sigSuffix(db, drip.sig_id)
+  // Send AS the user who created the drip campaign (their return address + signature).
+  const profile = getMailProfile(drip.created_by_user_id, KNOX_DEFAULTS)
+  const resolvedMessage = resolveMergeFields(drip.message_template, person, property) + sigSuffix(db, profile.signature_id)
 
   const insertRes = db.prepare(`
     INSERT INTO handwrytten_sends
@@ -126,13 +129,7 @@ async function sendQueued(drip, qrow) {
       recipient_state:      person.state   || '',
       recipient_zip:        person.zip     || '',
       tocountry:            'US',
-      sender_first_name:    'Knox',
-      sender_last_name:     'Capital',
-      sender_address1:      '7500 W 160th St Ste 101',
-      sender_city:          'Stilwell',
-      sender_state:         'KS',
-      sender_zip:           '66085',
-      sender_country_id:    1,
+      ...senderFields(profile),
     })
     const orderId = hwResult?.order?.id || hwResult?.id || hwResult?.order_id || null
 

@@ -3,8 +3,12 @@ import * as XLSX from 'xlsx'
 import db from '../db.js'
 import { addressKey, REMAIL_BLACKOUT_MONTHS } from '../utils/addressKey.js'
 import { sigSuffix } from '../utils/hwSignature.js'
+import { getMailProfile, senderFields, KNOX_DEFAULTS, BRAD_DEFAULTS } from '../utils/mailProfile.js'
 
 const router  = express.Router()
+
+// The signed-in user's id from the JWT (payload stores it under `sub`, not `id`).
+function currentUserId(req) { return req.user?.sub ? Number(req.user.sub) : null }
 
 // True if this normalized address was already mailed a letter within the
 // blackout window. Excludes a specific campaign so re-sends within the same run
@@ -115,6 +119,38 @@ router.patch('/signatures/:id/default', (req, res) => {
 router.delete('/signatures/:id', (req, res) => {
   db.prepare(`DELETE FROM handwrytten_signatures WHERE id = ?`).run(req.params.id)
   res.json({ ok: true })
+})
+
+// ── Per-user mailing profile (Settings) ───────────────────────────────────────
+// Each user's own return address, from-name, and signature. Read returns the raw
+// saved values plus the effective profile that sends would actually use.
+router.get('/mail-profile', (req, res) => {
+  const userId = currentUserId(req)
+  const u = userId ? db.prepare(`
+    SELECT mail_from_first, mail_from_last, mail_return_business, mail_return_line1,
+           mail_return_line2, mail_return_city, mail_return_state, mail_return_zip, mail_signature_id
+    FROM users WHERE id = ?`).get(userId) : null
+  res.json({ profile: u || {}, effective: getMailProfile(userId, KNOX_DEFAULTS), knoxDefault: KNOX_DEFAULTS })
+})
+
+router.put('/mail-profile', (req, res) => {
+  const userId = currentUserId(req)
+  if (!userId) return res.status(401).json({ error: 'Not signed in' })
+  const b = req.body || {}
+  const s = v => (v == null ? null : (String(v).trim() || null))
+  db.prepare(`
+    UPDATE users SET
+      mail_from_first = ?, mail_from_last = ?, mail_return_business = ?,
+      mail_return_line1 = ?, mail_return_line2 = ?, mail_return_city = ?,
+      mail_return_state = ?, mail_return_zip = ?, mail_signature_id = ?
+    WHERE id = ?
+  `).run(
+    s(b.mail_from_first), s(b.mail_from_last), s(b.mail_return_business),
+    s(b.mail_return_line1), s(b.mail_return_line2), s(b.mail_return_city),
+    s(b.mail_return_state), s(b.mail_return_zip), s(b.mail_signature_id),
+    userId,
+  )
+  res.json({ ok: true, effective: getMailProfile(userId, KNOX_DEFAULTS) })
 })
 
 /** GET /api/handwrytten/fonts — fetches available handwriting fonts */
@@ -269,7 +305,7 @@ router.delete('/campaigns/:id', (req, res) => {
 /** POST /api/handwrytten/send — send a single letter */
 router.post('/send', async (req, res) => {
   const { contact_id, property_id, message, card_id, font, sig_id } = req.body
-  const userId = req.user?.id
+  const userId = currentUserId(req)
 
   if (!contact_id || !message) {
     return res.status(400).json({ error: 'contact_id and message are required' })
@@ -330,7 +366,10 @@ router.post('/send', async (req, res) => {
   const firstName = nameParts[0] || 'Friend'
   const lastName  = nameParts.slice(1).join(' ') || ''
 
-  const finalMessage = resolvedMessage + sigSuffix(db, sig_id)
+  // Mail goes out AS the signed-in sender (return address + name + signature),
+  // falling back to the Knox default when they haven't set a profile.
+  const profile = getMailProfile(userId, KNOX_DEFAULTS)
+  const finalMessage = resolvedMessage + sigSuffix(db, profile.signature_id)
 
   console.log(`[Handwrytten] send — firstName: "${firstName}" lastName: "${lastName}" | message: ${finalMessage}`)
 
@@ -347,13 +386,7 @@ router.post('/send', async (req, res) => {
       recipient_state:      person.state    || '',
       recipient_zip:        person.zip      || '',
       tocountry:            'US',
-      sender_first_name:    'Brad',
-      sender_last_name:     'Cottam',
-      sender_address1:      '7500 W 160th St Ste 101',
-      sender_city:          'Stilwell',
-      sender_state:         'KS',
-      sender_zip:           '66085',
-      sender_country_id:    1,
+      ...senderFields(profile),
     }
 
     const hwResult = await hwPost('/orders/singleStepOrder', orderParams)
@@ -390,28 +423,26 @@ router.post('/send-proof', async (req, res) => {
   const { message, card_id, font, sig_id } = req.body
   if (!message) return res.status(400).json({ error: 'message is required' })
 
-  const finalMessage = message + sigSuffix(db, sig_id)
+  // A proof mailed to yourself — recipient AND sender are your own profile.
+  const userId = currentUserId(req)
+  const profile = getMailProfile(userId, BRAD_DEFAULTS)
+  const finalMessage = message + sigSuffix(db, profile.signature_id)
   try {
     const hwResult = await hwPost('/orders/singleStepOrder', {
       card_id:              card_id || '',
       font_label:           font    || '',
       message:              finalMessage,
       wishes:               '',
-      // Recipient = the Knox return address (i.e. yourself)
-      recipient_first_name: 'Brad',
-      recipient_last_name:  'Cottam',
-      recipient_address1:   '7500 W 160th St Ste 101',
-      recipient_city:       'Stilwell',
-      recipient_state:      'KS',
-      recipient_zip:        '66085',
+      // Recipient = your own return address (mail the proof to yourself)
+      recipient_first_name: profile.from_first || '',
+      recipient_last_name:  profile.from_last  || '',
+      recipient_address1:   profile.line1 || '',
+      recipient_address2:   profile.line2 || '',
+      recipient_city:       profile.city  || '',
+      recipient_state:      profile.state || '',
+      recipient_zip:        profile.zip   || '',
       tocountry:            'US',
-      sender_first_name:    'Brad',
-      sender_last_name:     'Cottam',
-      sender_address1:      '7500 W 160th St Ste 101',
-      sender_city:          'Stilwell',
-      sender_state:         'KS',
-      sender_zip:           '66085',
-      sender_country_id:    1,
+      ...senderFields(profile),
     })
     const orderId = hwResult?.order?.id || hwResult?.id || hwResult?.order_id || null
     res.json({ success: true, order_id: orderId })
@@ -423,7 +454,8 @@ router.post('/send-proof', async (req, res) => {
 /** POST /api/handwrytten/send-bulk — send letters to many contacts */
 router.post('/send-bulk', async (req, res) => {
   const { recipients, message, card_id, font, campaign_name, sig_id } = req.body
-  const userId = req.user?.id
+  const userId = currentUserId(req)
+  const profile = getMailProfile(userId, KNOX_DEFAULTS)   // sender's return address + signature
 
   // recipients: [{ contact_id, property_id? }, ...]
   if (!Array.isArray(recipients) || recipients.length === 0) {
@@ -510,7 +542,7 @@ router.post('/send-bulk', async (req, res) => {
       `).get(contact_id)
     }
 
-    const resolvedMessage = resolveMergeFields(message, person, property) + sigSuffix(db, sig_id)
+    const resolvedMessage = resolveMergeFields(message, person, property) + sigSuffix(db, profile.signature_id)
 
     // Insert pending record
     const insertRes = db.prepare(`
@@ -545,13 +577,7 @@ router.post('/send-bulk', async (req, res) => {
         recipient_state:      person.state    || '',
         recipient_zip:        person.zip      || '',
         tocountry:            'US',
-        sender_first_name:    'Knox',
-        sender_last_name:     'Capital',
-        sender_address1:      '7500 W 160th St Ste 101',
-        sender_city:          'Stilwell',
-        sender_state:         'KS',
-        sender_zip:           '66085',
-        sender_country_id:    1,
+        ...senderFields(profile),
       }
 
       const hwResult = await hwPost('/orders/singleStepOrder', orderParams)
@@ -609,12 +635,13 @@ router.post('/send-bulk', async (req, res) => {
 // replacing the per-letter sender. Records nothing unless the batch succeeds.
 router.post('/send-basket', async (req, res) => {
   const { recipients, message, card_id, font, sig_id } = req.body
-  const userId = req.user?.id
+  const userId = currentUserId(req)
+  const profile = getMailProfile(userId, KNOX_DEFAULTS)   // sender's return address + signature
   if (!Array.isArray(recipients) || recipients.length === 0) return res.status(400).json({ error: 'recipients array is required' })
   if (!message) return res.status(400).json({ error: 'message is required' })
 
   // Build one address entry (with its merged message) per recipient
-  const SIG = sigSuffix(db, sig_id)
+  const SIG = sigSuffix(db, profile.signature_id)
   const addresses = []
   const sendMeta  = []
   const skipped   = []
@@ -649,13 +676,7 @@ router.post('/send-basket', async (req, res) => {
   const basketParams = {
     card_id:           card_id || '',
     font_label:        font    || '',
-    sender_first_name: 'Knox',
-    sender_last_name:  'Capital',
-    sender_address1:   '7500 W 160th St Ste 101',
-    sender_city:       'Stilwell',
-    sender_state:      'KS',
-    sender_zip:        '66085',
-    sender_country_id: 1,
+    ...senderFields(profile),
     addresses,
   }
 
@@ -716,19 +737,21 @@ router.post('/bulk-file', (req, res) => {
   if (!Array.isArray(recipients) || recipients.length === 0) return res.status(400).json({ error: 'recipients array is required' })
   if (!message) return res.status(400).json({ error: 'message is required' })
 
+  // Default the return address + sign-off to the signed-in user's mail profile.
+  const profile = getMailProfile(currentUserId(req), BRAD_DEFAULTS)
   const ret = return_address || {}
   const RET = {
-    first:   ret.first   ?? 'Brad',
-    last:    ret.last    ?? 'Cottam',
-    business:ret.business?? 'Knox Capital',
-    line1:   ret.line1   ?? '7500 W 160th St Ste 101',
-    line2:   ret.line2   ?? '',
-    city:    ret.city    ?? 'Stilwell',
-    state:   ret.state   ?? 'KS',
-    zip:     ret.zip     ?? '66085',
+    first:   ret.first   ?? profile.from_first,
+    last:    ret.last    ?? profile.from_last,
+    business:ret.business?? (profile.business || 'Knox Capital'),
+    line1:   ret.line1   ?? profile.line1,
+    line2:   ret.line2   ?? profile.line2,
+    city:    ret.city    ?? profile.city,
+    state:   ret.state   ?? profile.state,
+    zip:     ret.zip     ?? profile.zip,
     country: ret.country ?? 'United States',
   }
-  const signOff = sign_off ?? 'Sincerely,\r\n<sig:1427BC>'
+  const signOff = sign_off ?? ('Sincerely,\r\n' + sigSuffix(db, profile.signature_id).trim())
 
   const rows = [HW_BULK_HEADERS]
   for (const { contact_id, property_id } of recipients) {
@@ -844,7 +867,7 @@ router.get('/drips/:id/queue', (req, res) => {
  */
 router.post('/drips', (req, res) => {
   const { name, recipients, message, card_id, font, batch_size, interval_days, filters, sig_id } = req.body
-  const userId = req.user?.id
+  const userId = currentUserId(req)
 
   if (!Array.isArray(recipients) || recipients.length === 0) {
     return res.status(400).json({ error: 'recipients array is required' })
