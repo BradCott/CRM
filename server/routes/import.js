@@ -861,4 +861,118 @@ router.post('/recent-sales', upload.single('file'), (req, res) => {
   })
 })
 
+// ── CoStar enrich: fill property attributes from a CoStar export ──────────────
+// Two-step: /preview matches export rows to properties and proposes field
+// changes (no writes); /apply writes the confirmed changes. Reuses the same
+// address matcher as the recent-sales import.
+const COSTAR_FIELDS = [
+  { field: 'year_built',        type: 'int',   labels: ['year built', 'yearbuilt', 'year_built', 'built'] },
+  { field: 'building_size',     type: 'int',   labels: ['rba', 'building sf', 'bldg sf', 'building size', 'building area', 'rentable building area', 'gla'] },
+  { field: 'land_area',         type: 'acres', labels: ['land area (ac)', 'land area ac', 'land area (acres)', 'lot size (ac)', 'lot size acres', 'acres', 'land (ac)'], sfLabels: ['land area (sf)', 'lot size (sf)', 'land sf', 'land area sf'] },
+  { field: 'property_type',     type: 'text',  labels: ['propertytype', 'property type', 'secondary type', 'property_type'] },
+  { field: 'construction_type', type: 'text',  labels: ['construction type', 'construction material', 'construction'] },
+]
+const normHdr = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
+function findHeader(keys, labels) {
+  const wanted = labels.map(normHdr)
+  for (const k of keys) if (wanted.includes(normHdr(k))) return k
+  return null
+}
+function parseUpload(file) {
+  const isXlsx = /\.xlsx?$/.test((file.originalname || '').toLowerCase())
+  return isXlsx ? parseXlsx(file.buffer)
+    : parse(file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true, bom: true })
+}
+const cleanNum = v => { const n = Number(String(v ?? '').replace(/[^0-9.\-]/g, '')); return isFinite(n) ? n : null }
+
+router.post('/costar-enrich/preview', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+  let rows
+  try { rows = parseUpload(req.file) } catch (e) { return res.status(400).json({ error: `File parse error: ${e.message}` }) }
+  if (!rows?.length) return res.status(400).json({ error: 'No rows found in the file' })
+
+  const keys = Object.keys(rows[0])
+  const addrKey = findHeader(keys, ['address', 'property address', 'street address'])
+  if (!addrKey) return res.status(400).json({ error: 'Could not find an Address column in the file' })
+  const cityKey = findHeader(keys, ['city'])
+  const stateKey = findHeader(keys, ['state'])
+
+  const detected = []
+  for (const f of COSTAR_FIELDS) {
+    const col = findHeader(keys, f.labels)
+    if (col) detected.push({ ...f, col, unit: 'primary' })
+    else if (f.sfLabels) { const sf = findHeader(keys, f.sfLabels); if (sf) detected.push({ ...f, col: sf, unit: 'sf' }) }
+  }
+  if (!detected.length) return res.status(400).json({ error: 'No fillable columns found (year built, building size, land area, property type, construction).' })
+
+  const allProps = db.prepare('SELECT id, address, city, state, year_built, building_size, land_area, property_type, construction_type FROM properties').all()
+  const exactMap = new Map(), expandedMap = new Map()
+  for (const p of allProps) {
+    const norm = normalizeAddr(p.address || ''), exp = expandAbbrevs(norm)
+    if (norm) { if (!exactMap.has(norm)) exactMap.set(norm, []); exactMap.get(norm).push(p) }
+    if (exp && exp !== norm) { if (!expandedMap.has(exp)) expandedMap.set(exp, []); expandedMap.get(exp).push(p) }
+  }
+  const bestMatch = (cands, city, state) => {
+    if (!cands?.length) return null
+    if (cands.length === 1) return cands[0]
+    const cl = (city || '').toLowerCase().trim(), sl = (state || '').toLowerCase().trim()
+    const refined = cands.filter(c => (!cl || (c.city || '').toLowerCase() === cl) && (!sl || (c.state || '').toLowerCase() === sl))
+    return refined[0] || cands[0]
+  }
+  const coerce = (f, raw) => {
+    if (raw == null || raw === '') return null
+    if (f.type === 'text') return String(raw).trim() || null
+    let n = cleanNum(raw); if (n == null) return null
+    if (f.type === 'acres' && f.unit === 'sf') n = Math.round((n / 43560) * 100) / 100
+    if (f.type === 'int') n = Math.round(n)
+    if (n <= 0) return null
+    return n
+  }
+
+  const matched = [], unmatched = []
+  for (const row of rows) {
+    const addr = row[addrKey], city = cityKey ? row[cityKey] : '', state = stateKey ? row[stateKey] : ''
+    if (!addr) continue
+    const norm = normalizeAddr(addr), exp = expandAbbrevs(norm)
+    const prop = bestMatch(exactMap.get(norm), city, state) || bestMatch(expandedMap.get(exp), city, state)
+    if (!prop) { if (unmatched.length < 200) unmatched.push([addr, city, state].filter(Boolean).join(', ')); continue }
+    const fields = {}
+    for (const f of detected) {
+      const val = coerce(f, row[f.col])
+      if (val == null) continue
+      const old = prop[f.field]
+      const changed = String(old ?? '') !== String(val)
+      if (!changed) continue
+      fields[f.field] = { old: old ?? null, val, conflict: old != null && old !== '' }
+    }
+    if (Object.keys(fields).length) matched.push({ property_id: prop.id, address: prop.address, city: prop.city, state: prop.state, fields })
+  }
+  res.json({ detected: detected.map(d => ({ field: d.field, col: d.col, unit: d.unit })), matched, unmatched, total: rows.length })
+})
+
+router.post('/costar-enrich/apply', (req, res) => {
+  const changes = Array.isArray(req.body?.changes) ? req.body.changes : []
+  const ALLOWED = new Set(COSTAR_FIELDS.map(f => f.field))
+  let updated = 0, fieldsSet = 0
+  try {
+    db.transaction(() => {
+      for (const ch of changes) {
+        const pid = Number(ch.property_id); if (!pid) continue
+        const sets = [], vals = []
+        for (const [k, v] of Object.entries(ch.fields || {})) {
+          if (!ALLOWED.has(k) || v == null || v === '') continue
+          sets.push(`${k} = ?`); vals.push(v); fieldsSet++
+        }
+        if (!sets.length) continue
+        db.prepare(`UPDATE properties SET ${sets.join(', ')} WHERE id = ?`).run(...vals, pid)
+        updated++
+      }
+    })()
+    res.json({ ok: true, updated, fields_set: fieldsSet })
+  } catch (err) {
+    console.error('[import] costar-enrich/apply:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
 export default router
