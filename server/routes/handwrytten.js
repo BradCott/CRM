@@ -117,6 +117,71 @@ router.delete('/signatures/:id', (req, res) => {
   res.json({ ok: true })
 })
 
+// ── Return-address registry (whose return address prints on the envelope) ──────
+// Resolve a chosen return-address id → sender fields. Falls back to the default
+// entry, then to Brad's office, so a send never goes out without a return address.
+function returnAddressFor(id) {
+  let row = null
+  if (id != null && String(id).trim() !== '') row = db.prepare(`SELECT * FROM handwrytten_return_addresses WHERE id = ?`).get(Number(id))
+  if (!row) row = db.prepare(`SELECT * FROM handwrytten_return_addresses ORDER BY is_default DESC, sort, id LIMIT 1`).get()
+  return {
+    first_name: row?.first_name || 'Brad',
+    last_name:  row?.last_name  || 'Cottam',
+    business:   row?.business   || 'Knox Capital',
+    address1:   row?.address1   || '7500 W 160th St Ste 101',
+    address2:   row?.address2   || '',
+    city:       row?.city       || 'Stilwell',
+    state:      row?.state      || 'KS',
+    zip:        row?.zip        || '66085',
+    country_id: row?.country_id || 1,
+  }
+}
+// Spread a resolved return address into Handwrytten singleStepOrder sender fields.
+const senderFields = ra => ({
+  sender_first_name: ra.first_name,
+  sender_last_name:  ra.last_name,
+  sender_address1:   ra.address1,
+  sender_city:       ra.city,
+  sender_state:      ra.state,
+  sender_zip:        ra.zip,
+  sender_country_id: ra.country_id,
+})
+
+router.get('/return-addresses', (req, res) => {
+  res.json(db.prepare(`SELECT * FROM handwrytten_return_addresses ORDER BY is_default DESC, sort, id`).all())
+})
+router.post('/return-addresses', (req, res) => {
+  const b = req.body || {}
+  const label = String(b.label || '').trim()
+  if (!label) return res.status(400).json({ error: 'A label is required' })
+  const makeDefault = b.is_default ? 1 : 0
+  if (makeDefault) db.prepare(`UPDATE handwrytten_return_addresses SET is_default = 0`).run()
+  const r = db.prepare(`INSERT INTO handwrytten_return_addresses
+      (label, first_name, last_name, business, address1, address2, city, state, zip, country_id, is_default)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(label, b.first_name || '', b.last_name || '', b.business || '', b.address1 || '', b.address2 || '', b.city || '', b.state || '', b.zip || '', Number(b.country_id) || 1, makeDefault)
+  res.status(201).json(db.prepare(`SELECT * FROM handwrytten_return_addresses WHERE id = ?`).get(r.lastInsertRowid))
+})
+router.put('/return-addresses/:id', (req, res) => {
+  const b = req.body || {}
+  const row = db.prepare(`SELECT id FROM handwrytten_return_addresses WHERE id = ?`).get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'Not found' })
+  db.prepare(`UPDATE handwrytten_return_addresses SET label=?, first_name=?, last_name=?, business=?, address1=?, address2=?, city=?, state=?, zip=?, country_id=? WHERE id=?`)
+    .run(String(b.label || '').trim(), b.first_name || '', b.last_name || '', b.business || '', b.address1 || '', b.address2 || '', b.city || '', b.state || '', b.zip || '', Number(b.country_id) || 1, req.params.id)
+  res.json(db.prepare(`SELECT * FROM handwrytten_return_addresses WHERE id = ?`).get(req.params.id))
+})
+router.patch('/return-addresses/:id/default', (req, res) => {
+  const row = db.prepare(`SELECT id FROM handwrytten_return_addresses WHERE id = ?`).get(req.params.id)
+  if (!row) return res.status(404).json({ error: 'Not found' })
+  db.prepare(`UPDATE handwrytten_return_addresses SET is_default = 0`).run()
+  db.prepare(`UPDATE handwrytten_return_addresses SET is_default = 1 WHERE id = ?`).run(req.params.id)
+  res.json({ ok: true })
+})
+router.delete('/return-addresses/:id', (req, res) => {
+  db.prepare(`DELETE FROM handwrytten_return_addresses WHERE id = ?`).run(req.params.id)
+  res.json({ ok: true })
+})
+
 /** GET /api/handwrytten/fonts — fetches available handwriting fonts */
 router.get('/fonts', async (_req, res) => {
   const attempts = ['/fonts/list', '/fonts/listFonts', '/handwriting/listFonts', '/handwriting/list']
@@ -268,7 +333,7 @@ router.delete('/campaigns/:id', (req, res) => {
 
 /** POST /api/handwrytten/send — send a single letter */
 router.post('/send', async (req, res) => {
-  const { contact_id, property_id, message, card_id, font, sig_id } = req.body
+  const { contact_id, property_id, message, card_id, font, sig_id, return_address_id } = req.body
   const userId = req.user?.id
 
   if (!contact_id || !message) {
@@ -347,13 +412,7 @@ router.post('/send', async (req, res) => {
       recipient_state:      person.state    || '',
       recipient_zip:        person.zip      || '',
       tocountry:            'US',
-      sender_first_name:    'Brad',
-      sender_last_name:     'Cottam',
-      sender_address1:      '7500 W 160th St Ste 101',
-      sender_city:          'Stilwell',
-      sender_state:         'KS',
-      sender_zip:           '66085',
-      sender_country_id:    1,
+      ...senderFields(returnAddressFor(return_address_id)),
     }
 
     const hwResult = await hwPost('/orders/singleStepOrder', orderParams)
@@ -387,7 +446,8 @@ router.post('/send', async (req, res) => {
  * Not recorded in send history; it's a proof, not a campaign recipient.
  */
 router.post('/send-proof', async (req, res) => {
-  const { message, card_id, font, sig_id } = req.body
+  const { message, card_id, font, sig_id, return_address_id } = req.body
+  const ra = returnAddressFor(return_address_id)
   if (!message) return res.status(400).json({ error: 'message is required' })
 
   const finalMessage = message + sigSuffix(db, sig_id)
@@ -397,21 +457,15 @@ router.post('/send-proof', async (req, res) => {
       font_label:           font    || '',
       message:              finalMessage,
       wishes:               '',
-      // Recipient = the Knox return address (i.e. yourself)
-      recipient_first_name: 'Brad',
-      recipient_last_name:  'Cottam',
-      recipient_address1:   '7500 W 160th St Ste 101',
-      recipient_city:       'Stilwell',
-      recipient_state:      'KS',
-      recipient_zip:        '66085',
+      // Recipient = the chosen return address (i.e. yourself), so the proof comes back to you
+      recipient_first_name: ra.first_name,
+      recipient_last_name:  ra.last_name,
+      recipient_address1:   ra.address1,
+      recipient_city:       ra.city,
+      recipient_state:      ra.state,
+      recipient_zip:        ra.zip,
       tocountry:            'US',
-      sender_first_name:    'Brad',
-      sender_last_name:     'Cottam',
-      sender_address1:      '7500 W 160th St Ste 101',
-      sender_city:          'Stilwell',
-      sender_state:         'KS',
-      sender_zip:           '66085',
-      sender_country_id:    1,
+      ...senderFields(ra),
     })
     const orderId = hwResult?.order?.id || hwResult?.id || hwResult?.order_id || null
     res.json({ success: true, order_id: orderId })
@@ -422,8 +476,9 @@ router.post('/send-proof', async (req, res) => {
 
 /** POST /api/handwrytten/send-bulk — send letters to many contacts */
 router.post('/send-bulk', async (req, res) => {
-  const { recipients, message, card_id, font, campaign_name, sig_id } = req.body
+  const { recipients, message, card_id, font, campaign_name, sig_id, return_address_id } = req.body
   const userId = req.user?.id
+  const bulkReturn = returnAddressFor(return_address_id)
 
   // recipients: [{ contact_id, property_id? }, ...]
   if (!Array.isArray(recipients) || recipients.length === 0) {
@@ -545,13 +600,7 @@ router.post('/send-bulk', async (req, res) => {
         recipient_state:      person.state    || '',
         recipient_zip:        person.zip      || '',
         tocountry:            'US',
-        sender_first_name:    'Knox',
-        sender_last_name:     'Capital',
-        sender_address1:      '7500 W 160th St Ste 101',
-        sender_city:          'Stilwell',
-        sender_state:         'KS',
-        sender_zip:           '66085',
-        sender_country_id:    1,
+        ...senderFields(bulkReturn),
       }
 
       const hwResult = await hwPost('/orders/singleStepOrder', orderParams)
@@ -608,7 +657,8 @@ router.post('/send-bulk', async (req, res) => {
 // Returns the raw API responses so we can confirm the format/payment before
 // replacing the per-letter sender. Records nothing unless the batch succeeds.
 router.post('/send-basket', async (req, res) => {
-  const { recipients, message, card_id, font, sig_id } = req.body
+  const { recipients, message, card_id, font, sig_id, return_address_id } = req.body
+  const basketReturn = returnAddressFor(return_address_id)
   const userId = req.user?.id
   if (!Array.isArray(recipients) || recipients.length === 0) return res.status(400).json({ error: 'recipients array is required' })
   if (!message) return res.status(400).json({ error: 'message is required' })
@@ -649,13 +699,7 @@ router.post('/send-basket', async (req, res) => {
   const basketParams = {
     card_id:           card_id || '',
     font_label:        font    || '',
-    sender_first_name: 'Knox',
-    sender_last_name:  'Capital',
-    sender_address1:   '7500 W 160th St Ste 101',
-    sender_city:       'Stilwell',
-    sender_state:      'KS',
-    sender_zip:        '66085',
-    sender_country_id: 1,
+    ...senderFields(basketReturn),
     addresses,
   }
 
@@ -712,20 +756,22 @@ const HW_BULK_HEADERS = [
 ]
 
 router.post('/bulk-file', (req, res) => {
-  const { recipients, message, sign_off, return_address } = req.body
+  const { recipients, message, sign_off, return_address, return_address_id } = req.body
   if (!Array.isArray(recipients) || recipients.length === 0) return res.status(400).json({ error: 'recipients array is required' })
   if (!message) return res.status(400).json({ error: 'message is required' })
 
+  // Prefer a chosen registry return address; fall back to an inline object, then Brad.
+  const ra = returnAddressFor(return_address_id)
   const ret = return_address || {}
   const RET = {
-    first:   ret.first   ?? 'Brad',
-    last:    ret.last    ?? 'Cottam',
-    business:ret.business?? 'Knox Capital',
-    line1:   ret.line1   ?? '7500 W 160th St Ste 101',
-    line2:   ret.line2   ?? '',
-    city:    ret.city    ?? 'Stilwell',
-    state:   ret.state   ?? 'KS',
-    zip:     ret.zip     ?? '66085',
+    first:   ret.first   ?? ra.first_name,
+    last:    ret.last    ?? ra.last_name,
+    business:ret.business?? ra.business,
+    line1:   ret.line1   ?? ra.address1,
+    line2:   ret.line2   ?? ra.address2,
+    city:    ret.city    ?? ra.city,
+    state:   ret.state   ?? ra.state,
+    zip:     ret.zip     ?? ra.zip,
     country: ret.country ?? 'United States',
   }
   const signOff = sign_off ?? 'Sincerely,\r\n<sig:1427BC>'
@@ -843,7 +889,7 @@ router.get('/drips/:id/queue', (req, res) => {
  * DNC contacts are filtered out server-side as a safety net.
  */
 router.post('/drips', (req, res) => {
-  const { name, recipients, message, card_id, font, batch_size, interval_days, filters, sig_id } = req.body
+  const { name, recipients, message, card_id, font, batch_size, interval_days, filters, sig_id, return_address_id } = req.body
   const userId = req.user?.id
 
   if (!Array.isArray(recipients) || recipients.length === 0) {
@@ -884,12 +930,12 @@ router.post('/drips', (req, res) => {
     const dripRes = db.prepare(`
       INSERT INTO handwrytten_drips
         (name, message_template, card_id, font, filters, batch_size, interval_days,
-         status, total_count, next_run_at, created_by_user_id, sig_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, datetime('now'), ?, ?)
+         status, total_count, next_run_at, created_by_user_id, sig_id, return_address_id)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, datetime('now'), ?, ?, ?)
     `).run(
       name || null, message, card_id || null, font || null,
       filters ? JSON.stringify(filters) : null,
-      batchN, intervalN, clean.length, userId || null, sig_id || null,
+      batchN, intervalN, clean.length, userId || null, sig_id || null, return_address_id || null,
     )
     const dripId = dripRes.lastInsertRowid
     const insQ = db.prepare(`

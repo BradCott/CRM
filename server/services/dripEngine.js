@@ -10,6 +10,23 @@ import { sigSuffix } from '../utils/hwSignature.js'
 const HW_BASE = 'https://api.handwrytten.com/v2'
 const HW_KEY  = process.env.HANDWRYTTEN_API_KEY
 
+// Resolve the drip's chosen return address → Handwrytten sender fields. Falls back
+// to the default registry entry, then Brad's office. Mirrors routes/handwrytten.js.
+function senderFieldsFor(id) {
+  let row = null
+  if (id != null) row = db.prepare(`SELECT * FROM handwrytten_return_addresses WHERE id = ?`).get(Number(id))
+  if (!row) row = db.prepare(`SELECT * FROM handwrytten_return_addresses ORDER BY is_default DESC, sort, id LIMIT 1`).get()
+  return {
+    sender_first_name: row?.first_name || 'Brad',
+    sender_last_name:  row?.last_name  || 'Cottam',
+    sender_address1:   row?.address1   || '7500 W 160th St Ste 101',
+    sender_city:       row?.city       || 'Stilwell',
+    sender_state:      row?.state      || 'KS',
+    sender_zip:        row?.zip        || '66085',
+    sender_country_id: row?.country_id || 1,
+  }
+}
+
 // Was this address already mailed within the blackout window? A drip runs over
 // weeks, so re-check at send time — another campaign may have mailed it since it
 // was queued. `exceptSendId` excludes the drip's own just-created pending row.
@@ -126,13 +143,7 @@ async function sendQueued(drip, qrow) {
       recipient_state:      person.state   || '',
       recipient_zip:        person.zip     || '',
       tocountry:            'US',
-      sender_first_name:    'Knox',
-      sender_last_name:     'Capital',
-      sender_address1:      '7500 W 160th St Ste 101',
-      sender_city:          'Stilwell',
-      sender_state:         'KS',
-      sender_zip:           '66085',
-      sender_country_id:    1,
+      ...senderFieldsFor(drip.return_address_id),
     })
     const orderId = hwResult?.order?.id || hwResult?.id || hwResult?.order_id || null
 

@@ -625,6 +625,25 @@ const migrations = [
      WHERE NOT EXISTS (SELECT 1 FROM handwrytten_signatures)`,
   // Which signature a drip uses for every batch.
   `ALTER TABLE handwrytten_drips ADD COLUMN sig_id TEXT`,
+
+  // Handwritten-mail RETURN ADDRESS registry — pick whose return address (Brad,
+  // Cole, …) is printed on the envelope. Managed in Settings, chosen per campaign.
+  `CREATE TABLE IF NOT EXISTS handwrytten_return_addresses (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    label      TEXT NOT NULL,
+    first_name TEXT, last_name TEXT, business TEXT,
+    address1   TEXT, address2 TEXT, city TEXT, state TEXT, zip TEXT,
+    country_id INTEGER DEFAULT 1,
+    is_default INTEGER DEFAULT 0,
+    sort       INTEGER DEFAULT 0,
+    created_at TEXT DEFAULT (datetime('now'))
+  )`,
+  // Seed Brad's known return address as default (only when the table is empty).
+  `INSERT INTO handwrytten_return_addresses (label, first_name, last_name, business, address1, city, state, zip, country_id, is_default, sort)
+     SELECT 'Brad', 'Brad', 'Cottam', 'Knox Capital', '7500 W 160th St Ste 101', 'Stilwell', 'KS', '66085', 1, 1, 0
+     WHERE NOT EXISTS (SELECT 1 FROM handwrytten_return_addresses)`,
+  // Which return address a drip uses for every batch.
+  `ALTER TABLE handwrytten_drips ADD COLUMN return_address_id INTEGER`,
   // "Ready to re-mail" queue — set when the update-only importer corrects an
   // address, cleared once a mail campaign goes out to that property.
   `ALTER TABLE properties ADD COLUMN remail_ready INTEGER DEFAULT 0`,

@@ -4,6 +4,7 @@ import {
   getHandwryttenCards,
   getHandwryttenFonts,
   getHwSignatures,
+  getHwReturnAddresses,
   sendHandwryttenBulk,
   sendHandwryttenProof,
   downloadHandwryttenBulkFile,
@@ -293,6 +294,8 @@ export default function BulkSendModal({ onClose, onDone }) {
   const [selectedCard,  setSelectedCard]  = useState(null)
   const [selectedFont,  setSelectedFont]  = useState(null)
   const [selectedSig,   setSelectedSig]   = useState(null)   // handwrytten_signatures.id
+  const [returnAddrs,   setReturnAddrs]   = useState([])
+  const [selectedReturn, setSelectedReturn] = useState(null) // handwrytten_return_addresses.id
   const [loadingMeta,   setLoadingMeta]   = useState(false)
   const [sendCopyToSelf, setSendCopyToSelf] = useState(false)   // also mail a proof to me
 
@@ -312,14 +315,18 @@ export default function BulkSendModal({ onClose, onDone }) {
   useEffect(() => {
     if (step !== 'preview' || cards.length > 0) return
     setLoadingMeta(true)
-    Promise.all([getHandwryttenCards(), getHandwryttenFonts(), getHwSignatures().catch(() => [])])
-      .then(([cd, fd, sg]) => {
+    Promise.all([getHandwryttenCards(), getHandwryttenFonts(), getHwSignatures().catch(() => []), getHwReturnAddresses().catch(() => [])])
+      .then(([cd, fd, sg, ra]) => {
         const cardList = Array.isArray(cd) ? cd : cd?.cards || cd?.data || []
         const fontList = Array.isArray(fd) ? fd : fd?.fonts || fd?.data || []
         const sigList  = Array.isArray(sg) ? sg : []
+        const raList   = Array.isArray(ra) ? ra : []
         setCards(cardList)
         setFonts(fontList)
         setSignatures(sigList)
+        setReturnAddrs(raList)
+        const defRet = raList.find(r => r.is_default) || raList[0] || null
+        setSelectedReturn(defRet?.id ?? null)
         const defCard = cardList.find(c => (c.name || '').toLowerCase().includes('knox 1')) || cardList[0] || null
         const defFont = fontList.find(f =>
           (f.label || '').toLowerCase().includes('jokester') ||
@@ -527,7 +534,7 @@ export default function BulkSendModal({ onClose, onDone }) {
     const proofMessage = sample
       ? applyMerge(message, sample, { tenant_brand_name: sample.tenant, city: sample.property_city, state: sample.property_state })
       : message
-    try { await sendHandwryttenProof({ message: proofMessage, card_id: selectedCard, font: selectedFont, sig_id: selectedSig }) }
+    try { await sendHandwryttenProof({ message: proofMessage, card_id: selectedCard, font: selectedFont, sig_id: selectedSig, return_address_id: selectedReturn }) }
     catch (e) { console.warn('Proof-to-self send failed:', e.message) }
   }
 
@@ -543,6 +550,7 @@ export default function BulkSendModal({ onClose, onDone }) {
         card_id: selectedCard,
         font:    selectedFont,
         sig_id:  selectedSig,
+        return_address_id: selectedReturn,
       })
       await maybeSendProof()
       setSendResult(result)
@@ -566,6 +574,7 @@ export default function BulkSendModal({ onClose, onDone }) {
         card_id:       selectedCard,
         font:          selectedFont,
         sig_id:        selectedSig,
+        return_address_id: selectedReturn,
         batch_size:    Math.max(1, parseInt(batchSize, 10) || 50),
         interval_days: Math.max(1, parseInt(intervalDays, 10) || 1),
         filters:       { states: filterStates, tenant: filterTenant, ownerTypes: filterOwnerTypes },
@@ -1089,6 +1098,25 @@ export default function BulkSendModal({ onClose, onDone }) {
                   </div>
                 )}
                 <p className="text-xs text-slate-400 mt-1">Whose handwritten signature appears at the bottom of every letter. Manage signatures in Settings.</p>
+              </div>
+
+              {/* Return address */}
+              <div>
+                <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5 block">Return Address</label>
+                {returnAddrs.length > 0 ? (
+                  <select
+                    value={selectedReturn ?? ''}
+                    onChange={e => setSelectedReturn(e.target.value ? Number(e.target.value) : null)}
+                    className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {returnAddrs.map(r => <option key={r.id} value={r.id}>{r.label}{r.is_default ? ' (default)' : ''} — {[r.first_name, r.last_name].filter(Boolean).join(' ')}, {[r.city, r.state].filter(Boolean).join(', ')}</option>)}
+                  </select>
+                ) : (
+                  <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-400">
+                    No return addresses set up — add one in Settings → Handwritten Mail.
+                  </div>
+                )}
+                <p className="text-xs text-slate-400 mt-1">Whose return address prints on the envelope. Manage return addresses in Settings.</p>
               </div>
 
               {/* Send a proof copy to yourself */}

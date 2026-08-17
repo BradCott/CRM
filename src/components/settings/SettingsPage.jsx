@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
-import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle, Download, Database, Mail, Loader2, Trash2, PenLine } from 'lucide-react'
-import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, syncGmailNow, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl, getEmailFrom, setEmailFrom, getSenderStatus, disconnectSender, getHwSignatures, addHwSignature, setDefaultHwSignature, deleteHwSignature, getMyGmailStatus, disconnectMyGmail, refreshMyDigest, connectMyGmailUrl } from '../../api/client'
+import { Settings, FolderOpen, CheckCircle, XCircle, AlertCircle, LogOut, Chrome, ExternalLink, RefreshCw, PlayCircle, Download, Database, Mail, Loader2, Trash2, PenLine, MapPin } from 'lucide-react'
+import { getGoogleStatus, disconnectGoogle, diagnoseDrive, runDriveWatcher, setLoiFolder, syncGmailNow, getBackupInfo, backupDbUrl, exportJsonUrl, exportExcelUrl, getEmailFrom, setEmailFrom, getSenderStatus, disconnectSender, getHwSignatures, addHwSignature, setDefaultHwSignature, deleteHwSignature, getHwReturnAddresses, addHwReturnAddress, setDefaultHwReturnAddress, deleteHwReturnAddress, getMyGmailStatus, disconnectMyGmail, refreshMyDigest, connectMyGmailUrl } from '../../api/client'
 import Button from '../ui/Button'
 
 // Preset "From" addresses for outbound app email. Sending as management@
@@ -512,6 +512,9 @@ export default function SettingsPage() {
           {/* Handwritten mail signatures */}
           <SignaturesCard />
 
+          {/* Handwritten mail return addresses */}
+          <ReturnAddressesCard />
+
         </div>
       </div>
     </div>
@@ -580,6 +583,77 @@ function SignaturesCard() {
           <p className="text-[11px] text-slate-400 mt-2">
             In Handwrytten, go to <strong>Account → Signatures</strong> and copy a signature's <strong>Code</strong> — it looks like <code className="bg-slate-100 px-1 rounded">&lt;sig:1837CH offset=-20&gt;</code>. Paste that whole thing here (or just the code part — both work). Create Cole's signature in Handwrytten first, then add it.
           </p>
+        </div>
+      </div>
+    </Card>
+  )
+}
+
+function ReturnAddressesCard() {
+  const [rows, setRows] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr]   = useState(null)
+  const blank = { label: '', first_name: '', last_name: '', business: '', address1: '', address2: '', city: '', state: '', zip: '' }
+  const [f, setF] = useState(blank)
+  const set = k => e => setF(v => ({ ...v, [k]: e.target.value }))
+
+  const load = () => getHwReturnAddresses().then(setRows).catch(() => setRows([]))
+  useEffect(() => { load() }, [])
+
+  async function add() {
+    if (!f.label.trim() || !f.address1.trim()) return
+    setBusy(true); setErr(null)
+    try { await addHwReturnAddress(f); setF(blank); await load() }
+    catch (e) { setErr(e.message) } finally { setBusy(false) }
+  }
+  async function makeDefault(id) { try { await setDefaultHwReturnAddress(id); await load() } catch (e) { setErr(e.message) } }
+  async function remove(id) { if (!confirm('Remove this return address?')) return; try { await deleteHwReturnAddress(id); await load() } catch (e) { setErr(e.message) } }
+
+  return (
+    <Card title="Handwritten Mail Return Addresses" subtitle="Whose return address prints on the envelope. Add Brad, Cole, or anyone — then pick one per campaign.">
+      <div className="space-y-4">
+        {rows === null ? (
+          <div className="flex items-center gap-2 text-sm text-slate-400"><Loader2 className="w-4 h-4 animate-spin" /> Loading…</div>
+        ) : rows.length === 0 ? (
+          <p className="text-sm text-slate-400">No return addresses yet — add one below.</p>
+        ) : (
+          <ul className="divide-y divide-slate-100 rounded-xl border border-slate-200">
+            {rows.map(r => (
+              <li key={r.id} className="flex items-center gap-3 px-4 py-2.5">
+                <MapPin className="w-4 h-4 text-slate-400 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium text-slate-800">{r.label}
+                    {r.is_default ? <span className="ml-2 text-[10px] font-semibold uppercase text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded-full">Default</span> : null}
+                  </p>
+                  <p className="text-[11px] text-slate-400">{[[r.first_name, r.last_name].filter(Boolean).join(' '), r.address1, [r.city, r.state, r.zip].filter(Boolean).join(', ')].filter(Boolean).join(' · ')}</p>
+                </div>
+                {!r.is_default && <button onClick={() => makeDefault(r.id)} className="text-xs text-blue-600 hover:text-blue-800 shrink-0">Make default</button>}
+                <button onClick={() => remove(r.id)} className="text-slate-300 hover:text-red-500 shrink-0"><Trash2 className="w-3.5 h-3.5" /></button>
+              </li>
+            ))}
+          </ul>
+        )}
+
+        <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 space-y-2">
+          <p className="text-xs font-semibold text-slate-600">Add a return address</p>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+            <input value={f.label} onChange={set('label')} placeholder="Label (e.g. Cole)" className="col-span-2 text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <input value={f.first_name} onChange={set('first_name')} placeholder="First name" className="text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <input value={f.last_name} onChange={set('last_name')} placeholder="Last name" className="text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <input value={f.business} onChange={set('business')} placeholder="Business (e.g. Knox Capital)" className="col-span-2 text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <input value={f.address1} onChange={set('address1')} placeholder="Street address" className="col-span-2 text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <input value={f.city} onChange={set('city')} placeholder="City" className="text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <input value={f.state} onChange={set('state')} placeholder="State" className="text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+            <input value={f.zip} onChange={set('zip')} placeholder="Zip" className="text-sm border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400" />
+          </div>
+          <div className="flex justify-end">
+            <button onClick={add} disabled={busy || !f.label.trim() || !f.address1.trim()}
+              className="text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 px-3 py-1.5 rounded-lg disabled:opacity-50">
+              {busy ? 'Adding…' : 'Add return address'}
+            </button>
+          </div>
+          {err && <p className="text-xs text-red-600">{err}</p>}
+          <p className="text-[11px] text-slate-400">Enter the return address exactly as it should appear on the envelope. The address the letters mail from is set here — Handwrytten doesn't need it pre-saved.</p>
         </div>
       </div>
     </Card>
