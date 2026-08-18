@@ -64,24 +64,100 @@ router.get('/dropped', (req, res) => {
 
 router.post('/:id/close', (req, res) => {
   console.log('[deals] POST /:id/close — id:', req.params.id)
-  const deal = db.prepare(SELECT + ' WHERE d.id = ?').get(req.params.id)
+  const deal = dealResponse(req.params.id)   // includes tenants + rolled-up fields
   if (!deal) return res.status(404).json({ error: 'Not found' })
 
-  if (deal.property_id) {
-    console.log('[deals] closing — marking linked property', deal.property_id, 'as portfolio')
-    db.prepare('UPDATE properties SET is_portfolio = 1 WHERE id = ?').run(deal.property_id)
+  // Resolve (or create) the portfolio property, then carry the deal's details over.
+  let propertyId = deal.property_id
+  if (propertyId) {
+    console.log('[deals] closing — marking linked property', propertyId, 'as portfolio')
+    db.prepare('UPDATE properties SET is_portfolio = 1 WHERE id = ?').run(propertyId)
   } else if (deal.address) {
     console.log('[deals] closing — creating portfolio property from deal address:', deal.address)
-    db.prepare(`
-      INSERT INTO properties (address, city, state, cap_rate, list_price, is_portfolio)
-      VALUES (?, ?, ?, ?, ?, 1)
-    `).run(deal.address, deal.city || null, deal.state || null, deal.cap_rate || null, deal.purchase_price || null)
+    const r = db.prepare(`INSERT INTO properties (address, city, state, is_portfolio) VALUES (?, ?, ?, 1)`)
+      .run(deal.address, deal.city || null, deal.state || null)
+    propertyId = Number(r.lastInsertRowid)
+  }
+  if (propertyId) {
+    try { migrateDealToProperty(deal, propertyId) }
+    catch (e) { console.error('[deals] close migration failed:', e.message) }
   }
 
   db.prepare("UPDATE deals SET status = 'closed' WHERE id = ?").run(req.params.id)
-  console.log('[deals] deal', req.params.id, 'marked closed')
-  res.json({ ok: true })
+  console.log('[deals] deal', req.params.id, 'marked closed → property', propertyId)
+  res.json({ ok: true, property_id: propertyId || null })
 })
+
+// Rent-weighted WALT (years remaining) across a rent roll.
+function computeWalt(tenants) {
+  let num = 0, den = 0
+  for (const t of tenants || []) {
+    const rent = Number(t.annual_rent) || 0
+    const end = parseISO(t.lease_end)
+    if (!rent || !end) continue
+    const now = new Date(); now.setHours(0, 0, 0, 0)
+    num += rent * Math.max(0, (end - now) / (365.25 * 86400000)); den += rent
+  }
+  return den > 0 ? num / den : null
+}
+
+// Carry a closed deal's details onto its portfolio property. Fills only BLANK
+// property fields (never clobbers existing data), lands the single-tenant lease
+// abstract in the property's Lease section (property_leases), and for a
+// multi-tenant deal rolls the rent roll up to NOI + a summary in the notes.
+function migrateDealToProperty(deal, propertyId) {
+  const multi = !!deal.is_multi_tenant
+
+  const patch = {
+    building_size: deal.building_size, year_built: deal.year_built, property_type: deal.property_type,
+    noi: deal.noi, cap_rate: deal.cap_rate, list_price: deal.list_price, purchase_price: deal.purchase_price,
+    annual_rent: deal.annual_rent, close_date: deal.close_date,
+    year_purchased: deal.close_date ? parseInt(String(deal.close_date).slice(0, 4), 10) : null,
+  }
+  if (multi) {
+    patch.lease_type = 'Multi-tenant'
+  } else {
+    patch.lease_type = deal.lease_type
+    patch.lease_start = deal.lease_commencement
+    patch.lease_end = deal.lease_expiration
+    patch.rent_bumps = deal.rent_escalations
+    patch.renewal_options = deal.renewal_options ||
+      [deal.renewal_option_count && `${deal.renewal_option_count} option(s)`, deal.renewal_option_length, deal.renewal_option_increase].filter(Boolean).join(' · ') || null
+  }
+  const cols = Object.keys(patch).filter(k => patch[k] != null && patch[k] !== '')
+  if (cols.length) {
+    const sets = cols.map(c => `${c} = COALESCE(${c}, ?)`).join(', ')
+    db.prepare(`UPDATE properties SET ${sets}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...cols.map(c => patch[c]), propertyId)
+  }
+
+  // Tenant → tenant_brand_id (find-or-create), only if the property has none.
+  const tenantName = String(deal.tenant || '').trim()
+  if (tenantName && !db.prepare('SELECT tenant_brand_id FROM properties WHERE id = ?').get(propertyId)?.tenant_brand_id) {
+    const existing = db.prepare('SELECT id FROM tenant_brands WHERE name = ? COLLATE NOCASE').get(tenantName)
+    const brandId = existing ? existing.id : Number(db.prepare('INSERT INTO tenant_brands (name) VALUES (?)').run(tenantName).lastInsertRowid)
+    db.prepare('UPDATE properties SET tenant_brand_id = ? WHERE id = ?').run(brandId, propertyId)
+  }
+
+  if (multi) {
+    const roster = (deal.tenants || []).map(t => {
+      const bits = [t.tenant_name || 'Tenant', t.suite && `Ste ${t.suite}`,
+        t.square_feet && `${Math.round(t.square_feet).toLocaleString()} SF`,
+        t.annual_rent && `$${Math.round(t.annual_rent).toLocaleString()}/yr`,
+        t.lease_end && `exp ${t.lease_end}`].filter(Boolean)
+      return `  • ${bits.join(' · ')}`
+    }).join('\n')
+    const walt = computeWalt(deal.tenants)
+    const summary = `Multi-tenant rent roll (migrated from pipeline on close):\n${roster || '  (no tenants)'}\nTotal NOI: $${Math.round(deal.noi || 0).toLocaleString()}${walt != null ? ` · WALT ${walt.toFixed(1)} yrs` : ''}`
+    const prop = db.prepare('SELECT notes FROM properties WHERE id = ?').get(propertyId)
+    if (!String(prop?.notes || '').includes('Multi-tenant rent roll (migrated from pipeline')) {
+      db.prepare('UPDATE properties SET notes = ? WHERE id = ?').run(prop?.notes ? `${prop.notes}\n\n${summary}` : summary, propertyId)
+    }
+  } else if (deal.lease_abstract && !db.prepare('SELECT property_id FROM property_leases WHERE property_id = ?').get(propertyId)) {
+    db.prepare(`INSERT INTO property_leases (property_id, abstract, model, status, updated_at)
+                VALUES (?, ?, 'migrated-from-deal', 'done', datetime('now'))`)
+      .run(propertyId, deal.lease_abstract)
+  }
+}
 
 router.post('/:id/drop', (req, res) => {
   console.log('[deals] POST /:id/drop — id:', req.params.id)
