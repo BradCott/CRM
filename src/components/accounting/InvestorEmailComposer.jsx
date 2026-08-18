@@ -34,21 +34,21 @@ The Knox Capital Team`,
     footer: 'Everyone on the list gets the same message, personalized with their name.',
   },
   pipeline: {
-    title: 'Email investors — new deal',
-    defaultSubject: 'A new opportunity: {{property}}',
+    title: 'Email investors — deal update',
+    defaultSubject: '{{property}} — closing update',
     defaultBody:
 `Hi {{first_name}},
 
-We're pursuing a new deal I think you'll want to see — {{property}}.
+A quick update on {{property}} as we move toward closing.
 
-[Share the opportunity here — the tenant, the location, why it's attractive, and the high-level terms.]
+[Share where things stand — due diligence, financing, the expected close date, and any next steps or what to expect from here.]
 
-Nothing's committed yet — I wanted to give you an early look and see if you'd be interested in participating. Happy to hop on a call and walk you through it.
+Thank you as always for investing alongside Knox Capital. Please reach out with any questions.
 
 Warm regards,
 The Knox Capital Team`,
-    draftPlaceholder: 'e.g. NNN Sherwin Williams in Troy MI, 10-yr lease, ~7% cap — write an enthusiastic first-look email inviting them to review',
-    footer: "An early-look opportunity email — nothing committed. Personalized with each investor's name.",
+    draftPlaceholder: "e.g. due diligence is done and we're clear to close Aug 21 — write a confident update on where we stand and what's next",
+    footer: 'A progress update to the committed investors. Personalized with each name.',
   },
 }
 

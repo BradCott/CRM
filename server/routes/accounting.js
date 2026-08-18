@@ -1869,17 +1869,16 @@ Requirements:
 
 Respond with ONLY a JSON object: {"subject": "...", "body": "..."}. The body is plain text with \\n line breaks and the merge tokens.`
 
-const PIPELINE_PROMPT = `You draft a warm, professional email from a real-estate sponsor (Knox Capital) to prospective/existing investors about a NEW DEAL still in the PIPELINE — one Knox is pursuing or under contract on, NOT yet closed or owned.
+const PIPELINE_PROMPT = `You draft a warm, professional email from a real-estate sponsor (Knox Capital) to the COMMITTED investors on a deal that is IN PROGRESS toward CLOSING (or a just-after-closing update). These investors are already in — this is a STATUS UPDATE, NOT a pitch or an offer.
 
 Keep these merge tokens EXACTLY as written:
 {{first_name}} — investor's first name / greeting
 {{property}} — property name/address
 
 Requirements:
-- Confident, opportunity-focused, concise. A sponsor sharing a deal they're excited about and inviting the investor to participate.
-- Frame it as an opportunity to review / express interest — not a closed transaction. Invite questions and a call.
-- Do NOT invent specific numbers, returns, cap rates, dates, or terms that weren't provided. If the sponsor gives specifics, use them; otherwise keep it general with clear [bracketed placeholders] the sponsor can fill.
-- Make clear nothing is committed and this is not an offer to sell securities — a friendly heads-up / interest check.
+- Confident, reassuring, concise. Keep the committed investors informed on where the deal stands as it nears (or just passed) closing.
+- Cover what the sponsor asks for: due-diligence status, financing/lending, the expected or actual close date, wiring / capital-call timing, or post-closing next steps.
+- Do NOT invent specific numbers, dates, or terms that weren't provided. Use the sponsor's specifics; otherwise keep it general with clear [bracketed placeholders] the sponsor can fill.
 - End with a friendly sign-off from the Knox Capital team.
 
 Respond with ONLY a JSON object: {"subject": "...", "body": "..."}. The body is plain text with \\n line breaks and the merge tokens.`
