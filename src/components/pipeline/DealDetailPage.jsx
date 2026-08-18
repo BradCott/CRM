@@ -3,11 +3,13 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Loader2, Building2, CalendarDays, DollarSign, User, Link2, FileText,
   TrendingUp, Sparkles, ScrollText, AlertCircle, CheckCircle2, Pencil, FileSignature, CalendarClock,
-  ExternalLink, ClipboardCheck, X, UploadCloud,
+  ExternalLink, ClipboardCheck, X, UploadCloud, Users, Mail,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
-import { getDeal, updateDealField, parseDealDoc, deleteDealProposal } from '../../api/client'
+import { getDeal, updateDealField, parseDealDoc, deleteDealProposal, getInvestorRecipients } from '../../api/client'
 import ReturnsCalculator from './ReturnsCalculator'
+import InvestorUpload from '../accounting/InvestorUpload'
+import InvestorEmailComposer from '../accounting/InvestorEmailComposer'
 
 const STAGE_LABELS = {
   loi:             { label: 'LOI',             cls: 'bg-blue-100 text-blue-700' },
@@ -74,6 +76,15 @@ export default function DealDetailPage() {
   const [applied, setApplied]   = useState(null)   // { docType, count, proposal }
   const fileRef = useRef(null)
 
+  // Investors — cap table on the deal's property (carries over to portfolio).
+  const [investors, setInvestors]   = useState([])
+  const [showInvestorUpload, setShowInvestorUpload] = useState(false)
+  const [showEmail, setShowEmail]   = useState(false)
+  const loadInvestors = () => {
+    if (!deal?.property_id) { setInvestors([]); return }
+    getInvestorRecipients(deal.property_id).then(r => setInvestors(Array.isArray(r) ? r : [])).catch(() => setInvestors([]))
+  }
+
   useEffect(() => {
     let alive = true
     getDeal(dealId)
@@ -81,6 +92,8 @@ export default function DealDetailPage() {
       .catch(() => { if (alive) { setLoading(false); setNotFound(true) } })
     return () => { alive = false }
   }, [dealId])
+
+  useEffect(() => { loadInvestors() /* eslint-disable-next-line */ }, [deal?.property_id])
 
   async function saveField(column, value) {
     setSavingField(column); setSaveError(null)
@@ -340,6 +353,44 @@ export default function DealDetailPage() {
           </div>
         </Card>
 
+        {/* Investors — upload the calculator, review the cap table, email them */}
+        <Card icon={Users} title="Investors">
+          {!deal.property_id ? (
+            <p className="text-sm text-slate-500">Link this deal to a property first (the ↗ button by the address) — investors attach to that property so they carry over when you close into the portfolio.</p>
+          ) : (
+            <>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs text-slate-400">{investors.length ? `${investors.length} on the cap table` : 'No investors yet'}</p>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setShowInvestorUpload(true)} className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 hover:text-blue-800 border border-blue-200 rounded-lg px-2.5 py-1.5">
+                    <UploadCloud className="w-3.5 h-3.5" /> Upload calculator
+                  </button>
+                  {investors.length > 0 && (
+                    <button onClick={() => setShowEmail(true)} className="inline-flex items-center gap-1.5 text-xs font-semibold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg px-2.5 py-1.5">
+                      <Mail className="w-3.5 h-3.5" /> Email investors
+                    </button>
+                  )}
+                </div>
+              </div>
+              {investors.length > 0 ? (
+                <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
+                  {investors.map(inv => (
+                    <div key={inv.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                      <div className="min-w-0">
+                        <p className="font-medium text-slate-800 truncate">{inv.name}</p>
+                        <p className={`text-[11px] truncate ${inv.email ? 'text-slate-400' : 'text-amber-600'}`}>{inv.email || 'no email on file'}</p>
+                      </div>
+                      {inv.contribution ? <span className="text-xs font-medium text-slate-600 tabular-nums shrink-0">{fmt$(inv.contribution)}</span> : null}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-slate-500">Upload your deal calculator (.xlsx) — it reads the cap table so you can email the investors from here. They carry over to the portfolio automatically when you close.</p>
+              )}
+            </>
+          )}
+        </Card>
+
         {/* Deal notes */}
         <Card icon={FileText} title="Deal Notes">
           <EF label="" field="notes" value={deal.notes} type="textarea" placeholder="Notes on this deal…" {...efProps} />
@@ -348,6 +399,22 @@ export default function DealDetailPage() {
         {/* Returns calculator */}
         <ReturnsCalculator dealId={deal.id} seedPrice={deal.purchase_price} seedNOI={deal.noi} seedCap={deal.cap_rate} />
       </div>
+
+      {showInvestorUpload && deal.property_id && (
+        <InvestorUpload
+          propertyId={deal.property_id}
+          onSaved={() => { setShowInvestorUpload(false); loadInvestors() }}
+          onClose={() => setShowInvestorUpload(false)}
+        />
+      )}
+      {showEmail && deal.property_id && (
+        <InvestorEmailComposer
+          propertyId={deal.property_id}
+          property={{ address: deal.address, city: deal.city, state: deal.state }}
+          purpose="pipeline"
+          onClose={() => setShowEmail(false)}
+        />
+      )}
     </div>
   )
 }
