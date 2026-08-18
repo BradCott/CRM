@@ -13,6 +13,11 @@ import SendFromPicker from './SendFromPicker'
 
 const COMPANY_RE = /\b(LLC|L\.L\.C|Inc|Corp|Company|Capital|Partners|Holdings|Trust|Fund|Group|Investments?|Ventures?)\b/i
 const greeting = (name = '') => (COMPANY_RE.test(name) ? name.trim() : (name.trim().split(/\s+/)[0] || 'there'))
+// The name to greet a recipient by: the explicit first name if set, else fall back
+// to parsing the display name (which becomes the entity name for a company).
+const greetName = r => (r?.first_name?.trim() ? r.first_name.trim() : greeting(r?.name || ''))
+// A recipient whose greeting would fall back to an entity name — needs a first name.
+const missingFirstName = r => !r?.first_name?.trim() && COMPANY_RE.test(r?.name || '')
 
 // Per-purpose defaults. Add a key here to spin up a new variant (sale, accounting…).
 const PURPOSES = {
@@ -85,7 +90,7 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
 
   const emailOf = r => (emailEdits[r.id] ?? r.email ?? '')
   const merge = (text, r) => text
-    .replaceAll('{{first_name}}', greeting(r.name))
+    .replaceAll('{{first_name}}', greetName(r))
     .replaceAll('{{property}}', propName)
 
   const included = recipients.filter(r => !exclude.has(r.id) && emailOf(r).trim())
@@ -182,7 +187,7 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
                 {sample && (
                   <div>
                     <button onClick={() => setShowPreview(p => !p)} className="text-xs font-medium text-slate-500 hover:text-slate-700 inline-flex items-center gap-1">
-                      {showPreview ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />} Preview as {greeting(sample.name)}
+                      {showPreview ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />} Preview as {greetName(sample)}
                     </button>
                     {showPreview && (
                       <div className="mt-2 bg-slate-50 rounded-lg p-3 text-xs text-slate-600 whitespace-pre-line border border-slate-100">
@@ -210,7 +215,9 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
                           onChange={e => setExclude(s => { const n = new Set(s); e.target.checked ? n.delete(r.id) : n.add(r.id); return n })}
                           className="mt-1 rounded border-slate-300" />
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-slate-800 truncate">{r.name}</p>
+                          <p className="text-sm font-medium text-slate-800 truncate">{r.name}
+                            {missingFirstName(r) && <span className="ml-1.5 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-0.5" title="No first name set — this email will greet them by the entity name. Add a first name on the Investors page.">no first name</span>}
+                          </p>
                           <input value={emailOf(r)} onChange={e => setEmailEdits(m => ({ ...m, [r.id]: e.target.value }))}
                             placeholder="add email…"
                             className={`w-full text-xs mt-0.5 border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-400 ${emailOf(r).trim() ? 'border-slate-200 text-slate-600' : 'border-amber-300 bg-amber-50'}`} />

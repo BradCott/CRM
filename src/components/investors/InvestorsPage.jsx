@@ -563,6 +563,7 @@ export function InvestorForm({ investor, onSave, onClose }) {
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState({
     name:                 investor?.name                 ?? '',
+    first_name:           investor?.first_name           ?? '',
     entity_type:          investor?.entity_type          ?? 'Individual',
     email:                investor?.email                ?? '',
     phone:                investor?.phone                ?? '',
@@ -602,6 +603,12 @@ export function InvestorForm({ investor, onSave, onClose }) {
             <label className="block text-sm font-medium text-slate-700 mb-1">Full Name <span className="text-red-500">*</span></label>
             <input required value={form.name} onChange={e => set('name', e.target.value)}
               className={inp} placeholder="Full name or entity name" />
+          </div>
+          <div className="col-span-2">
+            <label className="block text-sm font-medium text-slate-700 mb-1">First name for greetings</label>
+            <input value={form.first_name} onChange={e => set('first_name', e.target.value)}
+              className={inp} placeholder="e.g. Charles — the person to address in emails" />
+            <p className="text-[11px] text-slate-400 mt-1">Used as {'{{first_name}}'} in emails. For an entity, use the contact person's first name so emails don't greet the LLC.</p>
           </div>
           <div>
             <label className="block text-sm font-medium text-slate-700 mb-1">Entity Type</label>

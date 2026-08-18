@@ -604,6 +604,7 @@ export default function InvestorProfilePage() {
           ) : (
             <div className="px-5 py-4 grid grid-cols-2 sm:grid-cols-3 gap-x-8 gap-y-4 text-sm">
               {[
+                ['First name (greeting)', investor.first_name],
                 ['Entity Type',    investor.entity_type],
                 ['Email',          investor.email],
                 ['Phone',          investor.phone],

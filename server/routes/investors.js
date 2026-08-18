@@ -824,7 +824,7 @@ router.patch('/:id', (req, res) => {
   if (!inv) return res.status(404).json({ error: 'Not found' })
 
   const {
-    name, entity_type, email, phone,
+    name, first_name, entity_type, email, phone,
     address, city, state, zip,
     tax_id, accreditation_status, notes, is_incomplete,
     type, total_investments, preferred_tenant_brands, preferred_states,
@@ -833,7 +833,7 @@ router.patch('/:id', (req, res) => {
 
   db.prepare(`
     UPDATE investors SET
-      name = ?, entity_type = ?, type = ?,
+      name = ?, first_name = ?, entity_type = ?, type = ?,
       email = ?, phone = ?,
       address = ?, city = ?, state = ?, zip = ?,
       tax_id = ?, accreditation_status = ?, notes = ?,
@@ -843,6 +843,7 @@ router.patch('/:id', (req, res) => {
     WHERE id = ?
   `).run(
     name        ?? inv.name,
+    first_name  !== undefined ? (first_name || null) : inv.first_name,
     entity_type ?? inv.entity_type ?? 'Individual',
     type        ?? inv.type        ?? 'individual',
     email       !== undefined ? (email || null)   : inv.email,

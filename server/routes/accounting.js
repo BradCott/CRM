@@ -1835,7 +1835,7 @@ router.get('/:propertyId/investor-recipients', (req, res) => {
   const pid = req.params.propertyId
   const rows = capTableWithResolvedInvestorId(pid)
   const contactStmt = db.prepare(`SELECT email FROM investor_contacts WHERE investor_id = ? AND email IS NOT NULL AND email != ''`)
-  const invStmt     = db.prepare(`SELECT name, email FROM investors WHERE id = ?`)
+  const invStmt     = db.prepare(`SELECT name, first_name, email FROM investors WHERE id = ?`)
   const byInvestor = new Map()   // investor_id -> one recipient (merges GP+LP positions)
   const standalone = []          // cap-table rows not linked to a global investor
   for (const r of rows) {
@@ -1845,11 +1845,11 @@ router.get('/:propertyId/investor-recipients', (req, res) => {
         const emails = []
         if (inv?.email) emails.push(inv.email)
         for (const c of contactStmt.all(r.investor_id)) if (c.email && !emails.includes(c.email)) emails.push(c.email)
-        byInvestor.set(r.investor_id, { id: `inv-${r.investor_id}`, investor_id: r.investor_id, name: inv?.name || r.name, emails, email: emails[0] || '', contribution: 0 })
+        byInvestor.set(r.investor_id, { id: `inv-${r.investor_id}`, investor_id: r.investor_id, name: inv?.name || r.name, first_name: inv?.first_name || '', emails, email: emails[0] || '', contribution: 0 })
       }
       byInvestor.get(r.investor_id).contribution += Number(r.contribution) || 0
     } else {
-      standalone.push({ id: `row-${r.id}`, investor_id: null, name: r.name, emails: [], email: '', contribution: Number(r.contribution) || 0 })
+      standalone.push({ id: `row-${r.id}`, investor_id: null, name: r.name, first_name: '', emails: [], email: '', contribution: Number(r.contribution) || 0 })
     }
   }
   res.json([...byInvestor.values(), ...standalone])

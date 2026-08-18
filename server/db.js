@@ -668,6 +668,11 @@ const migrations = [
      WHERE NOT EXISTS (SELECT 1 FROM handwrytten_return_addresses)`,
   // Which return address a drip uses for every batch.
   `ALTER TABLE handwrytten_drips ADD COLUMN return_address_id INTEGER`,
+
+  // The real first name to greet an investor by in emails — for an ENTITY this is
+  // the contact person's first name (e.g. "Charles" for "CCC RE Investments LLC"),
+  // so emails never say "Hi CCC RE Investments LLC,". Blank falls back to name.
+  `ALTER TABLE investors ADD COLUMN first_name TEXT`,
   // "Ready to re-mail" queue — set when the update-only importer corrects an
   // address, cleared once a mail campaign goes out to that property.
   `ALTER TABLE properties ADD COLUMN remail_ready INTEGER DEFAULT 0`,
