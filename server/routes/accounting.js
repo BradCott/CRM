@@ -1869,6 +1869,21 @@ Requirements:
 
 Respond with ONLY a JSON object: {"subject": "...", "body": "..."}. The body is plain text with \\n line breaks and the merge tokens.`
 
+const PIPELINE_PROMPT = `You draft a warm, professional email from a real-estate sponsor (Knox Capital) to prospective/existing investors about a NEW DEAL still in the PIPELINE — one Knox is pursuing or under contract on, NOT yet closed or owned.
+
+Keep these merge tokens EXACTLY as written:
+{{first_name}} — investor's first name / greeting
+{{property}} — property name/address
+
+Requirements:
+- Confident, opportunity-focused, concise. A sponsor sharing a deal they're excited about and inviting the investor to participate.
+- Frame it as an opportunity to review / express interest — not a closed transaction. Invite questions and a call.
+- Do NOT invent specific numbers, returns, cap rates, dates, or terms that weren't provided. If the sponsor gives specifics, use them; otherwise keep it general with clear [bracketed placeholders] the sponsor can fill.
+- Make clear nothing is committed and this is not an offer to sell securities — a friendly heads-up / interest check.
+- End with a friendly sign-off from the Knox Capital team.
+
+Respond with ONLY a JSON object: {"subject": "...", "body": "..."}. The body is plain text with \\n line breaks and the merge tokens.`
+
 const INVESTOR_EMAIL_PROMPT = `You draft a warm, professional email from a real-estate sponsor (Knox Capital) to an investor when a property they invested in has just SOLD.
 
 Write a REUSABLE TEMPLATE that will be sent to every investor — keep these merge tokens EXACTLY as written so each investor's numbers can be filled in:
@@ -1902,7 +1917,7 @@ router.post('/:propertyId/draft-investor-email', async (req, res) => {
   ].filter(Boolean).join('\n\n')
   // Pick the template by purpose. Default stays the closing/sale email for the
   // existing caller; 'update' drafts a general property update.
-  const PROMPTS = { closing: INVESTOR_EMAIL_PROMPT, update: PROPERTY_UPDATE_PROMPT }
+  const PROMPTS = { closing: INVESTOR_EMAIL_PROMPT, update: PROPERTY_UPDATE_PROMPT, pipeline: PIPELINE_PROMPT }
   const prompt = PROMPTS[b.purpose] || INVESTOR_EMAIL_PROMPT
   try {
     const result = await callClaudeTextJson(apiKey, context, prompt)

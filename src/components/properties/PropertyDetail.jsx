@@ -723,7 +723,7 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
         <InvestorEmailComposer
           propertyId={propertyId}
           property={data}
-          purpose="update"
+          purpose={data?.is_portfolio ? 'update' : 'pipeline'}
           onClose={() => setShowEmail(false)}
         />
       )}

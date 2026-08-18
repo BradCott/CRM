@@ -33,6 +33,23 @@ The Knox Capital Team`,
     draftPlaceholder: 'e.g. we renewed the tenant for 5 years at a 10% bump — write a warm update and thank them for their partnership',
     footer: 'Everyone on the list gets the same message, personalized with their name.',
   },
+  pipeline: {
+    title: 'Email investors — new deal',
+    defaultSubject: 'A new opportunity: {{property}}',
+    defaultBody:
+`Hi {{first_name}},
+
+We're pursuing a new deal I think you'll want to see — {{property}}.
+
+[Share the opportunity here — the tenant, the location, why it's attractive, and the high-level terms.]
+
+Nothing's committed yet — I wanted to give you an early look and see if you'd be interested in participating. Happy to hop on a call and walk you through it.
+
+Warm regards,
+The Knox Capital Team`,
+    draftPlaceholder: 'e.g. NNN Sherwin Williams in Troy MI, 10-yr lease, ~7% cap — write an enthusiastic first-look email inviting them to review',
+    footer: "An early-look opportunity email — nothing committed. Personalized with each investor's name.",
+  },
 }
 
 export default function InvestorEmailComposer({ propertyId, property, purpose = 'update', onClose }) {
