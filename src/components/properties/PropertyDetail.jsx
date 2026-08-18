@@ -8,12 +8,13 @@ import {
 import {
   getProperty, togglePortfolio, clearOwnershipReview, parseMarketingPackage, parseSettlementPdf,
   updatePropertyField, updatePropertyRelation, getTenantBrands, getOperators, getAllPeople,
-  getPropertyDocuments, propertyDocUrl, deletePropertyDocument,
+  getPropertyDocuments, propertyDocUrl, deletePropertyDocument, getInvestorRecipients,
 } from '../../api/client'
 import { useApp } from '../../context/AppContext'
 import SendLetterModal from '../handwrytten/SendLetterModal'
 import ExtractedFieldsModal from '../management/ExtractedFieldsModal'
 import InvestorEmailComposer from '../accounting/InvestorEmailComposer'
+import InvestorUpload from '../accounting/InvestorUpload'
 
 const PIPELINE_STAGES = [
   { key: 'loi',             label: 'LOI' },
@@ -81,6 +82,8 @@ function leaseLabel(m) {
 
 export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfolioChange, embedded = false }) {
   const [showEmail, setShowEmail] = useState(false)
+  const [investors, setInvestors] = useState([])          // cap table (carries over to portfolio)
+  const [showInvestorUpload, setShowInvestorUpload] = useState(false)
   // Panel vs. embedded (a tab inside the full-page property workspace).
   const shell = embedded
     ? 'w-full h-full bg-white flex flex-col overflow-y-auto'
@@ -114,11 +117,14 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
   const [savingField, setSavingField] = useState(null)
   const [saveError, setSaveError]     = useState(null)
 
+  const loadInvestors = () => getInvestorRecipients(propertyId).then(r => setInvestors(Array.isArray(r) ? r : [])).catch(() => setInvestors([]))
   useEffect(() => {
     if (!propertyId) return
     setData(null)
     getProperty(propertyId).then(setData).catch(console.error)
     getPropertyDocuments(propertyId).then(setDocs).catch(() => setDocs([]))
+    loadInvestors()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [propertyId])
 
   async function handleDeleteDoc(id) {
@@ -272,7 +278,7 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
             >
               <TrendingUp className="w-3.5 h-3.5" /> Add to Pipeline
             </button>
-            {data?.is_portfolio && (
+            {investors.length > 0 && (
               <button
                 onClick={() => setShowEmail(true)}
                 title="Email this property's investors an update"
@@ -501,6 +507,36 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
           </Grid2>
         </Section>
 
+        {/* Investors — cap table from the deal calculator; carries over to portfolio */}
+        <Section icon={User} title="Investors">
+          <div className="flex items-center justify-between mb-2">
+            <p className="text-xs text-slate-400">{investors.length ? `${investors.length} on the cap table` : 'No investors yet'}</p>
+            <button onClick={() => setShowInvestorUpload(true)} className="inline-flex items-center gap-1 text-xs font-medium text-blue-600 hover:text-blue-800">
+              <FileText className="w-3.5 h-3.5" /> Upload calculator
+            </button>
+          </div>
+          {investors.length > 0 ? (
+            <>
+              <div className="rounded-lg border border-slate-200 divide-y divide-slate-100">
+                {investors.map(inv => (
+                  <div key={inv.id} className="flex items-center justify-between gap-2 px-3 py-2 text-sm">
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-800 truncate">{inv.name}</p>
+                      <p className={`text-[11px] truncate ${inv.email ? 'text-slate-400' : 'text-amber-600'}`}>{inv.email || 'no email on file'}</p>
+                    </div>
+                    {inv.contribution ? <span className="text-xs font-medium text-slate-600 tabular-nums shrink-0">{fmt$(inv.contribution)}</span> : null}
+                  </div>
+                ))}
+              </div>
+              <button onClick={() => setShowEmail(true)} className="mt-2 inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-700 hover:text-emerald-800">
+                <Mail className="w-3.5 h-3.5" /> Email these investors
+              </button>
+            </>
+          ) : (
+            <p className="text-xs text-slate-400">Upload your deal calculator to pull in the investors. They carry over to the portfolio automatically when you close the deal.</p>
+          )}
+        </Section>
+
         {/* Systems */}
         <Section icon={Wrench} title="Systems">
           <Grid2>
@@ -689,6 +725,14 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
           property={data}
           purpose="update"
           onClose={() => setShowEmail(false)}
+        />
+      )}
+
+      {showInvestorUpload && (
+        <InvestorUpload
+          propertyId={propertyId}
+          onSaved={() => { setShowInvestorUpload(false); loadInvestors() }}
+          onClose={() => setShowInvestorUpload(false)}
         />
       )}
 
