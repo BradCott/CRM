@@ -419,6 +419,18 @@ router.post('/:id/parse', upload.array('files', 12), async (req, res) => {
 
   const first = files[0]
   const media = first.mimetype || 'application/pdf'
+
+  // Spreadsheets (the deal calculator / cap table) can't be read as a PDF/image
+  // by the classifier — they have a dedicated importer. Point the user there
+  // instead of failing with a cryptic media-type error from the AI.
+  const isSpreadsheet = /spreadsheet|excel|ms-excel|officedocument\.spreadsheet/i.test(media)
+    || /\.(xlsx|xls|csv)$/i.test(first.originalname || '')
+  if (isSpreadsheet) {
+    return res.status(422).json({
+      error: 'That looks like a spreadsheet (e.g. your deal calculator). To import the investors from it, open the property (the "Open" button) and use the Investors → "Upload calculator" button — it reads the cap table and the investors carry over to the portfolio when you close.',
+    })
+  }
+
   try {
     let docType = req.body?.docType
     if (!docType || docType === 'auto') {
