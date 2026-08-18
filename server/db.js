@@ -420,8 +420,15 @@ const migrations = [
     lease_end TEXT,
     rent_escalations TEXT,
     renewal_options TEXT,
+    renewal_option_count INTEGER,
+    renewal_option_length TEXT,
+    renewal_option_increase TEXT,
     created_at TEXT DEFAULT (datetime('now'))
   )`,
+  // Renewal-option breakdown per tenant (for existing deal_tenants tables).
+  `ALTER TABLE deal_tenants ADD COLUMN renewal_option_count    INTEGER`,
+  `ALTER TABLE deal_tenants ADD COLUMN renewal_option_length   TEXT`,
+  `ALTER TABLE deal_tenants ADD COLUMN renewal_option_increase TEXT`,
   `ALTER TABLE oauth_tokens ADD COLUMN notes_folder_id  TEXT`,
   `ALTER TABLE oauth_tokens ADD COLUMN notes_processed  TEXT`,
   `CREATE TABLE IF NOT EXISTS plays (

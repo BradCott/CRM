@@ -480,6 +480,9 @@ router.post('/:id/parse', upload.array('files', 12), async (req, res) => {
         annual_rent: s_annual(sm.base_rent), lease_start: s_date(sm.commencement_date),
         lease_end: s_date(sm.expiration_date), rent_escalations: yesNo(sm.escalations_in_term) || s_str(sm.rent_escalations),
         renewal_options: s_str(sm.renewal_options),
+        renewal_option_count: s_int(sm.renewal_option_count),
+        renewal_option_length: s_str(sm.renewal_option_length),
+        renewal_option_increase: s_str(sm.renewal_option_increase),
       }
       const cols = Object.keys(t).filter(k => t[k] != null && t[k] !== '')
       db.prepare(`INSERT INTO deal_tenants (deal_id${cols.length ? ', ' + cols.join(', ') : ''}) VALUES (?${cols.map(() => ', ?').join('')})`)
@@ -522,6 +525,7 @@ router.delete('/:id/proposals/:pid', (req, res) => {
 const TENANT_FIELDS = {
   tenant_name:'text', suite:'text', square_feet:'real', lease_type:'text', annual_rent:'real',
   lease_start:'date', lease_end:'date', rent_escalations:'text', renewal_options:'text',
+  renewal_option_count:'int', renewal_option_length:'text', renewal_option_increase:'text',
 }
 
 // PATCH /api/deals/:id/multi-tenant  body: { on } — flip the deal to multi-tenant.

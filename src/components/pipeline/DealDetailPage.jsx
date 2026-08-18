@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, Loader2, Building2, CalendarDays, DollarSign, User, Link2, FileText,
   TrendingUp, Sparkles, ScrollText, AlertCircle, CheckCircle2, Pencil, FileSignature, CalendarClock,
-  ExternalLink, ClipboardCheck, X, UploadCloud, Users, Mail, Plus, Building,
+  ExternalLink, ClipboardCheck, X, UploadCloud, Users, Mail, Plus, Building, ChevronDown, Trash2,
 } from 'lucide-react'
 import { useApp } from '../../context/AppContext'
 import {
@@ -473,6 +473,11 @@ const LEASE_TYPES = ['Ground Lease', 'NNN', 'NN', 'Modified Gross', 'Gross']
 
 function RentRoll({ deal, saving, onCell, onAdd, onRemove }) {
   const tenants = deal.tenants || []
+  const [collapsed, setCollapsed] = useState(() => new Set())
+  const toggleOne = (id) => setCollapsed(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n })
+  const allCollapsed = tenants.length > 0 && tenants.every(t => collapsed.has(t.id))
+  const toggleAll = () => setCollapsed(allCollapsed ? new Set() : new Set(tenants.map(t => t.id)))
+
   const totalRent = tenants.reduce((s, t) => s + (Number(t.annual_rent) || 0), 0)
   const totalSF   = tenants.reduce((s, t) => s + (Number(t.square_feet) || 0), 0)
   const w = tenants.reduce((a, t) => {
@@ -491,47 +496,32 @@ function RentRoll({ deal, saving, onCell, onAdd, onRemove }) {
         <Stat label="Total Rent (NOI)" value={fmt$(totalRent) || '—'} accent />
         <Stat label="WALT (rent-wtd)" value={waltLabel(walt)} />
       </div>
-      {/* Rent roll table */}
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm border-collapse min-w-[760px]">
-          <thead>
-            <tr className="text-[11px] text-slate-400 border-b border-slate-100">
-              <th className="text-left font-medium py-1.5 pr-2">Tenant</th>
-              <th className="text-left font-medium py-1.5 px-2">Suite</th>
-              <th className="text-right font-medium py-1.5 px-2">SF</th>
-              <th className="text-left font-medium py-1.5 px-2">Lease Type</th>
-              <th className="text-right font-medium py-1.5 px-2">Annual Rent</th>
-              <th className="text-left font-medium py-1.5 px-2">Start</th>
-              <th className="text-left font-medium py-1.5 px-2">End</th>
-              <th className="text-left font-medium py-1.5 px-2">Esc.</th>
-              <th className="text-left font-medium py-1.5 px-2">Options</th>
-              <th className="w-6" />
-            </tr>
-          </thead>
-          <tbody>
-            {tenants.length === 0 ? (
-              <tr><td colSpan={10} className="py-4 text-center text-slate-400">No tenants yet — add one, or drop a lease into the uploader above.</td></tr>
-            ) : tenants.map(t => (
-              <tr key={t.id} className="border-b border-slate-50">
-                <TCell t={t} col="tenant_name"     saving={saving} onSave={onCell} placeholder="Tenant" />
-                <TCell t={t} col="suite"           saving={saving} onSave={onCell} />
-                <TCell t={t} col="square_feet"     type="number"  align="right" saving={saving} onSave={onCell} />
-                <TCell t={t} col="lease_type"      type="select"  options={LEASE_TYPES} saving={saving} onSave={onCell} />
-                <TCell t={t} col="annual_rent"     type="currency" align="right" saving={saving} onSave={onCell} />
-                <TCell t={t} col="lease_start"     type="date"    saving={saving} onSave={onCell} />
-                <TCell t={t} col="lease_end"       type="date"    saving={saving} onSave={onCell} />
-                <TCell t={t} col="rent_escalations" type="select" options={['Yes', 'No']} saving={saving} onSave={onCell} />
-                <TCell t={t} col="renewal_options" saving={saving} onSave={onCell} />
-                <td className="text-right"><button onClick={() => onRemove(t.id)} title="Remove tenant" className="text-slate-300 hover:text-red-500"><X className="w-3.5 h-3.5" /></button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+
+      {tenants.length > 1 && (
+        <div className="flex justify-end mb-2">
+          <button onClick={toggleAll} className="text-xs text-slate-500 hover:text-slate-700 font-medium">
+            {allCollapsed ? 'Expand all' : 'Collapse all'}
+          </button>
+        </div>
+      )}
+
+      {tenants.length === 0 ? (
+        <p className="text-sm text-slate-400 py-4 text-center border border-dashed border-slate-200 rounded-xl">
+          No tenants yet — add one below, or drop a lease into the uploader above.
+        </p>
+      ) : (
+        <div className="space-y-2.5">
+          {tenants.map((t, i) => (
+            <TenantCard key={t.id} tenant={t} index={i} open={!collapsed.has(t.id)}
+              onToggle={() => toggleOne(t.id)} saving={saving} onCell={onCell} onRemove={onRemove} />
+          ))}
+        </div>
+      )}
+
       <button onClick={onAdd} className="mt-3 flex items-center gap-1.5 text-sm text-blue-600 hover:text-blue-800 font-medium">
         <Plus className="w-4 h-4" /> Add tenant
       </button>
-      <p className="text-[11px] text-slate-400 mt-2">NOI, annual rent, and cap rate roll up from this rent roll and feed the returns calculator. Drop a lease into the uploader above and it's added here automatically.</p>
+      <p className="text-[11px] text-slate-400 mt-2">NOI, annual rent, and cap rate roll up from these tenants and feed the returns calculator. Drop a lease into the uploader above and it's added here automatically.</p>
     </div>
   )
 }
@@ -545,8 +535,52 @@ function Stat({ label, value, accent }) {
   )
 }
 
-// Compact inline-edit cell for the rent-roll table.
-function TCell({ t, col, type = 'text', options, align, saving, onSave, placeholder }) {
+// A single tenant as a collapsible full lease abstract (mirrors the single-tenant view).
+function TenantCard({ tenant: t, index, open, onToggle, saving, onCell, onRemove }) {
+  const summary = [
+    t.suite && `Ste ${t.suite}`,
+    t.square_feet && `${Math.round(Number(t.square_feet)).toLocaleString()} SF`,
+    t.annual_rent && fmt$(t.annual_rent),
+    t.lease_end && `exp ${fmtDate(t.lease_end)}`,
+  ].filter(Boolean).join(' · ')
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden">
+      <div className="flex items-center gap-2 px-3 py-2.5 bg-slate-50/40">
+        <button onClick={onToggle} title={open ? 'Collapse' : 'Expand'} className="text-slate-400 hover:text-slate-600 shrink-0">
+          <ChevronDown className={`w-4 h-4 transition-transform ${open ? '' : '-rotate-90'}`} />
+        </button>
+        <button onClick={onToggle} className="min-w-0 flex-1 text-left">
+          <p className="text-sm font-semibold text-slate-800 truncate">{t.tenant_name || `Tenant ${index + 1}`}</p>
+          {summary && <p className="text-xs text-slate-400 truncate">{summary}</p>}
+        </button>
+        <button onClick={() => onRemove(t.id)} title="Delete tenant" className="text-slate-300 hover:text-red-500 shrink-0 p-1">
+          <Trash2 className="w-4 h-4" />
+        </button>
+      </div>
+      {open && (
+        <div className="px-4 pb-4 pt-3 border-t border-slate-100">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-4">
+            <TField label="Tenant"            t={t} col="tenant_name"     saving={saving} onSave={onCell} />
+            <TField label="Suite"             t={t} col="suite"           saving={saving} onSave={onCell} />
+            <TField label="Square Feet"       t={t} col="square_feet"     type="sqft"    saving={saving} onSave={onCell} />
+            <TField label="Lease Type"        t={t} col="lease_type"      type="select"  options={LEASE_TYPES} saving={saving} onSave={onCell} />
+            <TField label="Base Rent"         t={t} col="annual_rent"     type="currency" saving={saving} onSave={onCell} />
+            <TField label="Lease Start"       t={t} col="lease_start"     type="date"    saving={saving} onSave={onCell} />
+            <TField label="Lease Expiration"  t={t} col="lease_end"       type="date"    saving={saving} onSave={onCell} />
+            <Detail label="Term Remaining"    value={termRemaining(t.lease_end)} />
+            <TField label="Rent Escalations"  t={t} col="rent_escalations" type="select" options={['Yes', 'No']} saving={saving} onSave={onCell} />
+            <TField label="Options Remaining" t={t} col="renewal_option_count" type="int" saving={saving} onSave={onCell} />
+            <TField label="Option Length"     t={t} col="renewal_option_length" saving={saving} onSave={onCell} />
+            <TField label="Option Increase"   t={t} col="renewal_option_increase" saving={saving} onSave={onCell} />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// Inline click-to-edit field for a tenant (grid style, matches the single-tenant abstract).
+function TField({ label, t, col, type = 'text', options, saving, onSave }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState('')
   const ref = useRef(null)
@@ -561,37 +595,35 @@ function TCell({ t, col, type = 'text', options, align, saving, onSave, placehol
     if (next === orig) return
     onSave(t.id, col, next === '' ? null : next)
   }
-  const display = type === 'currency' ? fmt$(value)
-    : type === 'date' ? fmtDate(value)
-    : type === 'number' ? (value != null && value !== '' ? Number(value).toLocaleString() : null)
-    : (value || null)
-  const cls = `py-1 px-2 align-middle ${align === 'right' ? 'text-right' : 'text-left'}`
-  const inputBase = 'w-full text-sm border border-blue-300 rounded px-1 py-0.5 bg-white focus:outline-none'
+  const display = formatEditable(type, value)
+  const inputCls = 'w-full px-2 py-1 text-sm border border-blue-300 rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30'
+  const numeric = type === 'currency' || type === 'sqft' || type === 'int'
 
   if (editing) {
     return (
-      <td className={cls}>
+      <div>
+        <p className="text-xs text-slate-400 mb-0.5">{label}</p>
         {type === 'select' ? (
           <select ref={ref} value={draft} onChange={e => { setDraft(e.target.value); commit(e.target.value) }} onBlur={() => commit()}
-            onKeyDown={e => { if (e.key === 'Escape') setEditing(false) }} className={inputBase}>
+            onKeyDown={e => { if (e.key === 'Escape') setEditing(false) }} className={inputCls}>
             <option value="">—</option>{options.map(o => <option key={o} value={o}>{o}</option>)}
           </select>
         ) : (
-          <input ref={ref} type={type === 'date' ? 'date' : type === 'currency' || type === 'number' ? 'number' : 'text'}
-            step="any" value={draft} onChange={e => setDraft(e.target.value)} onBlur={() => commit()}
-            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }}
-            className={`${inputBase} ${align === 'right' ? 'text-right' : ''}`} />
+          <input ref={ref} type={type === 'date' ? 'date' : numeric ? 'number' : 'text'} step={type === 'int' ? '1' : 'any'}
+            value={draft} onChange={e => setDraft(e.target.value)} onBlur={() => commit()}
+            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setEditing(false) }} className={inputCls} />
         )}
-      </td>
+      </div>
     )
   }
   return (
-    <td className={cls}>
-      <button onClick={begin} disabled={busy} className={`group w-full flex items-center gap-1 ${align === 'right' ? 'justify-end' : ''}`}>
-        <span className={`text-sm truncate ${display == null ? 'text-slate-300' : 'text-slate-800'}`}>{display == null ? (placeholder || '—') : display}</span>
-        {busy ? <Loader2 className="w-3 h-3 text-blue-400 animate-spin shrink-0" /> : <Pencil className="w-2.5 h-2.5 text-slate-300 opacity-0 group-hover:opacity-100 shrink-0" />}
-      </button>
-    </td>
+    <button type="button" onClick={begin} disabled={busy} className="group text-left w-full">
+      <p className="text-xs text-slate-400 mb-0.5">{label}</p>
+      <div className={`text-sm font-medium rounded px-1 -mx-1 min-h-[1.25rem] flex items-start gap-1 group-hover:bg-blue-50/60 transition-colors ${display == null ? 'text-slate-300' : 'text-slate-800'}`}>
+        <span className="flex-1">{display == null ? '—' : display}</span>
+        {busy ? <Loader2 className="w-3 h-3 text-blue-400 animate-spin shrink-0 mt-0.5" /> : <Pencil className="w-3 h-3 text-slate-300 opacity-0 group-hover:opacity-100 shrink-0 mt-0.5" />}
+      </div>
+    </button>
   )
 }
 
