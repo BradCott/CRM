@@ -185,6 +185,22 @@ export async function watchMeetingNotes() {
   db.prepare(`
     UPDATE oauth_tokens SET notes_processed = ?, updated_at = datetime('now') WHERE provider = 'google'
   `).run(JSON.stringify(processed.slice(-100)))
+
+  // Keep the dashboard on THIS week only: retire action items from any earlier
+  // meeting so only the most recent notes doc's plays remain. `files` is ordered
+  // createdTime desc, so files[0] is the current week's notes. Uses the soft
+  // 'dismissed' status (nothing is deleted). Skipped when no recent doc is found,
+  // so a Drive hiccup can never wipe the board.
+  const currentFileId = files[0]?.id
+  if (currentFileId) {
+    const r = db.prepare(`
+      UPDATE plays SET status = 'dismissed'
+      WHERE source = 'notes'
+        AND status IN ('open', 'suggested', 'snoozed')
+        AND dedupe_key NOT LIKE ?
+    `).run(`notes:${currentFileId}:%`)
+    if (r.changes > 0) console.log(`[driveWatcher] retired ${r.changes} action item(s) from prior meetings`)
+  }
 }
 
 async function extractText(drive, file) {
