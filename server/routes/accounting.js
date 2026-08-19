@@ -1792,7 +1792,9 @@ function emailTextToHtml(text) {
     }
     return `<p style="margin:0 0 14px">${lines.map(esc).join('<br>')}</p>`
   }).join('')
-  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;max-width:720px">${body}</div>`
+  // No max-width — let the body flow to the reader's full width, like a normal
+  // plain email (a narrow capped column read as "off" to the sender).
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a">${body}</div>`
 }
 
 // ── Investor closing emails ───────────────────────────────────────────────────
