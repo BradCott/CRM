@@ -1838,8 +1838,9 @@ router.get('/:propertyId/investor-returns', (req, res) => {
 router.get('/:propertyId/investor-recipients', (req, res) => {
   const pid = req.params.propertyId
   const rows = capTableWithResolvedInvestorId(pid)
-  const contactStmt = db.prepare(`SELECT name, email FROM investor_contacts WHERE investor_id = ? ORDER BY id`)
+  const contactStmt = db.prepare(`SELECT id, name, email FROM investor_contacts WHERE investor_id = ? ORDER BY id`)
   const invStmt     = db.prepare(`SELECT name, first_name, email FROM investors WHERE id = ?`)
+  const firstOf     = full => (full || '').trim().split(/\s+/)[0] || ''
   const byInvestor = new Map()   // investor_id -> one recipient (merges GP+LP positions)
   const standalone = []          // cap-table rows not linked to a global investor
   for (const r of rows) {
@@ -1853,7 +1854,12 @@ router.get('/:propertyId/investor-recipients', (req, res) => {
         // Greeting first name: the explicit field, else the first contact's first
         // name (so an entity with a contact person greets by their real name).
         const contactFirst = (contacts.find(c => c.name && c.name.trim())?.name || '').trim().split(/\s+/)[0] || ''
-        byInvestor.set(r.investor_id, { id: `inv-${r.investor_id}`, investor_id: r.investor_id, name: inv?.name || r.name, first_name: inv?.first_name || contactFirst || '', emails, email: emails[0] || '', contribution: 0 })
+        byInvestor.set(r.investor_id, {
+          id: `inv-${r.investor_id}`, investor_id: r.investor_id, name: inv?.name || r.name,
+          first_name: inv?.first_name || contactFirst || '', emails, email: emails[0] || '', contribution: 0,
+          // Each contact person on this entity — the email composer fans out to all of them.
+          contacts: contacts.map(c => ({ id: c.id, name: c.name || '', email: c.email || '', first_name: firstOf(c.name) })),
+        })
       }
       byInvestor.get(r.investor_id).contribution += Number(r.contribution) || 0
     } else {

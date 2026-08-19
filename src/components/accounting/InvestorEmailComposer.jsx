@@ -80,7 +80,23 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
   useEffect(() => {
     getInvestorRecipients(propertyId)
       .then(rows => {
-        const list = rows || []
+        // Fan out each entity into one recipient PER CONTACT (each greeted by their
+        // own first name). Investors with no contacts stay a single recipient.
+        const list = (rows || []).flatMap(r => {
+          if (r.contacts && r.contacts.length) {
+            return r.contacts.map((c, i) => ({
+              id: `contact-${c.id}`,
+              investor_id: r.investor_id,
+              name: c.name || r.name,        // the contact person's name
+              entity: r.name,                // the entity they belong to
+              first_name: c.first_name || r.first_name || '',
+              emails: c.email ? [c.email] : [],
+              email: c.email || '',
+              contribution: i === 0 ? r.contribution : 0,
+            }))
+          }
+          return [r]
+        })
         setRecipients(list)
         setExclude(new Set(list.filter(r => !r.email).map(r => r.id)))  // auto-skip anyone missing an email
       })
@@ -216,8 +232,9 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
                           className="mt-1 rounded border-slate-300" />
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-slate-800 truncate">{r.name}
-                            {missingFirstName(r) && <span className="ml-1.5 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-0.5" title="No first name set — this email will greet them by the entity name. Add a first name on the Investors page.">no first name</span>}
+                            {missingFirstName(r) && <span className="ml-1.5 text-[10px] font-semibold text-amber-700 bg-amber-50 border border-amber-200 rounded px-1 py-0.5" title="No first name set — this email will greet them by the entity name. Add a contact/first name on the Investors page.">no first name</span>}
                           </p>
+                          {r.entity && r.entity !== r.name && <p className="text-[11px] text-slate-400 truncate">{r.entity}</p>}
                           <input value={emailOf(r)} onChange={e => setEmailEdits(m => ({ ...m, [r.id]: e.target.value }))}
                             placeholder="add email…"
                             className={`w-full text-xs mt-0.5 border rounded px-2 py-1 focus:outline-none focus:ring-1 focus:ring-emerald-400 ${emailOf(r).trim() ? 'border-slate-200 text-slate-600' : 'border-amber-300 bg-amber-50'}`} />
