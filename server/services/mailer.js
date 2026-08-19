@@ -23,6 +23,20 @@ const enc = (v) => /[^\x00-\x7F]/.test(v) ? `=?UTF-8?B?${Buffer.from(v).toString
 const b64 = (buf) => buf.toString('base64').replace(/(.{76})/g, '$1\r\n')
 const urlB64 = (s) => Buffer.from(s).toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
 
+// Wrap a bare address with a friendly display name so Gmail shows a real name,
+// not the local-part ("management"). Known Knox mailboxes get their proper name.
+const FROM_NAMES = {
+  'management@knoxcre.com': 'Knox Capital Management',
+  'brad@knoxcre.com':       'Brad Cottam',
+  'cole@knoxcre.com':       'Cole Howard',
+}
+function namedFrom(email) {
+  const e = String(email || '').trim()
+  if (!e || e.includes('<')) return e   // already has a display name
+  const name = FROM_NAMES[e.toLowerCase()] || 'Knox Capital Management'
+  return `${enc(name)} <${e}>`
+}
+
 function buildRaw({ from, to, cc, replyTo, subject, text, html, attachments = [] }) {
   const headers = []
   if (from) headers.push(`From: ${from}`)
@@ -72,11 +86,11 @@ export async function sendMail({ to, cc, replyTo, subject, text, html, from, att
   if (!tokenRow?.access_token) throw new Error('Google account not connected — connect it in Settings to send email.')
   // When sending through a specific account and no explicit From given, send AS
   // that account's own address (so the From matches the mailbox).
-  if (!from && account && tokenRow.email) from = tokenRow.email
+  if (!from && account && tokenRow.email) from = namedFrom(tokenRow.email)
 
   const auth  = getAuthedClient(tokenRow)
   const gmail = google.gmail({ version: 'v1', auth })
-  const raw   = buildRaw({ from: from || getDefaultFrom(), to, cc, replyTo, subject, text, html, attachments: attachments || [] })
+  const raw   = buildRaw({ from: namedFrom(from || getDefaultFrom()), to, cc, replyTo, subject, text, html, attachments: attachments || [] })
   try {
     await gmail.users.messages.send({ userId: 'me', requestBody: { raw } })
   } catch (e) {
