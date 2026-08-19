@@ -1838,7 +1838,7 @@ router.get('/:propertyId/investor-returns', (req, res) => {
 router.get('/:propertyId/investor-recipients', (req, res) => {
   const pid = req.params.propertyId
   const rows = capTableWithResolvedInvestorId(pid)
-  const contactStmt = db.prepare(`SELECT email FROM investor_contacts WHERE investor_id = ? AND email IS NOT NULL AND email != ''`)
+  const contactStmt = db.prepare(`SELECT name, email FROM investor_contacts WHERE investor_id = ? ORDER BY id`)
   const invStmt     = db.prepare(`SELECT name, first_name, email FROM investors WHERE id = ?`)
   const byInvestor = new Map()   // investor_id -> one recipient (merges GP+LP positions)
   const standalone = []          // cap-table rows not linked to a global investor
@@ -1846,10 +1846,14 @@ router.get('/:propertyId/investor-recipients', (req, res) => {
     if (r.investor_id != null) {
       if (!byInvestor.has(r.investor_id)) {
         const inv = invStmt.get(r.investor_id)
+        const contacts = contactStmt.all(r.investor_id)
         const emails = []
         if (inv?.email) emails.push(inv.email)
-        for (const c of contactStmt.all(r.investor_id)) if (c.email && !emails.includes(c.email)) emails.push(c.email)
-        byInvestor.set(r.investor_id, { id: `inv-${r.investor_id}`, investor_id: r.investor_id, name: inv?.name || r.name, first_name: inv?.first_name || '', emails, email: emails[0] || '', contribution: 0 })
+        for (const c of contacts) if (c.email && !emails.includes(c.email)) emails.push(c.email)
+        // Greeting first name: the explicit field, else the first contact's first
+        // name (so an entity with a contact person greets by their real name).
+        const contactFirst = (contacts.find(c => c.name && c.name.trim())?.name || '').trim().split(/\s+/)[0] || ''
+        byInvestor.set(r.investor_id, { id: `inv-${r.investor_id}`, investor_id: r.investor_id, name: inv?.name || r.name, first_name: inv?.first_name || contactFirst || '', emails, email: emails[0] || '', contribution: 0 })
       }
       byInvestor.get(r.investor_id).contribution += Number(r.contribution) || 0
     } else {
