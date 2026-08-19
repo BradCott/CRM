@@ -1784,13 +1784,15 @@ function emailTextToHtml(text) {
   const blocks = String(text || '').replace(/\r\n/g, '\n').trim().split(/\n{2,}/)
   const body = blocks.map(block => {
     const lines = block.split('\n')
-    const isBullet = l => /^\s*[•\-*]\s+/.test(l)
-    if (lines.length && lines.every(isBullet)) {
+    const isBullet = l => /^\s*[•*]\s+|^\s*-\s+\S/.test(l)
+    // Only a REAL list (2+ bullet lines) becomes a <ul> — a lone "- Brad" sign-off
+    // is a signature line, not a one-item bullet list.
+    if (lines.length >= 2 && lines.every(isBullet)) {
       return `<ul style="margin:0 0 14px;padding-left:22px">${lines.map(l => `<li style="margin:2px 0">${esc(l.replace(/^\s*[•\-*]\s+/, ''))}</li>`).join('')}</ul>`
     }
     return `<p style="margin:0 0 14px">${lines.map(esc).join('<br>')}</p>`
   }).join('')
-  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;font-size:15px;line-height:1.55;color:#1a1a1a;max-width:640px">${body}</div>`
+  return `<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;max-width:720px">${body}</div>`
 }
 
 // ── Investor closing emails ───────────────────────────────────────────────────
