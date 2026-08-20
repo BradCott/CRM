@@ -10,6 +10,7 @@ import operatorsRouter      from './routes/operators.js'
 import peopleRouter         from './routes/people.js'
 import propertiesRouter     from './routes/properties.js'
 import dealsRouter          from './routes/deals.js'
+import searchRouter         from './routes/search.js'
 import importRouter         from './routes/import.js'
 import reportsRouter        from './routes/reports.js'
 import savedSearchesRouter  from './routes/savedSearches.js'
@@ -84,6 +85,7 @@ app.use('/api/investors',        requireAuth, requireRole('admin', 'full_agent')
 app.use('/api/tenant-brands',    requireAuth, requireWrite, tenantBrandsRouter)
 app.use('/api/operators',        requireAuth, requireWrite, operatorsRouter)
 app.use('/api/tenant-roles',     requireAuth, requireWrite, tenantRolesRouter)
+app.use('/api/search',           requireAuth, searchRouter)
 app.use('/api/people',           requireAuth, requireWrite, peopleRouter)
 app.use('/api/properties',       requireAuth, requireWrite, propertiesRouter)
 app.use('/api/deals',            requireAuth, requireWrite, dealsRouter)
