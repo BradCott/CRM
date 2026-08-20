@@ -10,6 +10,7 @@ import { getDashboard, getDeals, getDashboardActivity, getDashboardMapProperties
 import knoxLogo from '../../assets/Knox.png'
 import PortfolioMap from './PortfolioMap'
 import TodaysPlays from './TodaysPlays'
+import GlobalSearch from './GlobalSearch'
 import BrokerLeaderboard from './BrokerLeaderboard'
 import MailEngine from './MailEngine'
 import TreasuryChart from './TreasuryChart'
@@ -158,11 +159,14 @@ export default function DashboardPage() {
       <div className="max-w-7xl mx-auto px-6 py-6 space-y-6">
 
         {/* ── Header ─────────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between">
-          <div className="bg-black rounded-xl px-4 py-2 shadow-sm">
+        <div className="flex items-center justify-between gap-4">
+          <div className="bg-black rounded-xl px-4 py-2 shadow-sm shrink-0">
             <img src={knoxLogo} alt="Knox" style={{ width: 160 }} className="object-contain" />
           </div>
-          <p className="text-sm text-slate-400">{today}</p>
+          <div className="flex-1 flex justify-center px-2">
+            <GlobalSearch />
+          </div>
+          <p className="text-sm text-slate-400 shrink-0 hidden md:block">{today}</p>
         </div>
 
         {/* ── Action launcher ────────────────────────────────────────────── */}

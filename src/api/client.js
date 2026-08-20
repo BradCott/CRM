@@ -208,6 +208,7 @@ export const getBrokerLeaderboard = (months)       => req('GET',   `/plays/broke
 export const assignDealBroker    = (dealId, d)     => req('PATCH', `/plays/brokers/deals/${dealId}`, d)
 
 // Dashboard
+export const globalSearch           = (q) => req('GET', `/search?q=${encodeURIComponent(q)}`)
 export const getDashboard           = () => req('GET', '/dashboard')
 export const getDashboardFinancials     = () => req('GET', '/dashboard/financials')
 export const getDashboardDeadlines      = () => req('GET', '/dashboard/deadlines')
