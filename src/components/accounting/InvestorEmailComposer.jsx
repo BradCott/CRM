@@ -6,7 +6,7 @@
 // different `purpose` (and add an entry to PURPOSES) for the sale / accounting
 // versions with only small tweaks.
 import { useState, useEffect } from 'react'
-import { X, Loader2, Send, Sparkles, Mail, CheckCircle, AlertTriangle, Plus, ChevronRight, ChevronDown } from 'lucide-react'
+import { X, Loader2, Send, Sparkles, Mail, CheckCircle, AlertTriangle, Plus, ChevronRight, ChevronDown, Paperclip } from 'lucide-react'
 import Button from '../ui/Button'
 import { getInvestorRecipients, draftInvestorEmail, emailInvestors } from '../../api/client'
 import SendFromPicker from './SendFromPicker'
@@ -18,6 +18,25 @@ const greeting = (name = '') => (COMPANY_RE.test(name) ? name.trim() : (name.tri
 const greetName = r => (r?.first_name?.trim() ? r.first_name.trim() : greeting(r?.name || ''))
 // A recipient whose greeting would fall back to an entity name — needs a first name.
 const missingFirstName = r => !r?.first_name?.trim() && COMPANY_RE.test(r?.name || '')
+
+const fmtSize = n => n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`
+const MAX_ATTACH_BYTES = 18 * 1024 * 1024  // server body cap is 25MB; base64 inflates ~33%
+// Read a File into an attachment record with base64 content (data: prefix stripped).
+const fileToAttachment = file => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => {
+    const res = String(reader.result || '')
+    resolve({
+      id: `${file.name}-${file.size}-${Math.random().toString(36).slice(2)}`,
+      filename: file.name,
+      contentType: file.type || 'application/octet-stream',
+      size: file.size,
+      content: res.includes(',') ? res.split(',')[1] : res,
+    })
+  }
+  reader.onerror = reject
+  reader.readAsDataURL(file)
+})
 
 // Per-purpose defaults. Add a key here to spin up a new variant (sale, accounting…).
 const PURPOSES = {
@@ -76,6 +95,7 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
   const [showPreview, setShowPreview] = useState(false)
   const [newName, setNewName]   = useState('')
   const [newEmail, setNewEmail] = useState('')
+  const [attachments, setAttachments] = useState([])  // {id, filename, contentType, size, content(base64)}
 
   useEffect(() => {
     getInvestorRecipients(propertyId)
@@ -119,6 +139,18 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
     setNewName(''); setNewEmail('')
   }
 
+  const totalAttachBytes = attachments.reduce((n, a) => n + (a.size || 0), 0)
+  const addFiles = async fileList => {
+    const files = Array.from(fileList || [])
+    if (!files.length) return
+    setError(null)
+    try {
+      const added = await Promise.all(files.map(fileToAttachment))
+      setAttachments(a => [...a, ...added])
+    } catch { setError('Could not read one of the files') }
+  }
+  const removeAttachment = id => setAttachments(a => a.filter(x => x.id !== id))
+
   const aiDraft = async () => {
     setDrafting(true); setError(null)
     try {
@@ -132,11 +164,17 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
 
   const send = async () => {
     if (!included.length) { setError('No recipients with an email address'); return }
-    if (!window.confirm(`Send this update to ${included.length} investor${included.length === 1 ? '' : 's'}?`)) return
+    if (totalAttachBytes > MAX_ATTACH_BYTES) { setError(`Attachments are too large (${fmtSize(totalAttachBytes)}). Keep the total under ${fmtSize(MAX_ATTACH_BYTES)}.`); return }
+    const attachNote = attachments.length ? ` with ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}` : ''
+    if (!window.confirm(`Send this update${attachNote} to ${included.length} investor${included.length === 1 ? '' : 's'}?`)) return
     setSending(true); setError(null)
     try {
       const sends = included.map(r => ({ to: emailOf(r).trim(), name: r.name, subject: merge(subject, r), body: merge(body, r) }))
-      const res = await emailInvestors(propertyId, { account: account || undefined, sends })
+      const res = await emailInvestors(propertyId, {
+        account: account || undefined,
+        sends,
+        attachments: attachments.map(a => ({ filename: a.filename, contentType: a.contentType, content: a.content })),
+      })
       setResult(res)
     } catch (e) { setError(e.message || 'Send failed'); setSending(false) }
   }
@@ -197,6 +235,34 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
                       {drafting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />} {body.trim() && body !== cfg.defaultBody ? 'Redraft' : 'Draft it'}
                     </button>
                   </div>
+                </div>
+
+                {/* Attachments */}
+                <div>
+                  <label className="block text-xs font-medium text-slate-500 mb-1">Attachments</label>
+                  <label
+                    onDragOver={e => e.preventDefault()}
+                    onDrop={e => { e.preventDefault(); addFiles(e.dataTransfer.files) }}
+                    className="flex items-center justify-center gap-2 border-2 border-dashed border-slate-200 rounded-lg px-3 py-4 text-xs text-slate-500 cursor-pointer hover:border-emerald-400 hover:bg-emerald-50/40 transition-colors">
+                    <Paperclip className="w-4 h-4 shrink-0" />
+                    <span>Drop files here or <span className="text-emerald-700 font-medium">browse</span> — e.g. wiring instructions (PDF)</span>
+                    <input type="file" multiple className="hidden" onChange={e => { addFiles(e.target.files); e.target.value = '' }} />
+                  </label>
+                  {attachments.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {attachments.map(a => (
+                        <div key={a.id} className="flex items-center gap-2 text-xs bg-slate-50 border border-slate-100 rounded px-2 py-1.5">
+                          <Paperclip className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span className="flex-1 truncate text-slate-700" title={a.filename}>{a.filename}</span>
+                          <span className="text-slate-400 shrink-0">{fmtSize(a.size)}</span>
+                          <button onClick={() => removeAttachment(a.id)} className="text-slate-400 hover:text-red-500 shrink-0" title="Remove"><X className="w-3.5 h-3.5" /></button>
+                        </div>
+                      ))}
+                      <p className={`text-[11px] ${totalAttachBytes > MAX_ATTACH_BYTES ? 'text-red-500 font-medium' : 'text-slate-400'}`}>
+                        Attached to every recipient's email. {fmtSize(totalAttachBytes)} total.
+                      </p>
+                    </div>
+                  )}
                 </div>
 
                 {/* Preview */}

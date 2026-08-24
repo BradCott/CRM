@@ -1947,6 +1947,15 @@ router.post('/:propertyId/email-investors', async (req, res) => {
   const b = req.body || {}
   const sends = Array.isArray(b.sends) ? b.sends : []
   if (!sends.length) return res.status(400).json({ error: 'No recipients' })
+  // Optional attachments (e.g. wiring instructions) sent to every recipient. Each
+  // is { filename, contentType, content } with content base64-encoded by the client.
+  const attachments = (Array.isArray(b.attachments) ? b.attachments : [])
+    .filter(a => a && a.content)
+    .map(a => ({
+      filename: a.filename || 'attachment',
+      contentType: a.contentType || 'application/octet-stream',
+      content: Buffer.from(a.content, 'base64'),
+    }))
   const results = { sent: 0, failed: [] }
   for (const s of sends) {
     if (!s.to) { results.failed.push({ name: s.name, error: 'no email' }); continue }
@@ -1959,6 +1968,7 @@ router.post('/:propertyId/email-investors', async (req, res) => {
         subject: s.subject || 'Your investment update',
         text: s.body || '',
         html: emailTextToHtml(s.body || ''),
+        attachments: attachments.length ? attachments : undefined,
       })
       results.sent++
     } catch (e) {
