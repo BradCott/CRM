@@ -1083,11 +1083,12 @@ Categories:
 - lease     → a lease or lease amendment/exhibit
 - psa       → purchase & sale agreement, purchase contract, contract of sale
 - proposal  → a due-diligence VENDOR PROPOSAL / engagement for a survey (ALTA/boundary), Phase I/II environmental site assessment, or property condition report (PCR/PCA). These quote a scope, fee, and turnaround time.
+- settlement → a closing / SETTLEMENT STATEMENT (ALTA Settlement Statement, HUD-1, Closing Disclosure, Buyer's/Seller's statement). Itemizes the purchase price, closing costs, prorations, earnest money, and cash to close for a completed or pending closing.
 - unknown   → none of the above
-Answer with just one word: om, lease, psa, proposal, or unknown.`
+Answer with just one word: om, lease, psa, proposal, settlement, or unknown.`
   const result = await callClaude(trimmed, mediaType, prompt)
   const word = (result.content[0].text || '').trim().toLowerCase().replace(/[^a-z]/g, '')
-  return ['om', 'lease', 'psa', 'proposal'].includes(word) ? word : 'unknown'
+  return ['om', 'lease', 'psa', 'proposal', 'settlement'].includes(word) ? word : 'unknown'
 }
 
 // Parse a due-diligence vendor proposal (survey / environmental / PCR) for its

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import db from '../db.js'
 import { parseMarketingBuffer, abstractLease, parsePsaBuffer, parseProposalBuffer, classifyDealDocument } from './management.js'
+import { parseSettlementStatement } from './accounting.js'
 import { normalizeAddr } from '../utils/normalize.js'
 
 const router = Router()
@@ -124,15 +125,17 @@ function migrateDealToProperty(deal, propertyId) {
     patch.renewal_options = deal.renewal_options ||
       [deal.renewal_option_count && `${deal.renewal_option_count} option(s)`, deal.renewal_option_length, deal.renewal_option_increase].filter(Boolean).join(' · ') || null
   }
+  // Overwrite property fields with the deal's values, for every field the deal
+  // actually has (fields the deal leaves blank are untouched, so nothing is wiped).
   const cols = Object.keys(patch).filter(k => patch[k] != null && patch[k] !== '')
   if (cols.length) {
-    const sets = cols.map(c => `${c} = COALESCE(${c}, ?)`).join(', ')
+    const sets = cols.map(c => `${c} = ?`).join(', ')
     db.prepare(`UPDATE properties SET ${sets}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(...cols.map(c => patch[c]), propertyId)
   }
 
-  // Tenant → tenant_brand_id (find-or-create), only if the property has none.
+  // Tenant → tenant_brand_id (find-or-create); the deal's tenant wins when present.
   const tenantName = String(deal.tenant || '').trim()
-  if (tenantName && !db.prepare('SELECT tenant_brand_id FROM properties WHERE id = ?').get(propertyId)?.tenant_brand_id) {
+  if (tenantName) {
     const existing = db.prepare('SELECT id FROM tenant_brands WHERE name = ? COLLATE NOCASE').get(tenantName)
     const brandId = existing ? existing.id : Number(db.prepare('INSERT INTO tenant_brands (name) VALUES (?)').run(tenantName).lastInsertRowid)
     db.prepare('UPDATE properties SET tenant_brand_id = ? WHERE id = ?').run(brandId, propertyId)
@@ -152,10 +155,16 @@ function migrateDealToProperty(deal, propertyId) {
     if (!String(prop?.notes || '').includes('Multi-tenant rent roll (migrated from pipeline')) {
       db.prepare('UPDATE properties SET notes = ? WHERE id = ?').run(prop?.notes ? `${prop.notes}\n\n${summary}` : summary, propertyId)
     }
-  } else if (deal.lease_abstract && !db.prepare('SELECT property_id FROM property_leases WHERE property_id = ?').get(propertyId)) {
-    db.prepare(`INSERT INTO property_leases (property_id, abstract, model, status, updated_at)
-                VALUES (?, ?, 'migrated-from-deal', 'done', datetime('now'))`)
-      .run(propertyId, deal.lease_abstract)
+  } else if (deal.lease_abstract) {
+    // Single-tenant lease abstract → property's Lease section, overwriting any prior abstract.
+    if (db.prepare('SELECT property_id FROM property_leases WHERE property_id = ?').get(propertyId)) {
+      db.prepare(`UPDATE property_leases SET abstract = ?, model = 'migrated-from-deal', status = 'done', error = NULL, updated_at = datetime('now') WHERE property_id = ?`)
+        .run(deal.lease_abstract, propertyId)
+    } else {
+      db.prepare(`INSERT INTO property_leases (property_id, abstract, model, status, updated_at)
+                  VALUES (?, ?, 'migrated-from-deal', 'done', datetime('now'))`)
+        .run(propertyId, deal.lease_abstract)
+    }
   }
 }
 
@@ -543,6 +552,23 @@ router.post('/:id/parse', upload.array('files', 12), async (req, res) => {
     // PSA / amendment → merge timing triggers + recompute derived dates.
     if (docType === 'psa') {
       const cols = applyPsa(dealId, await parsePsaBuffer(first.buffer, media))
+      return res.json({ deal: dealResponse(dealId), docType, applied: cols })
+    }
+
+    // Settlement / closing statement → the actual purchase price, close date,
+    // earnest money and address. Feeds the deal (and carries to the portfolio on close).
+    if (docType === 'settlement') {
+      const s = await parseSettlementStatement(first.buffer, process.env.ANTHROPIC_API_KEY)
+      const patch = {
+        purchase_price: s_num(s.purchase_price), close_date: s_date(s.settlement_date),
+        earnest_money: s_num(s.earnest_money), address: s_str(s.property_address),
+        city: s_str(s.property_city), state: s_str(s.property_state),
+      }
+      const cols = Object.keys(patch).filter(k => DEAL_WRITABLE.has(k) && patch[k] != null && patch[k] !== '')
+      if (cols.length) {
+        db.prepare(`UPDATE deals SET ${cols.map(c => `${c} = ?`).join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+          .run(...cols.map(c => patch[c]), dealId)
+      }
       return res.json({ deal: dealResponse(dealId), docType, applied: cols })
     }
 

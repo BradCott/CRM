@@ -21,7 +21,7 @@ const STAGE_LABELS = {
   money_hard:      { label: 'Money Hard',      cls: 'bg-green-100 text-green-700' },
 }
 
-const DOC_LABEL = { om: 'OM', lease: 'lease', psa: 'PSA', proposal: 'proposal' }
+const DOC_LABEL = { om: 'OM', lease: 'lease', psa: 'PSA', proposal: 'proposal', settlement: 'settlement statement' }
 
 const fmt$    = v => v == null || v === '' ? null : '$' + Math.round(Number(v)).toLocaleString()
 const fmtPct  = v => v == null || v === '' ? null : `${Number(v).toFixed(2)}%`
@@ -232,7 +232,7 @@ export default function DealDetailPage() {
             {busyDoc
               ? <><Loader2 className="w-5 h-5 animate-spin" /> Reading &amp; identifying…</>
               : <><UploadCloud className="w-6 h-6 text-slate-400" /> Drop a document or click to upload
-                  <span className="text-[11px] font-normal text-slate-400">OM, lease (+ amendments), PSA, or a survey / environmental / PCR proposal — auto-detected</span></>}
+                  <span className="text-[11px] font-normal text-slate-400">OM, lease (+ amendments), PSA, settlement statement, or a survey / environmental / PCR proposal — auto-detected</span></>}
           </button>
           {applied && (
             <div className="mt-2 flex items-center gap-1.5 text-[11px] text-emerald-700">

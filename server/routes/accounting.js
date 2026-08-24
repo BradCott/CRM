@@ -2411,7 +2411,7 @@ async function parseSaleSettlement(buffer, originalname, apiKey) {
   }
 }
 
-async function parseSettlementStatement(buffer, apiKey) {
+export async function parseSettlementStatement(buffer, apiKey) {
   const raw = await callClaudeWithPrompt(apiKey, buffer, SETTLEMENT_PROMPT, SETTLEMENT_MODEL)
 
   const cn = v => {
