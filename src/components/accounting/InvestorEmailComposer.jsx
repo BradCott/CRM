@@ -6,7 +6,7 @@
 // different `purpose` (and add an entry to PURPOSES) for the sale / accounting
 // versions with only small tweaks.
 import { useState, useEffect, useRef } from 'react'
-import { X, Loader2, Send, Sparkles, Mail, CheckCircle, AlertTriangle, Plus, ChevronRight, ChevronDown, Paperclip, Braces } from 'lucide-react'
+import { X, Loader2, Send, Sparkles, Mail, CheckCircle, AlertTriangle, Plus, ChevronRight, ChevronDown, Paperclip, Braces, ShieldAlert } from 'lucide-react'
 import Button from '../ui/Button'
 import { getInvestorRecipients, draftInvestorEmail, emailInvestors } from '../../api/client'
 import SendFromPicker from './SendFromPicker'
@@ -29,6 +29,12 @@ const MERGE_FIELDS = [
   { token: '{{contribution}}', label: 'Contribution ($)', value: r => fmtMoney(r?.contribution) },
   { token: '{{property}}',     label: 'Property',         value: (r, propName) => propName },
 ]
+
+// Appended to the body when the sender is including wiring instructions. The single
+// most effective protection against wire-fraud / business-email-compromise: tell the
+// investor to phone-verify before ever acting on emailed bank details.
+const WIRE_WARNING = phone =>
+`\n\n⚠️ WIRE FRAUD WARNING: We will never change our wiring instructions by email. Before sending any funds, call us at ${phone} to verbally verify the account details. If you receive an email asking you to use different bank details, do not act on it — call us first.`
 
 const fmtSize = n => n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`
 const MAX_ATTACH_BYTES = 18 * 1024 * 1024  // server body cap is 25MB; base64 inflates ~33%
@@ -108,6 +114,8 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
   const [newEmail, setNewEmail] = useState('')
   const [attachments, setAttachments] = useState([])  // {id, filename, contentType, size, content(base64)}
   const [fieldMenu, setFieldMenu] = useState(false)   // Insert-field dropdown open
+  const [wireWarn, setWireWarn]   = useState(false)   // append wire-fraud warning
+  const [wirePhone, setWirePhone] = useState('')      // verification phone for the warning
   const subjRef = useRef(null)
   const bodyRef = useRef(null)
   const activeRef = useRef('body')  // which field last had focus, for token insertion
@@ -202,11 +210,13 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
   const send = async () => {
     if (!included.length) { setError('No recipients with an email address'); return }
     if (totalAttachBytes > MAX_ATTACH_BYTES) { setError(`Attachments are too large (${fmtSize(totalAttachBytes)}). Keep the total under ${fmtSize(MAX_ATTACH_BYTES)}.`); return }
+    if (wireWarn && !wirePhone.trim()) { setError('Enter a verification phone number for the wire-fraud warning (or uncheck it).'); return }
     const attachNote = attachments.length ? ` with ${attachments.length} attachment${attachments.length === 1 ? '' : 's'}` : ''
     if (!window.confirm(`Send this update${attachNote} to ${included.length} investor${included.length === 1 ? '' : 's'}?`)) return
     setSending(true); setError(null)
     try {
-      const sends = included.map(r => ({ to: emailOf(r).trim(), name: r.name, subject: merge(subject, r), body: merge(body, r) }))
+      const warn = wireWarn ? WIRE_WARNING(wirePhone.trim()) : ''
+      const sends = included.map(r => ({ to: emailOf(r).trim(), name: r.name, subject: merge(subject, r), body: merge(body, r) + warn }))
       const res = await emailInvestors(propertyId, {
         account: account || undefined,
         sends,
@@ -326,6 +336,21 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
                   )}
                 </div>
 
+                {/* Wire-fraud warning toggle */}
+                <div className="bg-amber-50 border border-amber-200 rounded-lg px-3 py-3">
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input type="checkbox" checked={wireWarn} onChange={e => setWireWarn(e.target.checked)} className="mt-0.5 rounded border-amber-300" />
+                    <span className="text-xs">
+                      <span className="font-semibold text-amber-900 flex items-center gap-1"><ShieldAlert className="w-3.5 h-3.5" /> Include wire-fraud warning</span>
+                      <span className="text-amber-700 block mt-0.5">Appends a notice telling investors to call and verify before wiring. Tick this whenever the email includes wiring instructions.</span>
+                    </span>
+                  </label>
+                  {wireWarn && (
+                    <input value={wirePhone} onChange={e => setWirePhone(e.target.value)} placeholder="Verification phone, e.g. (913) 555-0100"
+                      className="w-full text-xs mt-2 ml-6 max-w-[calc(100%-1.5rem)] border border-amber-300 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-amber-400" />
+                  )}
+                </div>
+
                 {/* Preview */}
                 {sample && (
                   <div>
@@ -335,7 +360,7 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
                     {showPreview && (
                       <div className="mt-2 bg-slate-50 rounded-lg p-3 text-xs text-slate-600 whitespace-pre-line border border-slate-100">
                         <p className="font-semibold text-slate-700 mb-1">{merge(subject, sample)}</p>
-                        {merge(body, sample)}
+                        {merge(body, sample)}{wireWarn ? WIRE_WARNING(wirePhone.trim() || '[verification phone]') : ''}
                       </div>
                     )}
                   </div>
