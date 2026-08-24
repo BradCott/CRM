@@ -10,7 +10,6 @@ import {
   getDeal, updateDealField, parseDealDoc, deleteDealProposal, getInvestorRecipients,
   setDealMultiTenant, addDealTenant, updateDealTenantField, deleteDealTenant,
 } from '../../api/client'
-import ReturnsCalculator from './ReturnsCalculator'
 import InvestorUpload from '../accounting/InvestorUpload'
 import InvestorEmailComposer from '../accounting/InvestorEmailComposer'
 
@@ -444,8 +443,6 @@ export default function DealDetailPage() {
           <EF label="" field="notes" value={deal.notes} type="textarea" placeholder="Notes on this deal…" {...efProps} />
         </Card>
 
-        {/* Returns calculator */}
-        <ReturnsCalculator dealId={deal.id} seedPrice={deal.purchase_price} seedNOI={deal.noi} seedCap={deal.cap_rate} />
       </div>
 
       {showInvestorUpload && deal.property_id && (
