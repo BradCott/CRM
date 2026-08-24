@@ -5,8 +5,8 @@
 // {{first_name}} / {{property}}. Built to be reused across contexts — pass a
 // different `purpose` (and add an entry to PURPOSES) for the sale / accounting
 // versions with only small tweaks.
-import { useState, useEffect } from 'react'
-import { X, Loader2, Send, Sparkles, Mail, CheckCircle, AlertTriangle, Plus, ChevronRight, ChevronDown, Paperclip } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { X, Loader2, Send, Sparkles, Mail, CheckCircle, AlertTriangle, Plus, ChevronRight, ChevronDown, Paperclip, Braces } from 'lucide-react'
 import Button from '../ui/Button'
 import { getInvestorRecipients, draftInvestorEmail, emailInvestors } from '../../api/client'
 import SendFromPicker from './SendFromPicker'
@@ -18,6 +18,17 @@ const greeting = (name = '') => (COMPANY_RE.test(name) ? name.trim() : (name.tri
 const greetName = r => (r?.first_name?.trim() ? r.first_name.trim() : greeting(r?.name || ''))
 // A recipient whose greeting would fall back to an entity name — needs a first name.
 const missingFirstName = r => !r?.first_name?.trim() && COMPANY_RE.test(r?.name || '')
+
+// Merge tokens available in the subject/body. Kept in one place so the Insert-field
+// menu and the merge() replacer stay in sync — add a row here to add a field.
+const fmtMoney = n => (n || n === 0) ? `$${Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : ''
+const MERGE_FIELDS = [
+  { token: '{{first_name}}',   label: 'First name',       value: r => greetName(r) },
+  { token: '{{name}}',         label: 'Full / entity name', value: r => r?.name || '' },
+  { token: '{{entity}}',       label: 'Entity name',      value: r => r?.entity || r?.name || '' },
+  { token: '{{contribution}}', label: 'Contribution ($)', value: r => fmtMoney(r?.contribution) },
+  { token: '{{property}}',     label: 'Property',         value: (r, propName) => propName },
+]
 
 const fmtSize = n => n < 1024 ? `${n} B` : n < 1024 * 1024 ? `${(n / 1024).toFixed(0)} KB` : `${(n / 1024 / 1024).toFixed(1)} MB`
 const MAX_ATTACH_BYTES = 18 * 1024 * 1024  // server body cap is 25MB; base64 inflates ~33%
@@ -96,6 +107,10 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
   const [newName, setNewName]   = useState('')
   const [newEmail, setNewEmail] = useState('')
   const [attachments, setAttachments] = useState([])  // {id, filename, contentType, size, content(base64)}
+  const [fieldMenu, setFieldMenu] = useState(false)   // Insert-field dropdown open
+  const subjRef = useRef(null)
+  const bodyRef = useRef(null)
+  const activeRef = useRef('body')  // which field last had focus, for token insertion
 
   useEffect(() => {
     getInvestorRecipients(propertyId)
@@ -112,7 +127,9 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
               first_name: c.first_name || r.first_name || '',
               emails: c.email ? [c.email] : [],
               email: c.email || '',
-              contribution: i === 0 ? r.contribution : 0,
+              // Contribution is the entity's investment — surface it on every contact
+              // so {{contribution}} merges correctly for each of them.
+              contribution: r.contribution,
             }))
           }
           return [r]
@@ -125,9 +142,29 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
   }, [propertyId])
 
   const emailOf = r => (emailEdits[r.id] ?? r.email ?? '')
-  const merge = (text, r) => text
-    .replaceAll('{{first_name}}', greetName(r))
-    .replaceAll('{{property}}', propName)
+  const merge = (text, r) => MERGE_FIELDS.reduce(
+    (out, f) => out.replaceAll(f.token, f.value(r, propName)),
+    text ?? '')
+
+  // Insert a merge token at the cursor of whichever field (subject/body) was last
+  // focused. onMouseDown-preventDefault on the menu keeps that field focused so the
+  // caret position is preserved.
+  const insertToken = token => {
+    const isBody = activeRef.current !== 'subject'
+    const el = isBody ? bodyRef.current : subjRef.current
+    const val = isBody ? body : subject
+    const set = isBody ? setBody : setSubject
+    const focused = el && document.activeElement === el
+    const start = focused ? el.selectionStart : val.length
+    const end   = focused ? el.selectionEnd   : val.length
+    set(val.slice(0, start) + token + val.slice(end))
+    requestAnimationFrame(() => {
+      if (!el) return
+      el.focus()
+      const pos = start + token.length
+      try { el.setSelectionRange(pos, pos) } catch { /* ignore */ }
+    })
+  }
 
   const included = recipients.filter(r => !exclude.has(r.id) && emailOf(r).trim())
 
@@ -213,14 +250,38 @@ export default function InvestorEmailComposer({ propertyId, property, purpose = 
               <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
                 <div>
                   <label className="block text-xs font-medium text-slate-500 mb-1">Subject</label>
-                  <input value={subject} onChange={e => setSubject(e.target.value)}
+                  <input ref={subjRef} value={subject} onChange={e => setSubject(e.target.value)}
+                    onFocus={() => { activeRef.current = 'subject' }}
                     className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-400" />
                 </div>
                 <div className="flex flex-col">
-                  <label className="block text-xs font-medium text-slate-500 mb-1">Message</label>
-                  <textarea value={body} onChange={e => setBody(e.target.value)} rows={16}
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-medium text-slate-500">Message</label>
+                    <div className="relative">
+                      <button type="button" onMouseDown={e => e.preventDefault()} onClick={() => setFieldMenu(o => !o)}
+                        className="inline-flex items-center gap-1 text-[11px] font-medium text-emerald-700 border border-emerald-200 bg-emerald-50 rounded px-2 py-1 hover:bg-emerald-100">
+                        <Braces className="w-3 h-3" /> Insert field
+                      </button>
+                      {fieldMenu && (
+                        <>
+                          <div className="fixed inset-0 z-10" onMouseDown={() => setFieldMenu(false)} />
+                          <div className="absolute right-0 mt-1 z-20 w-52 bg-white border border-slate-200 rounded-lg shadow-lg py-1">
+                            {MERGE_FIELDS.map(f => (
+                              <button key={f.token} type="button" onMouseDown={e => e.preventDefault()}
+                                onClick={() => { insertToken(f.token); setFieldMenu(false) }}
+                                className="w-full text-left px-3 py-1.5 text-xs text-slate-700 hover:bg-emerald-50 flex items-center justify-between gap-2">
+                                <span>{f.label}</span><code className="text-[10px] text-slate-400">{f.token}</code>
+                              </button>
+                            ))}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                  </div>
+                  <textarea ref={bodyRef} value={body} onChange={e => setBody(e.target.value)} rows={16}
+                    onFocus={() => { activeRef.current = 'body' }}
                     className="w-full text-sm border border-slate-200 rounded-lg px-3 py-2.5 leading-relaxed focus:outline-none focus:ring-2 focus:ring-emerald-400 resize-y" />
-                  <p className="text-[11px] text-slate-400 mt-1">Personalized per recipient: <code>{'{{first_name}} {{property}}'}</code></p>
+                  <p className="text-[11px] text-slate-400 mt-1">Personalized per recipient — use <span className="font-medium">Insert field</span> or type tokens like <code>{'{{first_name}}'}</code>, <code>{'{{contribution}}'}</code>.</p>
                 </div>
 
                 {/* AI assist */}

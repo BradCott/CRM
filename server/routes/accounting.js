@@ -1874,6 +1874,7 @@ const PROPERTY_UPDATE_PROMPT = `You draft a warm, professional PROPERTY UPDATE e
 Keep these merge tokens EXACTLY as written so each recipient is personalized:
 {{first_name}} — investor's first name / greeting
 {{property}} — property name/address
+{{contribution}} — the investor's contribution amount (already formatted, e.g. $250,000). Only use it if the sponsor's instructions call for referencing each investor's amount.
 
 Requirements:
 - Professional, appreciative, concise; a sponsor-to-investor voice.
@@ -1888,6 +1889,7 @@ const PIPELINE_PROMPT = `You draft a warm, professional email from a real-estate
 Keep these merge tokens EXACTLY as written:
 {{first_name}} — investor's first name / greeting
 {{property}} — property name/address
+{{contribution}} — the investor's contribution amount (already formatted, e.g. $250,000). Only use it if the sponsor's instructions call for referencing each investor's amount.
 
 Requirements:
 - Confident, reassuring, concise. Keep the committed investors informed on where the deal stands as it nears (or just passed) closing.
