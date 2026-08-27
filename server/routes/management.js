@@ -126,8 +126,12 @@ export async function abstractLease(docs) {
     "renewal_option_increase": string|null,// rent increase during the options, as a percentage if stated (e.g. "10%"), or "Market" / "FMV" if market-rate
     "renewal_notice": string|null,   // the WINDOW the tenant must give notice to exercise an option, e.g. "No less than 6 months and no more than 12 months prior to expiration of the then-current term"
     "taxes_recovery": string|null,    // how REAL ESTATE TAXES are handled — ONE of: "Tenant pays directly", "Landlord pays, tenant reimburses", "Landlord's expense (not recovered)", "Unclear"
-    "insurance_recovery": string|null // how BUILDING / PROPERTY INSURANCE is handled — ONE of the same four values
+    "insurance_recovery": string|null,// how BUILDING / PROPERTY INSURANCE is handled — ONE of the same four values
+    "right_of_first_refusal": "Yes"|"No"|"Unclear"  // does the tenant hold a right of first refusal / first offer to purchase?
   },
+  "rent_schedule": [
+    { "period": string, "monthly": number|null, "annual": number|null, "increase": string|null }
+  ],
   "responsibilities": [
     { "category": string, "party": "Tenant"|"Landlord"|"Shared"|"Unclear", "detail": string }
   ],
@@ -139,7 +143,9 @@ RENEWAL NOTICE — this is critical and often missed. Lease renewal/extension cl
 
 For "responsibilities", cover at least these categories where the lease addresses them: ${LEASE_CATEGORIES.join(', ')}. Add any other notable responsibilities the lease assigns. Set "party" to who bears the cost/obligation; use "Shared" for split items and "Unclear" if the lease is silent or ambiguous. Keep "detail" to a short quote or paraphrase of the governing clause. Do not invent terms that aren't in the document.
 
-TAXES & INSURANCE RECOVERY — for "taxes_recovery" and "insurance_recovery", capture not just who bears the cost but the MECHANISM: does the tenant pay the taxing authority / insurer directly ("Tenant pays directly"); does the landlord pay and bill the tenant back ("Landlord pays, tenant reimburses"); or does the landlord absorb it with no reimbursement ("Landlord's expense (not recovered)")? Use exactly one of those phrases, or "Unclear" if the lease is silent. Typical NNN leases have the tenant pay directly or reimburse; Gross leases are usually the landlord's expense.`
+TAXES & INSURANCE RECOVERY — for "taxes_recovery" and "insurance_recovery", capture not just who bears the cost but the MECHANISM: does the tenant pay the taxing authority / insurer directly ("Tenant pays directly"); does the landlord pay and bill the tenant back ("Landlord pays, tenant reimburses"); or does the landlord absorb it with no reimbursement ("Landlord's expense (not recovered)")? Use exactly one of those phrases, or "Unclear" if the lease is silent. Typical NNN leases have the tenant pay directly or reimburse; Gross leases are usually the landlord's expense.
+
+RENT SCHEDULE — build "rent_schedule" as an ordered list of the base-term rent steps, then the renewal options. For each base-term step use "period" as the date range (e.g. "4/2026 – 11/2030"); include "monthly" and "annual" as plain numbers (no "$" or commas — if only one is stated, compute the other, monthly = annual / 12); set "increase" to the percent step versus the prior period (e.g. "10%"), or "—" for the first/flat period. After the base term, add one row per remaining renewal option with "period" labeled like "Option 1 (5 Yr)" and its rent if the lease sets it (or leave amounts null if it's market/FMV). Finally, add any ancillary or percentage rent the lease provides (e.g. signage, vending) as its own labeled row. If the lease has a single flat rent with no steps, return one row covering the term. Do not invent amounts that aren't in the document.`
 
   // If everything fits in one request, send it together — best quality, since the
   // AI sees the base lease and any amendments at once. Otherwise split oversized
@@ -216,8 +222,12 @@ function mergeAbstracts(parts) {
     clean.flatMap(p => p?.key_dates || []),
     d => `${d?.label}|${d?.date}`.toLowerCase(),
   )
+  const rent_schedule = dedupe(
+    clean.flatMap(p => p?.rent_schedule || []),
+    r => `${r?.period}|${r?.annual}`.toLowerCase(),
+  )
   const notes = clean.map(p => p?.notes).filter(isVal).join('\n\n')
-  return { summary, responsibilities, key_dates, notes }
+  return { summary, rent_schedule, responsibilities, key_dates, notes }
 }
 
 // One Anthropic call for a set of docs → parsed abstract JSON. Trims any PDF to

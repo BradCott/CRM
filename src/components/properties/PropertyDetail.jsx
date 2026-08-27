@@ -15,7 +15,7 @@ import SendLetterModal from '../handwrytten/SendLetterModal'
 import ExtractedFieldsModal from '../management/ExtractedFieldsModal'
 import InvestorEmailComposer from '../accounting/InvestorEmailComposer'
 import InvestorUpload from '../accounting/InvestorUpload'
-import LeaseSummarySection from './LeaseSummarySection'
+import PropertySnapshot from './PropertySnapshot'
 
 const PIPELINE_STAGES = [
   { key: 'loi',             label: 'LOI' },
@@ -400,6 +400,11 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
           <input ref={settInputRef} type="file" accept=".pdf" className="hidden" onChange={e => { handleDocFile('settlement', e.target.files?.[0]); e.target.value = '' }} />
         </div>
 
+        {/* Clean OM-style snapshot — auto-filled from the property + lease abstract */}
+        <div className="px-6 py-4 border-b border-slate-100">
+          <PropertySnapshot propertyId={propertyId} />
+        </div>
+
         {/* Attached documents (e.g. uploaded OMs) */}
         {docs.length > 0 && (
           <Section icon={FileText} title={`Documents (${docs.length})`}>
@@ -472,9 +477,6 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
             <EF label="Renewal Options" field="renewal_options" value={data.renewal_options} save={saveField} saving={savingField} />
           </Grid2>
         </Section>
-
-        {/* Lease Summary — auto-filled from the AI lease abstract */}
-        <LeaseSummarySection propertyId={propertyId} />
 
         {/* Financials */}
         <Section icon={TrendingUp} title="Financials">

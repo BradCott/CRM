@@ -7,6 +7,7 @@ import {
   AlertTriangle, Loader2, Check, X, Building2, DollarSign, ExternalLink, Plus, Trash2, PhoneCall,
 } from 'lucide-react'
 import { getPropertyDash, updatePropertyDash, uploadPropertyPhoto, propertyPhotoUrl, getCallNotes, addCallNote, deleteCallNote, markExpenseReimbursed } from '../../api/client'
+import PropertySnapshot from '../properties/PropertySnapshot'
 
 const fmtDateTime = (d) => d ? new Date(String(d).includes('T') ? d : d.replace(' ', 'T') + 'Z').toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : ''
 
@@ -135,6 +136,9 @@ export default function DashboardSection({ propertyId }) {
 
   return (
     <div className="space-y-5">
+      {/* Clean OM-style snapshot — auto-filled from the property + lease abstract */}
+      <PropertySnapshot propertyId={propertyId} />
+
       {/* Hero: photo + store info + estimated sales */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         {/* Photo */}
