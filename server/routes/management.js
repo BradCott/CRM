@@ -124,7 +124,9 @@ export async function abstractLease(docs) {
     "renewal_option_count": number|null,   // how many renewal options REMAIN unexercised
     "renewal_option_length": string|null,  // length of each option, e.g. "5 years"
     "renewal_option_increase": string|null,// rent increase during the options, as a percentage if stated (e.g. "10%"), or "Market" / "FMV" if market-rate
-    "renewal_notice": string|null    // the WINDOW the tenant must give notice to exercise an option, e.g. "No less than 6 months and no more than 12 months prior to expiration of the then-current term"
+    "renewal_notice": string|null,   // the WINDOW the tenant must give notice to exercise an option, e.g. "No less than 6 months and no more than 12 months prior to expiration of the then-current term"
+    "taxes_recovery": string|null,    // how REAL ESTATE TAXES are handled — ONE of: "Tenant pays directly", "Landlord pays, tenant reimburses", "Landlord's expense (not recovered)", "Unclear"
+    "insurance_recovery": string|null // how BUILDING / PROPERTY INSURANCE is handled — ONE of the same four values
   },
   "responsibilities": [
     { "category": string, "party": "Tenant"|"Landlord"|"Shared"|"Unclear", "detail": string }
@@ -135,7 +137,9 @@ export async function abstractLease(docs) {
 
 RENEWAL NOTICE — this is critical and often missed. Lease renewal/extension clauses almost always specify a NOTICE WINDOW: how far before the current term expires the tenant must deliver written notice to exercise its option (commonly "no later than 6 months prior to expiration", sometimes a range like "not less than 9 nor more than 12 months prior"). Search the "Option to Renew / Extend", "Extension", and "Term" sections carefully. Put the exact window in "renewal_notice" (quote or closely paraphrase the clause, including whether it's before expiration of the initial term or the then-current term). If the lease grants an option but you cannot find any notice window, set "renewal_notice" to "Option granted; no notice window stated". If there are no options at all, set it to null. Additionally, when the expiration date is known, compute the actual deadline and add it to "key_dates" (e.g. label "Renewal notice deadline (option 1)", date = expiration minus the notice period).
 
-For "responsibilities", cover at least these categories where the lease addresses them: ${LEASE_CATEGORIES.join(', ')}. Add any other notable responsibilities the lease assigns. Set "party" to who bears the cost/obligation; use "Shared" for split items and "Unclear" if the lease is silent or ambiguous. Keep "detail" to a short quote or paraphrase of the governing clause. Do not invent terms that aren't in the document.`
+For "responsibilities", cover at least these categories where the lease addresses them: ${LEASE_CATEGORIES.join(', ')}. Add any other notable responsibilities the lease assigns. Set "party" to who bears the cost/obligation; use "Shared" for split items and "Unclear" if the lease is silent or ambiguous. Keep "detail" to a short quote or paraphrase of the governing clause. Do not invent terms that aren't in the document.
+
+TAXES & INSURANCE RECOVERY — for "taxes_recovery" and "insurance_recovery", capture not just who bears the cost but the MECHANISM: does the tenant pay the taxing authority / insurer directly ("Tenant pays directly"); does the landlord pay and bill the tenant back ("Landlord pays, tenant reimburses"); or does the landlord absorb it with no reimbursement ("Landlord's expense (not recovered)")? Use exactly one of those phrases, or "Unclear" if the lease is silent. Typical NNN leases have the tenant pay directly or reimburse; Gross leases are usually the landlord's expense.`
 
   // If everything fits in one request, send it together — best quality, since the
   // AI sees the base lease and any amendments at once. Otherwise split oversized

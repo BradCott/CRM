@@ -15,6 +15,7 @@ import SendLetterModal from '../handwrytten/SendLetterModal'
 import ExtractedFieldsModal from '../management/ExtractedFieldsModal'
 import InvestorEmailComposer from '../accounting/InvestorEmailComposer'
 import InvestorUpload from '../accounting/InvestorUpload'
+import LeaseSummarySection from './LeaseSummarySection'
 
 const PIPELINE_STAGES = [
   { key: 'loi',             label: 'LOI' },
@@ -471,6 +472,9 @@ export default function PropertyDetail({ propertyId, onClose, onEdit, onPortfoli
             <EF label="Renewal Options" field="renewal_options" value={data.renewal_options} save={saveField} saving={savingField} />
           </Grid2>
         </Section>
+
+        {/* Lease Summary — auto-filled from the AI lease abstract */}
+        <LeaseSummarySection propertyId={propertyId} />
 
         {/* Financials */}
         <Section icon={TrendingUp} title="Financials">
