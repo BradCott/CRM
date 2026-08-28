@@ -15,6 +15,7 @@ const NAV = [
   { to: '/portfolio',   label: 'Knox Portfolio',      icon: Landmark,       roles: ['admin', 'full_agent'] },
   { to: '/historical',  label: 'Historical Transactions', icon: History,    roles: ['admin', 'full_agent'] },
   { to: '/management', label: 'Property Management', icon: ClipboardList,  roles: ['admin', 'full_agent'] },
+  { to: '/insurance',  label: 'Insurance',           icon: Shield,         roles: ['admin', 'full_agent'] },
   { to: '/accounting', label: 'Accounting',          icon: BookOpen,       roles: ['admin', 'full_agent'] },
   { to: '/investors',  label: 'Investors',         icon: TrendingUp,      roles: ['admin', 'full_agent'] },
   { to: '/pipeline',   label: 'Pipeline',          icon: KanbanSquare,    roles: ['admin', 'full_agent', 'junior_agent'] },
