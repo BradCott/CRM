@@ -991,6 +991,8 @@ const migrations = [
   // Optional custom subtitle shown under the display name on the widgets. Falls
   // back to the auto "address, city, state" line when blank.
   `ALTER TABLE properties ADD COLUMN display_subtitle TEXT`,
+  // Manual override of who carries building insurance — wins over the lease guess.
+  `ALTER TABLE properties ADD COLUMN insurance_coverage TEXT`,
 
   // Completed/cleared Critical Dates. Those dashboard items are computed live
   // from deals/taxes/leases (no stored row), so "mark complete" is recorded here

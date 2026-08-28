@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Shield, ChevronUp, ChevronDown, ChevronsUpDown, Search, Loader2, Download } from 'lucide-react'
-import { getAllInsurance } from '../../api/client'
+import { getAllInsurance, updatePropertyField } from '../../api/client'
 import { insuranceStatus, exportInsuranceXlsx } from '../../utils/insuranceExport'
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
@@ -125,6 +125,21 @@ export default function InsurancePage() {
     navigate(`/management/${p.property_id}?tab=insurance`)
   }
 
+  // Manual override of who carries the insurance — wins over the lease guess and
+  // applies to every policy row for that property. Empty = revert to the lease.
+  async function setCarriedBy(propertyId, value) {
+    const v = value || null
+    setPolicies(prev => prev.map(r => r.property_id === propertyId
+      ? { ...r, insurance_coverage: v, carried_by: v, tenant_carries: v === 'Tenant', carried_by_override: !!v }
+      : r))
+    try {
+      await updatePropertyField(propertyId, 'insurance_coverage', v)
+      const fresh = await getAllInsurance(); setPolicies(fresh)   // authoritative (revert falls back to lease)
+    } catch (e) {
+      alert(e.message); getAllInsurance().then(setPolicies).catch(() => {})
+    }
+  }
+
   return (
     <div className="flex flex-col h-full bg-slate-50">
 
@@ -244,8 +259,21 @@ export default function InsurancePage() {
                         })()}
                       </td>
 
-                      {/* Carried By */}
-                      <td className="px-4 py-3 text-xs text-slate-600">{p.carried_by || '—'}</td>
+                      {/* Carried By — editable override */}
+                      <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                        <select
+                          value={p.carried_by || ''}
+                          onChange={e => setCarriedBy(p.property_id, e.target.value)}
+                          title={p.carried_by_override ? 'Manually set' : 'From the lease abstract'}
+                          className={`text-xs border rounded px-1.5 py-1 bg-white focus:outline-none focus:ring-1 focus:ring-blue-400 ${p.carried_by_override ? 'border-blue-300 text-blue-700 font-medium' : 'border-slate-200 text-slate-600'}`}
+                        >
+                          <option value="">Auto (from lease)</option>
+                          <option value="Tenant">Tenant (paid direct)</option>
+                          <option value="Landlord (reimbursed)">Landlord (reimbursed)</option>
+                          <option value="Landlord">Landlord</option>
+                          <option value="Shared">Shared</option>
+                        </select>
+                      </td>
 
                       {/* Paid Status */}
                       <td className="px-4 py-3">

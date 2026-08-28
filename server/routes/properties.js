@@ -663,7 +663,7 @@ const EDITABLE_FIELDS = {
   roof_year:'int', hvac_year:'int', parking_lot:'text',
   bank:'text', interest_rate:'real', maturity_date:'date', outstanding_debt:'real',
   total_debt_pmt:'real', interest_pmt:'real', principal_pmt:'real', rtd_ratio:'real',
-  ins_broker:'text', policy_number:'text', account_number:'text', insurance_exp:'date',
+  ins_broker:'text', policy_number:'text', account_number:'text', insurance_exp:'date', insurance_coverage:'text',
   store_number:'text', qb_account:'text', store_manager:'text', district_manager:'text',
   notes:'text',
 }

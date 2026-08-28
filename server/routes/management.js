@@ -701,6 +701,7 @@ router.get('/insurance/all', (req, res) => {
       p.address    AS property_address,
       p.city       AS property_city,
       p.state      AS property_state,
+      p.insurance_coverage AS insurance_coverage,
       t.name       AS tenant_name
     FROM property_insurance pi
     JOIN  properties   p ON p.id  = pi.property_id
@@ -713,7 +714,7 @@ router.get('/insurance/all', (req, res) => {
   // master view/export flags coverage gaps, not just the policies that exist.
   const missing = db.prepare(`
     SELECT p.id AS property_id, p.address AS property_address, p.city AS property_city,
-           p.state AS property_state, t.name AS tenant_name
+           p.state AS property_state, p.insurance_coverage AS insurance_coverage, t.name AS tenant_name
     FROM properties p
     LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
     WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
@@ -743,8 +744,8 @@ router.get('/insurance/all', (req, res) => {
     } catch { /* skip bad JSON */ }
   }
   const attach = r => {
-    const cb = leaseIns[r.property_id] || null
-    return { ...r, carried_by: cb, tenant_carries: cb === 'Tenant' }
+    const cb = r.insurance_coverage || leaseIns[r.property_id] || null
+    return { ...r, carried_by: cb, tenant_carries: cb === 'Tenant', carried_by_override: !!r.insurance_coverage }
   }
 
   res.json([...rows.map(attach), ...missing.map(attach)])
