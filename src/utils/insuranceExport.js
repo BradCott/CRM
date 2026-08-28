@@ -24,7 +24,7 @@ export function noteVal(notes, key) {
 
 // One row → a status the whole portfolio can be scanned by.
 export function insuranceStatus(row) {
-  if (row._missing) return { label: 'No Policy', tone: 'red' }
+  if (row._missing) return row.tenant_carries ? { label: 'Tenant-Covered', tone: 'blue' } : { label: 'No Policy', tone: 'red' }
   const d = daysUntil(row.expiry_date)
   if (d == null) return { label: 'No Expiry Date', tone: 'amber' }
   if (d < 0) return { label: 'Expired', tone: 'red' }
@@ -35,13 +35,13 @@ export function insuranceStatus(row) {
 const HEADERS = [
   'Property', 'City', 'State', 'Tenant', 'Named Insured', 'Carrier', 'Policy Number',
   'Premium', 'Coverage', 'Deductible', 'Effective', 'Expiration', 'Days Until Exp.',
-  'Status', 'Auto-Renewal', 'Paid', 'Reimbursed', 'Agent', 'Agent Phone', 'Notes',
+  'Status', 'Carried By', 'Auto-Renewal', 'Paid', 'Reimbursed', 'Agent', 'Agent Phone', 'Notes',
 ]
-const WIDTHS = [30, 15, 7, 18, 22, 18, 20, 12, 12, 11, 12, 12, 13, 15, 12, 9, 13, 18, 15, 45]
+const WIDTHS = [30, 15, 7, 18, 22, 18, 20, 12, 12, 11, 12, 12, 13, 15, 18, 12, 9, 13, 18, 15, 45]
 
 const HEADER_STYLE = { font: { bold: true, color: { rgb: 'FFFFFF' } }, fill: { fgColor: { rgb: '1E293B' } }, alignment: { horizontal: 'left', vertical: 'center' } }
-const STATUS_FILL = { 'No Policy': 'FEE2E2', 'Expired': 'FEE2E2', 'Expiring Soon': 'FEF3C7', 'No Expiry Date': 'FEF3C7', 'Active': 'DCFCE7' }
-const STATUS_FONT = { 'No Policy': '991B1B', 'Expired': '991B1B', 'Expiring Soon': '92400E', 'No Expiry Date': '92400E', 'Active': '166534' }
+const STATUS_FILL = { 'No Policy': 'FEE2E2', 'Expired': 'FEE2E2', 'Expiring Soon': 'FEF3C7', 'No Expiry Date': 'FEF3C7', 'Active': 'DCFCE7', 'Tenant-Covered': 'DBEAFE' }
+const STATUS_FONT = { 'No Policy': '991B1B', 'Expired': '991B1B', 'Expiring Soon': '92400E', 'No Expiry Date': '92400E', 'Active': '166534', 'Tenant-Covered': '1E40AF' }
 
 export function exportInsuranceXlsx(rows) {
   const body = rows.map(r => {
@@ -55,7 +55,7 @@ export function exportInsuranceXlsx(rows) {
       r.coverage_amount != null && r.coverage_amount !== '' ? Number(r.coverage_amount) : '',
       r.deductible != null && r.deductible !== '' ? Number(r.deductible) : '',
       fmtDate(r.effective_date), fmtDate(r.expiry_date), d == null ? '' : d,
-      st, r._missing ? '' : (r.auto_renewal ? 'Yes' : 'No'),
+      st, r.carried_by || '', r._missing ? '' : (r.auto_renewal ? 'Yes' : 'No'),
       r._missing ? '' : (r.paid_status === 'paid' ? 'Paid' : 'Unpaid'),
       r._missing ? '' : (r.reimbursed_status === 'reimbursed' ? 'Reimbursed' : 'Unreimbursed'),
       r.agent_name || '', r.agent_phone || '', String(r.notes || '').replace(/\n/g, ' | '),

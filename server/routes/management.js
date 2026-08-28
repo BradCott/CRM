@@ -721,7 +721,33 @@ router.get('/insurance/all', (req, res) => {
     ORDER BY p.address ASC
   `).all().map(m => ({ ...m, id: `missing-${m.property_id}`, _missing: true }))
 
-  res.json([...rows, ...missing])
+  // Who carries the building insurance, per the lease abstract. Lets the master
+  // view mark tenant-carried policies (so "no landlord policy" isn't a false gap).
+  const carriedBy = (recovery, party) => {
+    if (recovery) {
+      if (/tenant pays directly/i.test(recovery)) return 'Tenant'
+      if (/landlord pays.*reimburs/i.test(recovery)) return 'Landlord (reimbursed)'
+      if (/landlord/i.test(recovery)) return 'Landlord'
+    }
+    if (party === 'Tenant') return 'Tenant'
+    if (party === 'Landlord') return 'Landlord'
+    if (party === 'Shared') return 'Shared'
+    return null
+  }
+  const leaseIns = {}
+  for (const lr of db.prepare(`SELECT property_id, abstract FROM property_leases WHERE abstract IS NOT NULL`).all()) {
+    try {
+      const a = JSON.parse(lr.abstract)
+      const party = (a?.responsibilities || []).find(x => /building insurance|property insurance|^insurance/i.test(x.category || ''))?.party || null
+      leaseIns[lr.property_id] = carriedBy(a?.summary?.insurance_recovery || null, party)
+    } catch { /* skip bad JSON */ }
+  }
+  const attach = r => {
+    const cb = leaseIns[r.property_id] || null
+    return { ...r, carried_by: cb, tenant_carries: cb === 'Tenant' }
+  }
+
+  res.json([...rows.map(attach), ...missing.map(attach)])
 })
 
 router.get('/:propertyId/insurance', (req, res) => {

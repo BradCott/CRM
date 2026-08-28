@@ -53,6 +53,7 @@ const COLS = [
   { key: 'effective_date',   label: 'Effective Date' },
   { key: 'expiry_date',      label: 'Expiration Date' },
   { key: 'status',           label: 'Status' },
+  { key: 'carried_by',       label: 'Carried By' },
   { key: 'paid_status',        label: 'Paid Status' },
   { key: 'reimbursed_status',  label: 'Reimbursed' },
   { key: 'days_until_expiry',  label: 'Days Until Exp.' },
@@ -238,10 +239,13 @@ export default function InsurancePage() {
                       <td className="px-4 py-3">
                         {(() => {
                           const st = insuranceStatus(p)
-                          const tone = { red: 'bg-red-100 text-red-700 border-red-200', amber: 'bg-amber-100 text-amber-800 border-amber-200', green: 'bg-green-100 text-green-700 border-green-200' }[st.tone]
+                          const tone = { red: 'bg-red-100 text-red-700 border-red-200', amber: 'bg-amber-100 text-amber-800 border-amber-200', green: 'bg-green-100 text-green-700 border-green-200', blue: 'bg-blue-100 text-blue-700 border-blue-200' }[st.tone]
                           return <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold border tracking-wide whitespace-nowrap ${tone}`}>{st.label}</span>
                         })()}
                       </td>
+
+                      {/* Carried By */}
+                      <td className="px-4 py-3 text-xs text-slate-600">{p.carried_by || '—'}</td>
 
                       {/* Paid Status */}
                       <td className="px-4 py-3">
