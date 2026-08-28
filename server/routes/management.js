@@ -708,7 +708,20 @@ router.get('/insurance/all', (req, res) => {
     WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
     ORDER BY p.address ASC, pi.effective_date DESC
   `).all()
-  res.json(rows)
+
+  // Portfolio properties with NO insurance policy on file — surfaced so the
+  // master view/export flags coverage gaps, not just the policies that exist.
+  const missing = db.prepare(`
+    SELECT p.id AS property_id, p.address AS property_address, p.city AS property_city,
+           p.state AS property_state, t.name AS tenant_name
+    FROM properties p
+    LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE p.is_portfolio = 1 AND ${NOT_SOLD}
+      AND NOT EXISTS (SELECT 1 FROM property_insurance pi WHERE pi.property_id = p.id)
+    ORDER BY p.address ASC
+  `).all().map(m => ({ ...m, id: `missing-${m.property_id}`, _missing: true }))
+
+  res.json([...rows, ...missing])
 })
 
 router.get('/:propertyId/insurance', (req, res) => {

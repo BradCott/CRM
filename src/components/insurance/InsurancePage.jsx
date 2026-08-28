@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Shield, ChevronUp, ChevronDown, ChevronsUpDown, Search, Loader2 } from 'lucide-react'
+import { Shield, ChevronUp, ChevronDown, ChevronsUpDown, Search, Loader2, Download } from 'lucide-react'
 import { getAllInsurance } from '../../api/client'
+import { insuranceStatus, exportInsuranceXlsx } from '../../utils/insuranceExport'
 
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
@@ -51,6 +52,7 @@ const COLS = [
   { key: 'premium',          label: 'Premium' },
   { key: 'effective_date',   label: 'Effective Date' },
   { key: 'expiry_date',      label: 'Expiration Date' },
+  { key: 'status',           label: 'Status' },
   { key: 'paid_status',        label: 'Paid Status' },
   { key: 'reimbursed_status',  label: 'Reimbursed' },
   { key: 'days_until_expiry',  label: 'Days Until Exp.' },
@@ -63,6 +65,7 @@ function sortValue(row, key) {
     case 'premium':          return row.premium ?? -Infinity
     case 'effective_date':   return parseDate(row.effective_date)?.getTime() ?? 0
     case 'expiry_date':      return parseDate(row.expiry_date)?.getTime() ?? 0
+    case 'status':           return ['No Policy', 'Expired', 'Expiring Soon', 'No Expiry Date', 'Active'].indexOf(insuranceStatus(row).label)
     default:                 return String(row[key] || '').toLowerCase()
   }
 }
@@ -137,16 +140,25 @@ export default function InsurancePage() {
             )}
           </div>
 
-          {/* Search */}
-          <div className="relative w-72">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
-            <input
-              type="text"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              placeholder="Search property, carrier, policy…"
-              className="w-full pl-9 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
-            />
+          <div className="flex items-center gap-2">
+            {/* Search */}
+            <div className="relative w-64">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search property, carrier, policy…"
+                className="w-full pl-9 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-400"
+              />
+            </div>
+            <button
+              onClick={() => exportInsuranceXlsx(sorted)}
+              disabled={loading || sorted.length === 0}
+              className="inline-flex items-center gap-1.5 text-sm font-medium px-3 py-1.5 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40 whitespace-nowrap"
+            >
+              <Download className="w-4 h-4" /> Export to Excel
+            </button>
           </div>
         </div>
       </div>
@@ -222,9 +234,18 @@ export default function InsurancePage() {
                         </span>
                       </td>
 
+                      {/* Status */}
+                      <td className="px-4 py-3">
+                        {(() => {
+                          const st = insuranceStatus(p)
+                          const tone = { red: 'bg-red-100 text-red-700 border-red-200', amber: 'bg-amber-100 text-amber-800 border-amber-200', green: 'bg-green-100 text-green-700 border-green-200' }[st.tone]
+                          return <span className={`inline-block px-2 py-0.5 rounded text-xs font-bold border tracking-wide whitespace-nowrap ${tone}`}>{st.label}</span>
+                        })()}
+                      </td>
+
                       {/* Paid Status */}
                       <td className="px-4 py-3">
-                        {p.paid_status === 'paid' ? (
+                        {p._missing ? <span className="text-slate-300 text-xs">—</span> : p.paid_status === 'paid' ? (
                           <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-green-100 text-green-700 border border-green-200 tracking-wide">PAID</span>
                         ) : (
                           <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-red-100 text-red-700 border border-red-200 tracking-wide">UNPAID</span>
@@ -233,7 +254,7 @@ export default function InsurancePage() {
 
                       {/* Reimbursed Status */}
                       <td className="px-4 py-3">
-                        {p.reimbursed_status === 'reimbursed' ? (
+                        {p._missing ? <span className="text-slate-300 text-xs">—</span> : p.reimbursed_status === 'reimbursed' ? (
                           <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-green-100 text-green-700 border border-green-200 tracking-wide">REIMBURSED</span>
                         ) : (
                           <span className="inline-block px-2 py-0.5 rounded text-xs font-bold bg-red-100 text-red-700 border border-red-200 tracking-wide">UNREIMBURSED</span>
