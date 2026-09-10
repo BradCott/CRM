@@ -6,6 +6,7 @@ import {
   getHandwryttenDripQueue, retryHandwryttenDripFailed, getMailResponseSummary, markSendResponded,
 } from '../../api/client'
 import TopBar from '../layout/TopBar'
+import ReturnedMailPanel from './ReturnedMailPanel'
 import MailPauseControl from '../handwrytten/MailPauseControl'
 
 function fmtDate(iso) {
@@ -537,6 +538,7 @@ export default function CampaignsPage() {
             <SummaryCard icon={Clock}      label="Avg. time to respond" value={summary.avgDays != null ? `${summary.avgDays} days` : '—'} tint="bg-amber-50 text-amber-600" />
           </div>
         )}
+        <ReturnedMailPanel />
         <DripsSection />
         {loading && campaigns.length === 0 ? (
           <div className="flex items-center justify-center h-48">

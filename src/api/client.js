@@ -169,6 +169,7 @@ export async function importCsv(endpoint, file) {
 
 export const getImportStats          = () => req('GET', '/import/stats')
 export const importRecentSales       = (file) => importCsv('/import/recent-sales', file)
+export const uploadReturnedMail      = (file) => importCsv('/import/returned-mail', file)
 export async function costarEnrichPreview(file) {
   const fd = new FormData(); fd.append('file', file)
   return req('POST', '/import/costar-enrich/preview', fd)

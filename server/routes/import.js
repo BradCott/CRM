@@ -729,6 +729,117 @@ router.post('/property-updates', upload.single('file'), (req, res) => {
   res.json(results)
 })
 
+// POST /api/import/returned-mail — one smart upload for returned direct mail.
+// Match each row to an existing property by address, then AUTO-ROUTE:
+//  • Row carries a NEW owner/mailing address (re-prospected) → correct the owner +
+//    address, clear the review flag, UN-PAUSE mailing, and tag remail_ready=1 so it
+//    goes out in the next "re-mail corrected returns" campaign.
+//  • Row has NO new owner/address (came back, not yet re-prospected) → pause mailing
+//    to the on-file owner indefinitely (so the bad address is never mailed again) and
+//    flag the property needs_ownership_review=1 so it stays in the re-prospect queue.
+// Columns: address,city,state[,zip] (match) + owner_name,owner_address,owner_city,
+// owner_state,owner_zip,owner_phone,owner_email (filled = resolved; blank = unresolved).
+router.post('/returned-mail', upload.single('file'), (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' })
+
+  const ext = req.file.originalname.split('.').pop().toLowerCase()
+  let rows = []
+  try {
+    if (ext === 'csv') {
+      rows = parse(req.file.buffer.toString('utf8'), { columns: true, skip_empty_lines: true, trim: true, bom: true })
+    } else {
+      const XLSX = require('xlsx')
+      const wb = XLSX.read(req.file.buffer, { type: 'buffer' })
+      rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { defval: '' })
+    }
+  } catch (e) {
+    return res.status(400).json({ error: `File parse error: ${e.message}` })
+  }
+
+  const today = new Date().toISOString().slice(0, 10)
+  const FOREVER = '2999-12-31'
+  const results = { total: rows.length, resolved: 0, unresolved: 0, not_found: 0, no_owner: 0, people_created: 0, people_updated: 0, unmatched_sample: [] }
+
+  // Overwrite only the mailing fields that are provided; a correction also lifts
+  // any existing "returned/bad-address" mail pause on that owner.
+  const updateOwnerFields = db.prepare(`
+    UPDATE people SET
+      address = CASE WHEN ? <> '' THEN ? ELSE address END,
+      city    = CASE WHEN ? <> '' THEN ? ELSE city    END,
+      state   = CASE WHEN ? <> '' THEN ? ELSE state   END,
+      zip     = CASE WHEN ? <> '' THEN ? ELSE zip     END,
+      phone   = CASE WHEN ? <> '' THEN ? ELSE phone   END,
+      email   = CASE WHEN ? <> '' THEN ? ELSE email   END,
+      mail_pause_until = NULL, mail_pause_reason = NULL
+    WHERE id = ?
+  `)
+  const applyOwner = (personId, row) => {
+    const oa = (row.owner_address || '').trim(), oc = (row.owner_city || '').trim(), os = (row.owner_state || '').trim()
+    const oz = (row.owner_zip || '').trim(), op = (row.owner_phone || '').trim(), oe = (row.owner_email || '').trim()
+    updateOwnerFields.run(oa, oa, oc, oc, os, os, oz, oz, op, op, oe, oe, personId)
+  }
+
+  db.exec('BEGIN')
+  try {
+    for (const row of rows) {
+      const addr = (row.address || '').trim(), city = (row.city || '').trim()
+      const state = (row.state || '').trim(), zip = (row.zip || '').trim()
+      if (!addr) continue
+
+      const addrKey = normalizeAddrKey(addr, city, state, zip)
+      const prop = addrKey ? db.prepare(`SELECT id, owner_id FROM properties WHERE addr_key = ?`).get(addrKey) : null
+      if (!prop) {
+        results.not_found++
+        if (results.unmatched_sample.length < 25) results.unmatched_sample.push([addr, city, state].filter(Boolean).join(', '))
+        continue
+      }
+
+      const ownerName = (row.owner_name || '').trim()
+      const newAddr = (row.owner_address || '').trim()
+      const resolved = !!(ownerName || newAddr)
+
+      if (resolved) {
+        let ownerId = prop.owner_id
+        if (ownerName) {
+          const nameKey = normalizeName(ownerName)
+          const current = prop.owner_id ? db.prepare(`SELECT id, name_key FROM people WHERE id = ?`).get(prop.owner_id) : null
+          if (current && current.name_key === nameKey) { applyOwner(current.id, row); ownerId = current.id; results.people_updated++ }
+          else {
+            const cand = db.prepare(`SELECT id FROM people WHERE name_key = ? LIMIT 1`).get(nameKey)
+            if (cand) { applyOwner(cand.id, row); ownerId = cand.id; results.people_updated++ }
+            else {
+              const ins = db.prepare(`INSERT INTO people (name, role, owner_type, address, city, state, zip, phone, email, name_key) VALUES (?, 'owner', 'LLC', ?, ?, ?, ?, ?, ?, ?)`)
+                .run(ownerName, newAddr || null, (row.owner_city || '').trim() || null, (row.owner_state || '').trim() || null, (row.owner_zip || '').trim() || null, (row.owner_phone || '').trim() || null, (row.owner_email || '').trim() || null, nameKey)
+              ownerId = Number(ins.lastInsertRowid); results.people_created++
+            }
+          }
+        } else if (prop.owner_id) {
+          // Same owner, corrected address → update in place (and un-pause).
+          applyOwner(prop.owner_id, row); results.people_updated++
+        }
+        db.prepare(`UPDATE properties SET owner_id = ?, needs_ownership_review = 0, needs_review_at = NULL, remail_ready = 1 WHERE id = ?`).run(ownerId, prop.id)
+        results.resolved++
+      } else {
+        // Unresolved: never mail the bad on-file address again. Pause the owner
+        // (a later correction lifts it) and keep the property in the review queue.
+        if (prop.owner_id) {
+          db.prepare(`UPDATE people SET mail_pause_until = ?, mail_pause_reason = ? WHERE id = ?`).run(FOREVER, `Returned mail — bad address (${today})`, prop.owner_id)
+        } else {
+          results.no_owner++
+        }
+        db.prepare(`UPDATE properties SET remail_ready = 0, needs_ownership_review = 1, needs_review_at = datetime('now') WHERE id = ?`).run(prop.id)
+        results.unresolved++
+      }
+    }
+    db.exec('COMMIT')
+  } catch (e) {
+    db.exec('ROLLBACK')
+    return res.status(500).json({ error: e.message })
+  }
+
+  res.json(results)
+})
+
 // Stats endpoint
 router.get('/stats', (req, res) => {
   res.json({

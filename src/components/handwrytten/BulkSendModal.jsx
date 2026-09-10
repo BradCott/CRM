@@ -246,7 +246,7 @@ function OwnerTypeCheckboxes({ selected, onChange }) {
 // Steps: filters → preview → sending → done
 const STEPS = ['filters', 'preview', 'sending', 'done']
 
-export default function BulkSendModal({ onClose, onDone }) {
+export default function BulkSendModal({ onClose, onDone, initialRemailOnly = false }) {
   const { tenantBrands, propertyStates, operators } = useApp()
   const { askAssistant } = useAssistant()
 
@@ -271,7 +271,7 @@ export default function BulkSendModal({ onClose, onDone }) {
   const [filterLeaseEnd,   setFilterLeaseEnd]   = useState('')       // optional
   const [builtMode,        setBuiltMode]        = useState('')       // required: '' unset | 'all' (no filter) | 'before'
   const [filterBuiltBefore, setFilterBuiltBefore] = useState('')     // year for builtMode==='before' (nulls always included)
-  const [remailOnly,       setRemailOnly]       = useState(false)    // only owners with a freshly corrected address
+  const [remailOnly,       setRemailOnly]       = useState(Boolean(initialRemailOnly)) // only owners with a freshly corrected address
 
   // ── Recipients state ───────────────────────────────────────────────────────
   const [recipients,    setRecipients]    = useState([])
