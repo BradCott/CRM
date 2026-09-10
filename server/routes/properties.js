@@ -688,6 +688,12 @@ router.patch('/:id/field', (req, res) => {
     const coerced = coerceField(type, value)
     const result = db.prepare(`UPDATE properties SET ${column} = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(coerced, propId)
     if (result.changes === 0) return res.status(404).json({ error: `Property ${propId} not found` })
+    // Keep the match key in sync when any address part changes, so corrections /
+    // returned-mail uploads can still find this property afterward.
+    if (['address', 'city', 'state', 'zip'].includes(column)) {
+      const a = db.prepare(`SELECT address, city, state, zip FROM properties WHERE id = ?`).get(propId)
+      db.prepare(`UPDATE properties SET addr_key = ? WHERE id = ?`).run(normalizeAddr(a.address || '', a.city || '', a.state || '', a.zip || '') || null, propId)
+    }
     const row = db.prepare(`${FULL_PROPERTY_SELECT} WHERE p.id = ?`).get(propId)
     res.json(row)
   } catch (err) {

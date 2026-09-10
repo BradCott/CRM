@@ -3,6 +3,7 @@ import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { mkdirSync, existsSync, statSync } from 'node:fs'
 import { addressKey } from './utils/addressKey.js'
+import { normalizeAddr } from './utils/normalize.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const DATA_DIR = join(__dirname, '..', 'data')
@@ -1197,6 +1198,29 @@ try {
     console.log(`[db] backfilled address_key on ${recent.length} recent send(s)`)
   }
 } catch (e) { console.warn('[db] address_key backfill failed:', e.message) }
+
+// One-time backfill of properties.addr_key — the column that older bulk imports
+// (and a few write paths) never populated, which made Returned-Mail / correction
+// uploads report "not matched" for properties that DO exist. Fill any NULL key
+// with the SAME normalizer used for matching (normalizeAddr). Bounded + one-time:
+// after the first run there are no null-key rows left. New edits keep it fresh via
+// the addr_key recompute in routes/properties.js.
+try {
+  const missing = db.prepare(`
+    SELECT id, address, city, state, zip FROM properties
+    WHERE (addr_key IS NULL OR addr_key = '') AND address IS NOT NULL AND TRIM(address) <> ''
+  `).all()
+  if (missing.length) {
+    const upd = db.prepare(`UPDATE properties SET addr_key = ? WHERE id = ?`)
+    let n = 0
+    const run = db.transaction(() => {
+      for (const r of missing) { const k = normalizeAddr(r.address, r.city, r.state, r.zip); if (k) { upd.run(k, r.id); n++ } }
+    })
+    run()
+    const remaining = db.prepare(`SELECT COUNT(*) AS n FROM properties WHERE addr_key IS NULL OR addr_key = ''`).get().n
+    console.log(`[db] addr_key backfill: filled ${n} of ${missing.length} (remaining null: ${remaining})`)
+  }
+} catch (e) { console.warn('[db] addr_key backfill failed:', e.message) }
 
 // ── Property Management ───────────────────────────────────────────────────────
 db.exec(`

@@ -787,7 +787,17 @@ router.post('/returned-mail', upload.single('file'), (req, res) => {
       if (!addr) continue
 
       const addrKey = normalizeAddrKey(addr, city, state, zip)
-      const prop = addrKey ? db.prepare(`SELECT id, owner_id FROM properties WHERE addr_key = ?`).get(addrKey) : null
+      let prop = addrKey ? db.prepare(`SELECT id, owner_id FROM properties WHERE addr_key = ?`).get(addrKey) : null
+      if (!prop && addrKey) {
+        // Zip-tolerant fallback: match on street|city|state when it's unambiguous
+        // (handles a stored key that has no zip or a differently-formatted one).
+        // Only accept a UNIQUE hit so we never guess between two buildings.
+        const prefix = addrKey.split('|').slice(0, 3).join('|')
+        if (prefix.split('|').length === 3) {
+          const cands = db.prepare(`SELECT id, owner_id FROM properties WHERE addr_key = ? OR addr_key LIKE ?`).all(prefix, prefix + '|%')
+          if (cands.length === 1) prop = cands[0]
+        }
+      }
       if (!prop) {
         results.not_found++
         if (results.unmatched_sample.length < 25) results.unmatched_sample.push([addr, city, state].filter(Boolean).join(', '))

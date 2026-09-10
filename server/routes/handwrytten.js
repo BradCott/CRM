@@ -776,10 +776,14 @@ router.post('/bulk-file', (req, res) => {
   }
   const signOff = sign_off ?? 'Sincerely,\r\n<sig:1427BC>'
 
+  const today = new Date().toISOString().slice(0, 10)
   const rows = [HW_BULK_HEADERS]
   for (const { contact_id, property_id } of recipients) {
     const person = db.prepare(`SELECT * FROM people WHERE id = ?`).get(contact_id)
     if (!person || !person.address) continue
+    // Suppression safety net: never export a Do-Not-Contact or actively-paused
+    // recipient, even if the client-built list included them.
+    if (person.do_not_contact || (person.mail_pause_until && person.mail_pause_until >= today)) continue
 
     let property = null
     if (property_id) {
