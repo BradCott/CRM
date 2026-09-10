@@ -67,6 +67,34 @@ function isEntity(person) {
   return ENTITY_RE.test(person.name || '')
 }
 
+// Handwrytten caps each recipient name field at 45 chars. Owner names imported
+// from public records carry descriptors that aren't really the mail name and blow
+// past that: "(parentheticals)", "c/o …", ", as Trustee of …", "- principal …",
+// and multi-party lists ("A / B / C"). cleanName() strips those down to the name
+// you'd actually address; fitField() is the final safety clamp per field.
+function cleanName(raw) {
+  let s = String(raw || '').trim()
+  if (!s) return ''
+  s = s.replace(/\s*\([^)]*\)\s*/g, ' ')              // drop (parentheticals)
+       .replace(/\s+c\/o\s+.*$/i, '')                 // drop "c/o …" tail
+       .replace(/,?\s+(as\s+)?trustee\b.*$/i, '')     // drop ", as Trustee of …"
+       .replace(/\s*[-–—]\s*principal\b.*$/i, '')     // drop "- principal, …"
+       .replace(/\s+/g, ' ').trim()
+  if (/\s[/;]\s/.test(s)) s = s.split(/\s*[/;]\s*/)[0].trim()  // multiple parties → first
+  return s
+}
+function fitField(s, max = 45) {
+  s = String(s || '').trim().replace(/\s+/g, ' ')
+  if (s.length <= max) return s
+  const firstParty = s.split(/\s*[/;]\s*|\s+&\s+/)[0].trim()
+  if (firstParty && firstParty.length && firstParty.length <= max) return firstParty
+  s = firstParty || s
+  if (s.length <= max) return s
+  const cut = s.slice(0, max)
+  const sp = cut.lastIndexOf(' ')
+  return (sp > 15 ? cut.slice(0, sp) : cut).trim()
+}
+
 function resolveMergeFields(template, person, property) {
   const nameParts = (person.name || '').trim().split(/\s+/)
   const first = isEntity(person) ? 'Hey' : (nameParts[0] || 'Friend')
@@ -390,10 +418,11 @@ router.post('/send', async (req, res) => {
   const senderFirst = senderParts[0] || ''
   const senderLast  = senderParts.slice(1).join(' ') || ''
 
-  // Parse recipient name
-  const nameParts = (person.name || '').trim().split(/\s+/)
-  const firstName = nameParts[0] || 'Friend'
-  const lastName  = nameParts.slice(1).join(' ') || ''
+  // Parse recipient name — cleaned of descriptors and clamped to Handwrytten's 45-char limit.
+  const cleanRecip = cleanName(person.name)
+  const nameParts  = cleanRecip.split(/\s+/)
+  const firstName  = fitField(nameParts[0] || 'Friend')
+  const lastName   = fitField(nameParts.slice(1).join(' '))
 
   const finalMessage = resolvedMessage + sigSuffix(db, sig_id)
 
@@ -584,8 +613,9 @@ router.post('/send-bulk', async (req, res) => {
     )
     const sendId = insertRes.lastInsertRowid
 
-    const toFirstName = person.first_name || person.name.split(' ')[0] || ''
-    const toLastName  = person.last_name  || person.name.split(' ').slice(1).join(' ') || ''
+    const cleanRecip  = cleanName(person.name)
+    const toFirstName = fitField(person.first_name || cleanRecip.split(' ')[0] || '')
+    const toLastName  = fitField(person.last_name  || cleanRecip.split(' ').slice(1).join(' ') || '')
 
     try {
       const orderParams = {
@@ -795,9 +825,10 @@ router.post('/bulk-file', (req, res) => {
     // Normalize line breaks to CRLF so they render as real lines (matches their template)
     const msg = resolveMergeFields(message, person, property).replace(/\r\n|\r|\n/g, '\r\n')
     const entity = isEntity(person)
-    const toFirst = entity ? '' : (person.first_name || (person.name || '').split(' ')[0] || '')
-    const toLast  = entity ? '' : (person.last_name  || (person.name || '').split(' ').slice(1).join(' ') || '')
-    const toBusiness = entity ? person.name : ''
+    const cleanRecip = cleanName(person.name)
+    const toFirst = entity ? '' : fitField(person.first_name || cleanRecip.split(' ')[0] || '')
+    const toLast  = entity ? '' : fitField(person.last_name  || cleanRecip.split(' ').slice(1).join(' ') || '')
+    const toBusiness = entity ? fitField(cleanRecip) : ''
 
     rows.push([
       RET.first, RET.last, RET.business, RET.line1, RET.line2, RET.city, RET.state, RET.zip, RET.country,
