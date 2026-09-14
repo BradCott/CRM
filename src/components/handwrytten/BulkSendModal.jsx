@@ -22,7 +22,8 @@ import PersonDetail from '../people/PersonDetail'
 import DuplicateFinderModal from './DuplicateFinderModal'
 
 const DEFAULT_TEMPLATE =
-  `{first_name}, Any chance you'd ever consider selling your {tenant} in {city}? ` +
+  `{first_name},\n` +
+  `Any chance you'd ever consider selling your {tenant} in {city}? ` +
   `I buy these around the country and figured it was worth reaching out directly. ` +
   `We're a small group, move quick, no brokers, no fluff. ` +
   `Even if you're just curious what it might be worth, I'm happy to run numbers. ` +

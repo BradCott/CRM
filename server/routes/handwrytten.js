@@ -424,7 +424,7 @@ router.post('/send', async (req, res) => {
   const firstName  = fitField(nameParts[0] || 'Friend')
   const lastName   = fitField(nameParts.slice(1).join(' '))
 
-  const finalMessage = resolvedMessage + sigSuffix(db, sig_id)
+  const finalMessage = (resolvedMessage + sigSuffix(db, sig_id)).replace(/\r\n|\r|\n/g, '\r\n')
 
   console.log(`[Handwrytten] send — firstName: "${firstName}" lastName: "${lastName}" | message: ${finalMessage}`)
 
@@ -479,7 +479,7 @@ router.post('/send-proof', async (req, res) => {
   const ra = returnAddressFor(return_address_id)
   if (!message) return res.status(400).json({ error: 'message is required' })
 
-  const finalMessage = message + sigSuffix(db, sig_id)
+  const finalMessage = (message + sigSuffix(db, sig_id)).replace(/\r\n|\r|\n/g, '\r\n')
   try {
     const hwResult = await hwPost('/orders/singleStepOrder', {
       card_id:              card_id || '',
@@ -594,7 +594,7 @@ router.post('/send-bulk', async (req, res) => {
       `).get(contact_id)
     }
 
-    const resolvedMessage = resolveMergeFields(message, person, property) + sigSuffix(db, sig_id)
+    const resolvedMessage = (resolveMergeFields(message, person, property) + sigSuffix(db, sig_id)).replace(/\r\n|\r|\n/g, '\r\n')
 
     // Insert pending record
     const insertRes = db.prepare(`
@@ -709,7 +709,7 @@ router.post('/send-basket', async (req, res) => {
       property = db.prepare(`SELECT p.*, t.name AS tenant_brand_name FROM properties p LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id WHERE p.owner_id = ? ORDER BY p.id ASC LIMIT 1`).get(contact_id)
     }
 
-    const resolvedMessage = resolveMergeFields(message, person, property) + SIG
+    const resolvedMessage = (resolveMergeFields(message, person, property) + SIG).replace(/\r\n|\r|\n/g, '\r\n')
     addresses.push({
       recipient_first_name: person.first_name || person.name.split(' ')[0] || '',
       recipient_last_name:  person.last_name  || person.name.split(' ').slice(1).join(' ') || '',
