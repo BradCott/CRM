@@ -5,7 +5,10 @@ import {
   getHandwryttenCards,
   getHandwryttenFonts,
   sendHandwryttenLetter,
+  getHwSignatures,
+  getHwReturnAddresses,
 } from '../../api/client'
+import { defaultSigForUser, defaultReturnForUser } from '../../utils/hwDefaults'
 import Button from '../ui/Button'
 
 const DEFAULT_TEMPLATE =
@@ -44,6 +47,22 @@ export default function SendLetterModal({ person, property, onClose, onSent }) {
   const [showPreview,  setShowPreview]  = useState(false)
   const [sending,      setSending]      = useState(false)
   const [result,       setResult]       = useState(null) // { success, error }
+  const [signatures,   setSignatures]   = useState([])
+  const [returnAddrs,  setReturnAddrs]  = useState([])
+  const [selectedSig,  setSelectedSig]  = useState(null)   // handwrytten_signatures.id
+  const [selectedReturn, setSelectedReturn] = useState(null)
+
+  // Load signatures + return addresses and default them to the logged-in user, so
+  // an individual letter goes out as whoever is sending (Cole → Cole).
+  useEffect(() => {
+    Promise.all([getHwSignatures().catch(() => []), getHwReturnAddresses().catch(() => [])])
+      .then(([sigs, ras]) => {
+        setSignatures(sigs || [])
+        setReturnAddrs(ras || [])
+        setSelectedSig(defaultSigForUser(sigs || [], user))
+        setSelectedReturn(defaultReturnForUser(ras || [], user))
+      })
+  }, [user])
 
   useEffect(() => {
     async function load() {
@@ -94,6 +113,8 @@ export default function SendLetterModal({ person, property, onClose, onSent }) {
         message,
         card_id:     selectedCard,
         font:        selectedFont,
+        sig_id:            selectedSig,
+        return_address_id: selectedReturn,
       })
       setResult({ success: true })
       onSent?.()
@@ -278,14 +299,28 @@ export default function SendLetterModal({ person, property, onClose, onSent }) {
 
             {/* Signature */}
             <div>
-              <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5 block">
-                Signature (from)
-              </label>
-              <div className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-700">
-                {user?.name || user?.email || 'Your name'}
-              </div>
-              <p className="text-xs text-slate-400 mt-1">This is the name that appears as the sender.</p>
+              <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5 block">Signature</label>
+              {signatures.length > 0 ? (
+                <select value={selectedSig ?? ''} onChange={e => setSelectedSig(e.target.value ? Number(e.target.value) : null)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                  {signatures.map(s => <option key={s.id} value={s.id}>{s.label}{s.is_default ? ' (default)' : ''}</option>)}
+                </select>
+              ) : (
+                <div className="px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">No signatures set up — add one in Settings → Handwritten Mail.</div>
+              )}
+              <p className="text-xs text-slate-400 mt-1">Whose handwritten signature is stamped on the letter.</p>
             </div>
+
+            {/* Return address */}
+            {returnAddrs.length > 0 && (
+              <div>
+                <label className="text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5 block">Return address</label>
+                <select value={selectedReturn ?? ''} onChange={e => setSelectedReturn(e.target.value ? Number(e.target.value) : null)}
+                  className="w-full px-3 py-2 border border-slate-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-400">
+                  {returnAddrs.map(r => <option key={r.id} value={r.id}>{r.label}{r.is_default ? ' (default)' : ''}</option>)}
+                </select>
+              </div>
+            )}
 
             {/* Send error */}
             {result?.error && (

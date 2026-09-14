@@ -786,7 +786,7 @@ const HW_BULK_HEADERS = [
 ]
 
 router.post('/bulk-file', (req, res) => {
-  const { recipients, message, sign_off, return_address, return_address_id } = req.body
+  const { recipients, message, sign_off, sig_id, return_address, return_address_id } = req.body
   if (!Array.isArray(recipients) || recipients.length === 0) return res.status(400).json({ error: 'recipients array is required' })
   if (!message) return res.status(400).json({ error: 'message is required' })
 
@@ -804,7 +804,9 @@ router.post('/bulk-file', (req, res) => {
     zip:     ret.zip     ?? ra.zip,
     country: ret.country ?? 'United States',
   }
-  const signOff = sign_off ?? 'Sincerely,\r\n<sig:1427BC>'
+  // Honor the chosen signature (falls back to the registry default, never a
+  // hardcoded person) unless the caller passed an explicit sign_off.
+  const signOff = sign_off ?? ('Sincerely,\r\n' + sigSuffix(db, sig_id).trim())
 
   const today = new Date().toISOString().slice(0, 10)
   const rows = [HW_BULK_HEADERS]

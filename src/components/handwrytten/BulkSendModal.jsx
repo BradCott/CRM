@@ -14,6 +14,8 @@ import {
   mergePeople,
 } from '../../api/client'
 import { useApp } from '../../context/AppContext'
+import { useAuth } from '../../context/AuthContext'
+import { defaultSigForUser, defaultReturnForUser } from '../../utils/hwDefaults'
 import { useAssistant } from '../../context/AssistantContext'
 import Button from '../ui/Button'
 import PersonDetail from '../people/PersonDetail'
@@ -248,6 +250,7 @@ const STEPS = ['filters', 'preview', 'sending', 'done']
 
 export default function BulkSendModal({ onClose, onDone, initialRemailOnly = false }) {
   const { tenantBrands, propertyStates, operators } = useApp()
+  const { user } = useAuth()
   const { askAssistant } = useAssistant()
 
   // Open the Copilot pre-loaded to help draft/improve the campaign message
@@ -325,7 +328,10 @@ export default function BulkSendModal({ onClose, onDone, initialRemailOnly = fal
         setFonts(fontList)
         setSignatures(sigList)
         setReturnAddrs(raList)
-        // Signature + return address start UNCHOSEN — the sender must pick both.
+        // Default the signature + return address to the logged-in user (Cole → Cole),
+        // so mail goes out as whoever is sending. Both stay changeable.
+        setSelectedSig(prev => prev ?? defaultSigForUser(sigList, user))
+        setSelectedReturn(prev => prev ?? defaultReturnForUser(raList, user))
         const defCard = cardList.find(c => (c.name || '').toLowerCase().includes('knox 1')) || cardList[0] || null
         const defFont = fontList.find(f =>
           (f.label || '').toLowerCase().includes('jokester') ||
