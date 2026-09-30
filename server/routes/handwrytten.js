@@ -987,12 +987,12 @@ router.post('/drips', (req, res) => {
   for (const r of recipients) {
     const cid = Number(r.contact_id)
     if (!cid || seen.has(cid)) continue
-    const person = db.prepare(`SELECT address, zip, do_not_contact, mail_pause_until FROM people WHERE id = ?`).get(cid)
+    const person = db.prepare(`SELECT address, zip, do_not_contact, mail_pause_until, notes FROM people WHERE id = ?`).get(cid)
     const today = new Date().toISOString().slice(0, 10)
     if (!person || person.do_not_contact || (person.mail_pause_until && person.mail_pause_until >= today)) continue
     seen.add(cid)
     const addrKey = addressKey(person)
-    if (addrKey) {
+    if (addrKey && !isTestOwner(person)) {   // test owners are exempt so the test path stays usable
       if (seenKeys.has(addrKey))         { skipped++; continue }  // dup address in this drip
       if (addressMailedRecently(addrKey)){ skipped++; continue }  // mailed in last N months
       seenKeys.add(addrKey)
@@ -1004,6 +1004,13 @@ router.post('/drips', (req, res) => {
     return res.status(400).json({ error: 'No eligible recipients after removing DNC, duplicate addresses, and recently-mailed addresses.' })
   }
 
+  // sig_id lives in a TEXT column. node:sqlite binds a JS number into TEXT as
+  // "2.0", so store it as a clean string ("2") — bind a string, and strip any
+  // stray trailing ".0" — so the drip engine resolves the right signature.
+  const sigForStore = (sig_id === null || sig_id === undefined || sig_id === '')
+    ? null
+    : String(sig_id).replace(/\.0+$/, '')
+
   const create = db.transaction(() => {
     const dripRes = db.prepare(`
       INSERT INTO handwrytten_drips
@@ -1013,7 +1020,7 @@ router.post('/drips', (req, res) => {
     `).run(
       name || null, message, card_id || null, font || null,
       filters ? JSON.stringify(filters) : null,
-      batchN, intervalN, clean.length, userId || null, sig_id || null, return_address_id || null,
+      batchN, intervalN, clean.length, userId || null, sigForStore, return_address_id || null,
     )
     const dripId = dripRes.lastInsertRowid
     const insQ = db.prepare(`

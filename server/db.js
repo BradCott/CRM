@@ -1252,6 +1252,20 @@ try {
   }
 } catch (e) { console.warn('[db] test-tenant seed failed:', e.message) }
 
+// Clean up drip signature ids stored as floats. node:sqlite binds a JS integer
+// into a TEXT column as "2.0", so drips created before the fix have sig_id like
+// "2.0", which failed to resolve to a signature (and silently fell back to the
+// default — how Cole's drip got Brad's signature). Normalize "2.0" → "2".
+try {
+  const bad = db.prepare(`SELECT id, sig_id FROM handwrytten_drips WHERE sig_id LIKE '%.0'`).all()
+  if (bad.length) {
+    const upd = db.prepare(`UPDATE handwrytten_drips SET sig_id = ? WHERE id = ?`)
+    const run = db.transaction(() => { for (const d of bad) upd.run(String(d.sig_id).replace(/\.0+$/, ''), d.id) })
+    run()
+    console.log(`[db] normalized ${bad.length} drip sig_id float value(s)`)
+  }
+} catch (e) { console.warn('[db] drip sig_id cleanup failed:', e.message) }
+
 // ── Property Management ───────────────────────────────────────────────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS property_tasks (

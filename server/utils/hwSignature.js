@@ -36,9 +36,14 @@ export function sigSuffix(db, sig) {
   const raw = (sig ?? '').toString().trim()
 
   if (raw) {
-    if (/^\d+$/.test(raw)) {
+    // A registry row id. NOTE: node:sqlite stores a JS integer bound into a TEXT
+    // column as "2.0", so a sig_id round-tripped through a TEXT column (e.g. the
+    // drip table) comes back as "2.0", not "2" — accept both. Real Handwrytten
+    // codes always contain letters, so a purely-numeric value is always a row id.
+    const idMatch = /^(\d+)(?:\.0+)?$/.exec(raw)
+    if (idMatch) {
       // A registry row id — resolve THAT row, and only that row.
-      const row = db.prepare(`SELECT label, sig_id FROM handwrytten_signatures WHERE id = ?`).get(Number(raw))
+      const row = db.prepare(`SELECT label, sig_id FROM handwrytten_signatures WHERE id = ?`).get(Number(idMatch[1]))
       const tag = toSigTag(row?.sig_id)
       if (tag) return ` ${tag}`
       const err = new Error(
