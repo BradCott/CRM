@@ -6,6 +6,7 @@ import {
   getHwSignatures,
   getHwReturnAddresses,
   sendHandwryttenBulk,
+  getMailEligibility,
   sendHandwryttenProof,
   downloadHandwryttenBulkFile,
   createHandwryttenDrip,
@@ -276,6 +277,7 @@ export default function BulkSendModal({ onClose, onDone, initialRemailOnly = fal
   const [builtMode,        setBuiltMode]        = useState('')       // required: '' unset | 'all' (no filter) | 'before'
   const [filterBuiltBefore, setFilterBuiltBefore] = useState('')     // year for builtMode==='before' (nulls always included)
   const [remailOnly,       setRemailOnly]       = useState(Boolean(initialRemailOnly)) // only owners with a freshly corrected address
+  const [blackoutMonths,   setBlackoutMonths]   = useState(4)   // skip anyone mailed within the last N months
 
   // ── Recipients state ───────────────────────────────────────────────────────
   const [recipients,    setRecipients]    = useState([])
@@ -427,13 +429,10 @@ export default function BulkSendModal({ onClose, onDone, initialRemailOnly = fal
       const pausedCount     = uniqueOwners.filter(p => !p.owner_do_not_contact && isPaused(p)).length
       const withContact     = uniqueOwners.filter(p => !p.owner_do_not_contact && !isPaused(p))
       const noAddress       = withContact.filter(p => !p.owner_address || !p.owner_city || !p.owner_state).length
-      const readyToSend     = withContact.length - noAddress
 
-      setBreakdown({ totalFiltered, needsReviewCount, noOwner, dedupRemoved, dncCount, pausedCount, noAddress, readyToSend })
-
-      // ── Build final list ──────────────────────────────────────────────────
+      // ── Build candidate list ────────────────────────────────────────────────
       const seen = new Set()
-      const list = []
+      let list = []
       for (const p of filtered) {
         if (!p.owner_id) continue
         if (seen.has(p.owner_id)) continue
@@ -459,13 +458,32 @@ export default function BulkSendModal({ onClose, onDone, initialRemailOnly = fal
           owner_type:       p.owner_type || null,
         })
       }
+
+      // Exclude anyone already mailed within the blackout window (same rule the
+      // send enforces) so the preview count reflects who will actually be mailed.
+      let alreadyMailed = 0
+      if (list.length && blackoutMonths > 0) {
+        try {
+          const { blocked } = await getMailEligibility({
+            recipients: list.map(r => ({ contact_id: r.contact_id })),
+            months: blackoutMonths,
+          })
+          const blockedSet = new Set((blocked || []).map(b => b.contact_id))
+          alreadyMailed = list.filter(r => blockedSet.has(r.contact_id)).length
+          list = list.filter(r => !blockedSet.has(r.contact_id))
+        } catch (err) {
+          console.warn('Eligibility check failed; showing all recipients:', err)
+        }
+      }
+
+      setBreakdown({ totalFiltered, needsReviewCount, noOwner, dedupRemoved, dncCount, pausedCount, noAddress, alreadyMailed, readyToSend: list.length })
       setRecipients(list)
     } catch (err) {
       console.error('Failed to build recipients:', err)
     } finally {
       setLoadingRec(false)
     }
-  }, [filterStates, filterTenant, filterOwnerTypes, filterOperators, filterLeaseStart, filterLeaseEnd, builtMode, filterBuiltBefore, remailOnly])
+  }, [filterStates, filterTenant, filterOwnerTypes, filterOperators, filterLeaseStart, filterLeaseEnd, builtMode, filterBuiltBefore, remailOnly, blackoutMonths])
 
   // Recipients actually getting mailed this round (excluded ones removed)
   const includedRecipients = useMemo(
@@ -557,6 +575,7 @@ export default function BulkSendModal({ onClose, onDone, initialRemailOnly = fal
         font:    selectedFont,
         sig_id:  selectedSig,
         return_address_id: selectedReturn,
+        blackout_months: blackoutMonths,
       })
       await maybeSendProof()
       setSendResult(result)
@@ -581,6 +600,7 @@ export default function BulkSendModal({ onClose, onDone, initialRemailOnly = fal
         font:          selectedFont,
         sig_id:        selectedSig,
         return_address_id: selectedReturn,
+        blackout_months: blackoutMonths,
         batch_size:    Math.max(1, parseInt(batchSize, 10) || 50),
         interval_days: Math.max(1, parseInt(intervalDays, 10) || 1),
         filters:       { states: filterStates, tenant: filterTenant, ownerTypes: filterOwnerTypes },
@@ -674,6 +694,25 @@ export default function BulkSendModal({ onClose, onDone, initialRemailOnly = fal
                   </span>
                 </span>
               </label>
+
+              {/* Re-mail blackout window */}
+              <div className="px-3 py-2.5 rounded-xl border border-slate-200">
+                <label className="block text-xs font-semibold text-slate-600 uppercase tracking-wide mb-1.5">
+                  Skip anyone already mailed recently
+                </label>
+                <div className="flex items-center gap-2 text-sm text-slate-700">
+                  <span>Don't mail an address touched in the last</span>
+                  <input
+                    type="number" min="0" max="60" value={blackoutMonths}
+                    onChange={e => setBlackoutMonths(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                    className="w-16 text-sm border border-slate-200 rounded-lg px-2 py-1 text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span>months.</span>
+                </div>
+                <p className="text-xs text-slate-400 mt-1">
+                  Prevents double-mailing the same mailbox. Set to 0 to turn the guard off (not recommended).
+                </p>
+              </div>
 
               {/* State multi-select */}
               <div>
@@ -854,6 +893,12 @@ export default function BulkSendModal({ onClose, onDone, initialRemailOnly = fal
                       <span className="text-slate-500">− Owner missing mailing address</span>
                       <span className={`font-semibold ${breakdown.noAddress > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
                         {breakdown.noAddress > 0 ? `−${breakdown.noAddress.toLocaleString()}` : '0'}
+                      </span>
+                    </div>
+                    <div className="flex justify-between items-center px-3 py-2">
+                      <span className="text-slate-500">− Already mailed in the last {blackoutMonths} month{blackoutMonths === 1 ? '' : 's'}</span>
+                      <span className={`font-semibold ${breakdown.alreadyMailed > 0 ? 'text-amber-600' : 'text-slate-400'}`}>
+                        {breakdown.alreadyMailed > 0 ? `−${breakdown.alreadyMailed.toLocaleString()}` : '0'}
                       </span>
                     </div>
                     <div className="flex justify-between items-center px-3 py-2 bg-blue-50">

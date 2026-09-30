@@ -9,14 +9,27 @@ const router  = express.Router()
 // True if this normalized address was already mailed a letter within the
 // blackout window. Excludes a specific campaign so re-sends within the same run
 // aren't blocked by their own rows.
-const recentlyMailedStmt = db.prepare(
-  `SELECT 1 FROM handwrytten_sends
+// Most recent 'sent' letter to this address within the last `months` months, or
+// null. The window is a bound modifier string so it can be set per campaign.
+const mailedWithinStmt = db.prepare(
+  `SELECT MAX(sent_at) AS last_sent FROM handwrytten_sends
    WHERE address_key = ? AND status = 'sent'
-     AND sent_at >= datetime('now','-${REMAIL_BLACKOUT_MONTHS} months')
-   LIMIT 1`
+     AND sent_at >= datetime('now', ?)`
 )
-function addressMailedRecently(key) {
-  return !!(key && recentlyMailedStmt.get(key))
+// A valid window in months. An explicit 0 means "no blackout" (disabled); an
+// absent/invalid value falls back to the default. datetime('now','-0 months')
+// is now, so a 0 window blocks nothing.
+function normalizeMonths(months) {
+  const m = Number(months)
+  return Number.isFinite(m) && m >= 0 ? Math.floor(m) : REMAIL_BLACKOUT_MONTHS
+}
+function addressMailedWithin(key, months) {
+  if (!key) return null
+  const row = mailedWithinStmt.get(key, `-${normalizeMonths(months)} months`)
+  return row && row.last_sent ? row.last_sent : null
+}
+function addressMailedRecently(key, months = REMAIL_BLACKOUT_MONTHS) {
+  return !!addressMailedWithin(key, months)
 }
 
 // Resolve the chosen signature to a tag ONCE, before any mail is sent. On an
@@ -379,6 +392,27 @@ router.delete('/campaigns/:id', (req, res) => {
   res.json({ ok: true, removed_sends: removedSends })
 })
 
+/**
+ * POST /api/handwrytten/eligibility — given a list of recipients and a window in
+ * months, report which were already mailed within that window (so the campaign
+ * preview can show and exclude them BEFORE sending). This mirrors the same
+ * address-based blackout the send paths enforce. Body: { recipients:[{contact_id}],
+ * months? }. Returns { months, blocked:[{contact_id, last_sent_at}], blocked_count }.
+ */
+router.post('/eligibility', (req, res) => {
+  const { recipients, months } = req.body
+  if (!Array.isArray(recipients)) return res.status(400).json({ error: 'recipients array is required' })
+  const m = normalizeMonths(months)
+  const blocked = []
+  for (const { contact_id } of recipients) {
+    const person = db.prepare(`SELECT address, zip FROM people WHERE id = ?`).get(contact_id)
+    if (!person) continue
+    const last = addressMailedWithin(addressKey(person), m)
+    if (last) blocked.push({ contact_id, last_sent_at: last })
+  }
+  res.json({ months: m, blocked, blocked_count: blocked.length })
+})
+
 /** POST /api/handwrytten/send — send a single letter */
 router.post('/send', async (req, res) => {
   const { contact_id, property_id, message, card_id, font, sig_id, return_address_id } = req.body
@@ -531,7 +565,8 @@ router.post('/send-proof', async (req, res) => {
 
 /** POST /api/handwrytten/send-bulk — send letters to many contacts */
 router.post('/send-bulk', async (req, res) => {
-  const { recipients, message, card_id, font, campaign_name, sig_id, return_address_id } = req.body
+  const { recipients, message, card_id, font, campaign_name, sig_id, return_address_id, blackout_months } = req.body
+  const blackoutMonths = normalizeMonths(blackout_months)
   const userId = req.user?.id
   const bulkReturn = returnAddressFor(return_address_id)
 
@@ -603,8 +638,8 @@ router.post('/send-bulk', async (req, res) => {
       skippedCount++
       continue
     }
-    if (!testOwner && addressMailedRecently(addrKey)) {
-      results.push({ contact_id, status: 'skipped', error: `Already mailed to this address in the last ${REMAIL_BLACKOUT_MONTHS} months` })
+    if (!testOwner && addressMailedRecently(addrKey, blackoutMonths)) {
+      results.push({ contact_id, status: 'skipped', error: `Already mailed to this address in the last ${blackoutMonths} months` })
       skippedCount++
       continue
     }
@@ -967,7 +1002,7 @@ router.get('/drips/:id/queue', (req, res) => {
  * DNC contacts are filtered out server-side as a safety net.
  */
 router.post('/drips', (req, res) => {
-  const { name, recipients, message, card_id, font, batch_size, interval_days, filters, sig_id, return_address_id } = req.body
+  const { name, recipients, message, card_id, font, batch_size, interval_days, filters, sig_id, return_address_id, blackout_months } = req.body
   const userId = req.user?.id
 
   if (!Array.isArray(recipients) || recipients.length === 0) {
@@ -977,6 +1012,7 @@ router.post('/drips', (req, res) => {
 
   const batchN = Math.max(1, parseInt(batch_size, 10) || 50)
   const intervalN = Math.max(1, parseInt(interval_days, 10) || 1)
+  const blackoutMonths = normalizeMonths(blackout_months)
 
   // Filter out DNC/paused contacts, de-dupe by contact_id, then de-dupe by
   // mailing address and drop any address mailed within the blackout window.
@@ -993,8 +1029,8 @@ router.post('/drips', (req, res) => {
     seen.add(cid)
     const addrKey = addressKey(person)
     if (addrKey && !isTestOwner(person)) {   // test owners are exempt so the test path stays usable
-      if (seenKeys.has(addrKey))         { skipped++; continue }  // dup address in this drip
-      if (addressMailedRecently(addrKey)){ skipped++; continue }  // mailed in last N months
+      if (seenKeys.has(addrKey))                       { skipped++; continue }  // dup address in this drip
+      if (addressMailedRecently(addrKey, blackoutMonths)){ skipped++; continue }  // mailed in last N months
       seenKeys.add(addrKey)
     }
     clean.push({ contact_id: cid, property_id: r.property_id || null })
@@ -1015,12 +1051,12 @@ router.post('/drips', (req, res) => {
     const dripRes = db.prepare(`
       INSERT INTO handwrytten_drips
         (name, message_template, card_id, font, filters, batch_size, interval_days,
-         status, total_count, next_run_at, created_by_user_id, sig_id, return_address_id)
-      VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, datetime('now'), ?, ?, ?)
+         status, total_count, next_run_at, created_by_user_id, sig_id, return_address_id, blackout_months)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?, datetime('now'), ?, ?, ?, ?)
     `).run(
       name || null, message, card_id || null, font || null,
       filters ? JSON.stringify(filters) : null,
-      batchN, intervalN, clean.length, userId || null, sigForStore, return_address_id || null,
+      batchN, intervalN, clean.length, userId || null, sigForStore, return_address_id || null, blackoutMonths,
     )
     const dripId = dripRes.lastInsertRowid
     const insQ = db.prepare(`

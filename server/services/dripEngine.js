@@ -33,7 +33,7 @@ function senderFieldsFor(id) {
 const dripRecentStmt = db.prepare(
   `SELECT 1 FROM handwrytten_sends
    WHERE address_key = ? AND status = 'sent' AND id <> ?
-     AND sent_at >= datetime('now','-${REMAIL_BLACKOUT_MONTHS} months')
+     AND sent_at >= datetime('now', ?)
    LIMIT 1`
 )
 
@@ -102,10 +102,16 @@ async function sendQueued(drip, qrow) {
   }
 
   // Skip if this address was mailed within the blackout window since being queued.
+  // Honor the drip's own window (set when created); null (older drips) → default;
+  // an explicit 0 disables the guard.
+  const bm = drip.blackout_months
+  const months = (bm === null || bm === undefined || !Number.isFinite(Number(bm)) || Number(bm) < 0)
+    ? REMAIL_BLACKOUT_MONTHS
+    : Math.floor(Number(bm))
   const addrKey = addressKey(person)
-  if (addrKey && dripRecentStmt.get(addrKey, 0)) {
+  if (months > 0 && addrKey && dripRecentStmt.get(addrKey, 0, `-${months} months`)) {
     db.prepare(`UPDATE handwrytten_drip_queue SET status='skipped', error_message=?, processed_at=datetime('now') WHERE id=?`)
-      .run(`Already mailed to this address in the last ${REMAIL_BLACKOUT_MONTHS} months`, qrow.id)
+      .run(`Already mailed to this address in the last ${months} months`, qrow.id)
     return 'skipped'
   }
 

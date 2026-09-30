@@ -650,6 +650,8 @@ const migrations = [
      WHERE NOT EXISTS (SELECT 1 FROM handwrytten_signatures)`,
   // Which signature a drip uses for every batch.
   `ALTER TABLE handwrytten_drips ADD COLUMN sig_id TEXT`,
+  // Per-drip re-mail blackout window (months); null falls back to the default.
+  `ALTER TABLE handwrytten_drips ADD COLUMN blackout_months INTEGER`,
 
   // Handwritten-mail RETURN ADDRESS registry — pick whose return address (Brad,
   // Cole, …) is printed on the envelope. Managed in Settings, chosen per campaign.

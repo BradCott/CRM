@@ -670,6 +670,7 @@ export const setDefaultHwReturnAddress = (id)       => req('PATCH', `/handwrytte
 export const deleteHwReturnAddress    = (id)        => req('DELETE',`/handwrytten/return-addresses/${id}`)
 export const sendHandwryttenLetter    = (data)      => req('POST', '/handwrytten/send', data)
 export const sendHandwryttenBulk      = (data)      => req('POST', '/handwrytten/send-bulk', data)
+export const getMailEligibility       = (data)      => req('POST', '/handwrytten/eligibility', data)
 export const sendHandwryttenProof     = (data)      => req('POST', '/handwrytten/send-proof', data)
 export const sendHandwryttenBasket    = (data)      => req('POST', '/handwrytten/send-basket', data) // TEST: one batched order
 export async function downloadHandwryttenBulkFile(data) {
