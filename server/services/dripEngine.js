@@ -117,7 +117,18 @@ async function sendQueued(drip, qrow) {
       WHERE p.id = ?`).get(qrow.property_id)
   }
 
-  const resolvedMessage = resolveMergeFields(drip.message_template, person, property) + sigSuffix(db, drip.sig_id)
+  // Resolve the signature; an invalid one fails THIS row loudly rather than
+  // quietly mailing someone else's signature.
+  let SIG
+  try {
+    SIG = sigSuffix(db, drip.sig_id)
+  } catch (e) {
+    db.prepare(`UPDATE handwrytten_drip_queue SET status='failed', error_message=?, processed_at=datetime('now') WHERE id=?`)
+      .run(e.message, qrow.id)
+    return 'failed'
+  }
+
+  const resolvedMessage = resolveMergeFields(drip.message_template, person, property) + SIG
 
   const insertRes = db.prepare(`
     INSERT INTO handwrytten_sends

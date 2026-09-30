@@ -1222,6 +1222,36 @@ try {
   }
 } catch (e) { console.warn('[db] addr_key backfill failed:', e.message) }
 
+// ── Seed a safe "test tenant" for exercising bulk mail sends ─────────────────
+// A fake tenant with two dummy owner-properties, both addressed to the Knox
+// office, so Brad/Cole can fire a real bulk campaign end-to-end (signature, card,
+// layout) without mailing an actual prospect. The owners carry a KNOX_TEST marker
+// in notes; the send path exempts them from the duplicate-address skip and the
+// 4-month re-mail blackout so the test path stays usable on demand. One-time:
+// only seeds when the brand doesn't already exist.
+try {
+  const TEST_BRAND = 'Knox Capital Tenant'
+  if (!db.prepare(`SELECT 1 FROM tenant_brands WHERE name = ?`).get(TEST_BRAND)) {
+    const OFFICE = { address: '7500 W 160th St Ste 101', city: 'Stilwell', state: 'KS', zip: '66085' }
+    const key    = normalizeAddr(OFFICE.address, OFFICE.city, OFFICE.state, OFFICE.zip)
+    const seed = db.transaction(() => {
+      const brandId = db.prepare(`INSERT INTO tenant_brands (name) VALUES (?)`).run(TEST_BRAND).lastInsertRowid
+      const insPerson = db.prepare(`
+        INSERT INTO people (name, first_name, last_name, role, owner_type, address, city, state, zip, notes)
+        VALUES (?, 'Knox', ?, 'owner', 'Individual', ?, ?, ?, ?, 'KNOX_TEST — dummy owner for bulk-send testing')`)
+      const insProp = db.prepare(`
+        INSERT INTO properties (address, city, state, zip, tenant_brand_id, owner_id, is_portfolio, needs_ownership_review, addr_key, property_type)
+        VALUES (?, ?, ?, ?, ?, ?, 0, 0, ?, 'Test')`)
+      for (const [name, last] of [['Knox Test Owner One', 'Test Owner One'], ['Knox Test Owner Two', 'Test Owner Two']]) {
+        const ownerId = insPerson.run(name, last, OFFICE.address, OFFICE.city, OFFICE.state, OFFICE.zip).lastInsertRowid
+        insProp.run(OFFICE.address, OFFICE.city, OFFICE.state, OFFICE.zip, brandId, ownerId, key)
+      }
+    })
+    seed()
+    console.log('[db] seeded test tenant "Knox Capital Tenant" (2 dummy properties at the office address)')
+  }
+} catch (e) { console.warn('[db] test-tenant seed failed:', e.message) }
+
 // ── Property Management ───────────────────────────────────────────────────────
 db.exec(`
   CREATE TABLE IF NOT EXISTS property_tasks (

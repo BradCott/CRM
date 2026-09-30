@@ -20,28 +20,45 @@ export function toSigTag(value) {
 }
 
 // The value a caller stored (a registry row id, a bare code, or a full tag) →
-// the first VALID signature tag, preferring: the requested one, then the default,
-// then any other registry signature, then Brad's known-good id.
+// a leading-space signature tag ready to append to a message.
+//
+// CRITICAL: an EXPLICIT choice is honored exactly, or the send fails — we never
+// silently substitute a different person's signature. That silent fallback is
+// exactly how Cole's whole 50-letter campaign came out stamped with Brad's
+// signature: Cole's registry row was selected, but its code didn't resolve to a
+// valid tag, so the old code quietly fell through to the default (Brad). One
+// wrong signature you can catch; fifty in the mail you can't. Better to hard-fail
+// a bad signature up front than to mail the wrong name.
+//
+// A missing/empty selection (automated or legacy paths) still falls back to the
+// default registry signature, then a last-resort known-good code.
 export function sigSuffix(db, sig) {
   const raw = (sig ?? '').toString().trim()
-  const candidates = []
 
-  if (raw && /^\d+$/.test(raw)) {
-    // A registry row id.
-    const row = db.prepare(`SELECT sig_id FROM handwrytten_signatures WHERE id = ?`).get(Number(raw))
-    if (row?.sig_id != null) candidates.push(row.sig_id)
-  } else if (raw) {
+  if (raw) {
+    if (/^\d+$/.test(raw)) {
+      // A registry row id — resolve THAT row, and only that row.
+      const row = db.prepare(`SELECT label, sig_id FROM handwrytten_signatures WHERE id = ?`).get(Number(raw))
+      const tag = toSigTag(row?.sig_id)
+      if (tag) return ` ${tag}`
+      const err = new Error(
+        `The "${row?.label || 'selected'}" signature has no valid Handwrytten code. ` +
+        `Fix it under Settings → Signatures before sending.`
+      )
+      err.code = 'INVALID_SIGNATURE'
+      throw err
+    }
     // A literal code or a pasted tag.
-    candidates.push(raw)
+    const tag = toSigTag(raw)
+    if (tag) return ` ${tag}`
+    const err = new Error(`"${raw}" is not a valid Handwrytten signature code.`)
+    err.code = 'INVALID_SIGNATURE'
+    throw err
   }
-  // Fallbacks: the default signature, then everything else in the registry.
-  for (const r of db.prepare(`SELECT sig_id FROM handwrytten_signatures ORDER BY is_default DESC, id`).all()) {
-    candidates.push(r.sig_id)
-  }
-  candidates.push('1427BC')   // last-resort known-good
 
-  for (const c of candidates) {
-    const tag = toSigTag(c)
+  // No explicit choice: default registry signature, then everything else.
+  for (const r of db.prepare(`SELECT sig_id FROM handwrytten_signatures ORDER BY is_default DESC, id`).all()) {
+    const tag = toSigTag(r.sig_id)
     if (tag) return ` ${tag}`
   }
   return ' <sig:1427BC offset=1>'
@@ -49,7 +66,8 @@ export function sigSuffix(db, sig) {
 
 // The bare signature code a value resolves to (used where only the code matters).
 export function resolveSigId(db, sig) {
-  const tag = sigSuffix(db, sig).trim()
+  let tag
+  try { tag = sigSuffix(db, sig).trim() } catch { return '1427BC' }
   const m = tag.match(/<sig:([A-Za-z0-9]+)/i)
   return m ? m[1] : '1427BC'
 }

@@ -18,6 +18,26 @@ const recentlyMailedStmt = db.prepare(
 function addressMailedRecently(key) {
   return !!(key && recentlyMailedStmt.get(key))
 }
+
+// Resolve the chosen signature to a tag ONCE, before any mail is sent. On an
+// invalid explicit choice this sends a 400 and returns null, so the caller
+// aborts the whole send instead of quietly stamping the wrong signature on
+// every piece. (See sigSuffix — explicit choices are never silently swapped.)
+function resolveSigOr400(res, sig_id) {
+  try {
+    return sigSuffix(db, sig_id)
+  } catch (e) {
+    if (e.code === 'INVALID_SIGNATURE') { res.status(400).json({ error: e.message }); return null }
+    throw e
+  }
+}
+
+// A dummy owner created by the boot seed for exercising bulk send safely. These
+// are exempt from the duplicate-address skip and the 4-month re-mail blackout so
+// the test path stays usable on demand. Detected by a marker in notes.
+function isTestOwner(person) {
+  return /KNOX_TEST/.test(person?.notes || '')
+}
 const HW_BASE = 'https://api.handwrytten.com/v2'
 const HW_KEY  = process.env.HANDWRYTTEN_API_KEY   // Authorization header value — no Bearer prefix
 
@@ -401,6 +421,10 @@ router.post('/send', async (req, res) => {
     : null
   const senderName = senderUser?.name || 'Knox Capital'
 
+  // Resolve the signature up front — abort (no record, no mail) if it's invalid.
+  const SIG = resolveSigOr400(res, sig_id)
+  if (SIG === null) return
+
   // Resolve merge fields in message
   const resolvedMessage = resolveMergeFields(message, person, property)
 
@@ -424,7 +448,7 @@ router.post('/send', async (req, res) => {
   const firstName  = fitField(nameParts[0] || 'Friend')
   const lastName   = fitField(nameParts.slice(1).join(' '))
 
-  const finalMessage = (resolvedMessage + sigSuffix(db, sig_id)).replace(/\r\n|\r|\n/g, '\r\n')
+  const finalMessage = (resolvedMessage + SIG).replace(/\r\n|\r|\n/g, '\r\n')
 
   console.log(`[Handwrytten] send — firstName: "${firstName}" lastName: "${lastName}" | message: ${finalMessage}`)
 
@@ -479,7 +503,9 @@ router.post('/send-proof', async (req, res) => {
   const ra = returnAddressFor(return_address_id)
   if (!message) return res.status(400).json({ error: 'message is required' })
 
-  const finalMessage = (message + sigSuffix(db, sig_id)).replace(/\r\n|\r|\n/g, '\r\n')
+  const SIG = resolveSigOr400(res, sig_id)
+  if (SIG === null) return
+  const finalMessage = (message + SIG).replace(/\r\n|\r|\n/g, '\r\n')
   try {
     const hwResult = await hwPost('/orders/singleStepOrder', {
       card_id:              card_id || '',
@@ -516,6 +542,12 @@ router.post('/send-bulk', async (req, res) => {
   if (!message) {
     return res.status(400).json({ error: 'message is required' })
   }
+
+  // Resolve the signature ONCE, before the campaign record or any mail — an
+  // invalid choice aborts the whole run rather than stamping the wrong name on
+  // every letter.
+  const SIG = resolveSigOr400(res, sig_id)
+  if (SIG === null) return
 
   // Look up sender name
   const senderUser = userId
@@ -561,14 +593,17 @@ router.post('/send-bulk', async (req, res) => {
       continue
     }
 
-    // Address de-duplication — never send two letters to one mailbox.
+    // Address de-duplication — never send two letters to one mailbox. Test
+    // owners (seeded dummies at the office) are exempt so the test path stays
+    // usable on demand.
     const addrKey = addressKey(person)
-    if (addrKey && seenKeys.has(addrKey)) {
+    const testOwner = isTestOwner(person)
+    if (!testOwner && addrKey && seenKeys.has(addrKey)) {
       results.push({ contact_id, status: 'skipped', error: 'Duplicate address in this campaign' })
       skippedCount++
       continue
     }
-    if (addressMailedRecently(addrKey)) {
+    if (!testOwner && addressMailedRecently(addrKey)) {
       results.push({ contact_id, status: 'skipped', error: `Already mailed to this address in the last ${REMAIL_BLACKOUT_MONTHS} months` })
       skippedCount++
       continue
@@ -594,7 +629,7 @@ router.post('/send-bulk', async (req, res) => {
       `).get(contact_id)
     }
 
-    const resolvedMessage = (resolveMergeFields(message, person, property) + sigSuffix(db, sig_id)).replace(/\r\n|\r|\n/g, '\r\n')
+    const resolvedMessage = (resolveMergeFields(message, person, property) + SIG).replace(/\r\n|\r|\n/g, '\r\n')
 
     // Insert pending record
     const insertRes = db.prepare(`
@@ -694,7 +729,8 @@ router.post('/send-basket', async (req, res) => {
   if (!message) return res.status(400).json({ error: 'message is required' })
 
   // Build one address entry (with its merged message) per recipient
-  const SIG = sigSuffix(db, sig_id)
+  const SIG = resolveSigOr400(res, sig_id)
+  if (SIG === null) return
   const addresses = []
   const sendMeta  = []
   const skipped   = []
@@ -804,9 +840,14 @@ router.post('/bulk-file', (req, res) => {
     zip:     ret.zip     ?? ra.zip,
     country: ret.country ?? 'United States',
   }
-  // Honor the chosen signature (falls back to the registry default, never a
-  // hardcoded person) unless the caller passed an explicit sign_off.
-  const signOff = sign_off ?? ('Sincerely,\r\n' + sigSuffix(db, sig_id).trim())
+  // Honor the chosen signature (an invalid choice 400s rather than silently
+  // swapping in another person's) unless the caller passed an explicit sign_off.
+  let signOff = sign_off
+  if (signOff == null) {
+    const SIG = resolveSigOr400(res, sig_id)
+    if (SIG === null) return
+    signOff = 'Sincerely,\r\n' + SIG.trim()
+  }
 
   const today = new Date().toISOString().slice(0, 10)
   const rows = [HW_BULK_HEADERS]
