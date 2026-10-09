@@ -653,6 +653,12 @@ const migrations = [
   // Per-drip re-mail blackout window (months); null falls back to the default.
   `ALTER TABLE handwrytten_drips ADD COLUMN blackout_months INTEGER`,
 
+  // Gain Schedule (accountant's acquisition + disposition worksheet). The
+  // building/land cost-basis split (0.75 = 75% building) and the saved worksheet
+  // overrides (JSON) so the auto-seeded schedule stays editable per property.
+  `ALTER TABLE properties ADD COLUMN building_alloc_pct REAL`,
+  `ALTER TABLE properties ADD COLUMN gain_schedule TEXT`,
+
   // Handwritten-mail RETURN ADDRESS registry — pick whose return address (Brad,
   // Cole, …) is printed on the envelope. Managed in Settings, chosen per campaign.
   `CREATE TABLE IF NOT EXISTS handwrytten_return_addresses (

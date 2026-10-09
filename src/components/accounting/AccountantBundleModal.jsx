@@ -5,12 +5,12 @@ import { useState, useEffect, useRef, useMemo } from 'react'
 import { X, Loader2, Download, Send, FileSpreadsheet, CheckCircle, AlertTriangle, FileText, Upload, Paperclip } from 'lucide-react'
 import Button from '../ui/Button'
 import { downloadBundle, bundleBase64, bundleFilename } from '../../utils/accountingExport'
-import { emailAccountantBundle, getSettlementDocs, uploadSettlementDoc, settlementDocFileUrl, getCapitalAccounts } from '../../api/client'
+import { emailAccountantBundle, getSettlementDocs, uploadSettlementDoc, settlementDocFileUrl, getCapitalAccounts, getGainSchedule } from '../../api/client'
 import SendFromPicker from './SendFromPicker'
 import BooksHealthCheck from './BooksHealthCheck'
 import { checkBooksHealth } from '../../utils/booksHealth'
 
-const SHEETS = ['Ledger', 'Balance Sheet', 'P&L', 'Cash Flow', 'Schedule E', 'Depreciation', 'Vendors (1099)', 'Investor Summary']
+const SHEETS = ['Ledger', 'Balance Sheet', 'P&L', 'Cash Flow', 'Schedule E', 'Depreciation', 'Vendors (1099)', 'Investor Summary', 'Acquisition', 'Disposition (Gain on Sale)']
 
 export default function AccountantBundleModal({ property, transactions = [], investors = [], onClose }) {
   const addr = property?.address || 'this property'
@@ -25,6 +25,7 @@ export default function AccountantBundleModal({ property, transactions = [], inv
   const [error, setError]     = useState(null)
 
   const [caps, setCaps]             = useState([])     // per-investor capital accounts
+  const [gain, setGain]             = useState(null)   // gain-schedule inputs (acquisition + disposition)
   const [docs, setDocs]             = useState(null)   // stored settlement PDFs
   const [includeSettlements, setIncludeSettlements] = useState(true)
   const [uploadingKind, setUploadingKind] = useState(null)
@@ -37,6 +38,7 @@ export default function AccountantBundleModal({ property, transactions = [], inv
   useEffect(() => {
     loadDocs()
     getCapitalAccounts(property.id).then(r => setCaps(Array.isArray(r) ? r : [])).catch(() => setCaps([]))
+    getGainSchedule(property.id).then(setGain).catch(() => setGain(null))
     /* eslint-disable-next-line */
   }, [property.id])
 
@@ -52,7 +54,7 @@ export default function AccountantBundleModal({ property, transactions = [], inv
   }
 
   const download = () => {
-    try { downloadBundle(property, transactions, investors, caps) }
+    try { downloadBundle(property, transactions, investors, caps, gain) }
     catch (e) { setError(e.message || 'Could not build the file') }
   }
 
@@ -67,7 +69,7 @@ export default function AccountantBundleModal({ property, transactions = [], inv
     if (!window.confirm(`Email the accountant package for ${addr} to ${to}?`)) return
     setSending(true); setError(null)
     try {
-      const attachment_base64 = bundleBase64(property, transactions, investors, caps)
+      const attachment_base64 = bundleBase64(property, transactions, investors, caps, gain)
       await emailAccountantBundle(property.id, {
         to: to.trim(), cc: cc.trim() || undefined, account: account || undefined,
         subject, body, filename: bundleFilename(property), attachment_base64,

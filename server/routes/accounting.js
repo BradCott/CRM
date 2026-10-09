@@ -2064,6 +2064,119 @@ router.post('/:propertyId/depreciation', (req, res) => {
   res.json({ ok: true, depreciation_years: years })
 })
 
+// ── Gain Schedule (accountant acquisition + disposition worksheet) ────────────
+// Auto-seeds the inputs from the settlement snapshot (acquisition) and the sale
+// close-out (disposition), then overlays any saved per-field overrides so the
+// worksheet is editable yet "fills out as we go". Outputs (basis split, gain on
+// sale, journal entries) are computed from these inputs on the client/export via
+// computeGainSchedule(), so there's one source of truth for the math.
+function seedGainSchedule(propertyId) {
+  const prop = db.prepare('SELECT * FROM properties WHERE id = ?').get(propertyId)
+  if (!prop) return null
+  const num = v => (v == null || v === '' ? 0 : Number(v) || 0)
+
+  // Acquisition — from the stored settlement snapshot's `fields`, when present.
+  let fields = {}
+  let snapPct = null
+  try {
+    const row = db.prepare('SELECT data FROM property_settlements WHERE property_id = ?').get(propertyId)
+    if (row?.data) {
+      const snap = JSON.parse(row.data)
+      fields = snap?.fields || {}
+      if (snap?.buildingPct != null) snapPct = Number(snap.buildingPct) / 100
+    }
+  } catch { /* ignore bad snapshot */ }
+
+  // Fallbacks from the ledger when there's no snapshot.
+  const sumDesc = (desc) => num(db.prepare(
+    `SELECT COALESCE(SUM(amount),0) v FROM accounting_transactions WHERE property_id = ? AND description = ? AND review_status = 'recorded'`
+  ).get(propertyId, desc).v)
+  const building = Math.abs(sumDesc('Building Value'))
+  const land     = Math.abs(sumDesc('Land Value'))
+  const loanProceeds = Math.abs(num(db.prepare(
+    `SELECT COALESCE(SUM(amount),0) v FROM accounting_transactions WHERE property_id = ? AND category = 'Loan' AND description <> '1031 Exchange Proceeds' AND review_status = 'recorded'`
+  ).get(propertyId).v))
+
+  const acquisition = {
+    dateAcquired:   fields.date || prop.close_date || null,
+    purchasePrice:  num(fields.purchase_price) || (building + land),
+    sellerCredit:   num(fields.seller_closing_credit),
+    closingCosts:   num(fields.total_closing_costs),
+    loan:           num(fields.loan_amount) || loanProceeds,
+    cash:           num(fields.cash_to_close),
+    earnestMoney:   num(fields.earnest_money),
+    rentCredit:     num(fields.prorated_rent),
+    reTaxCredit:    num(fields.tax_credits),
+    insuranceCredit:num(fields.insurance_credit),
+    camCredit:      num(fields.cam_credit),
+    exchangeProceeds:num(fields.exchange_proceeds),
+  }
+
+  // Disposition — from the sale close-out (property fields + Sale transactions).
+  const sellingCosts = Math.abs(sumDesc('Selling Costs (commission, title, transfer tax)'))
+  const payoffPrincipal = Math.abs(sumDesc('Loan Payoff at Sale (principal)'))
+  const payoffInterest  = Math.abs(sumDesc('Loan Payoff at Sale (accrued interest)'))
+  const disposition = {
+    dateSold:     prop.sold_date || null,
+    salesPrice:   num(prop.sale_price),
+    commission:   sellingCosts,     // lumped on our side; user can split out closing costs
+    closingCosts: 0,
+    reTaxes:      0,
+    insurance:    0,
+    rent:         0,
+    interestExp:  payoffInterest,
+    loanPayoff:   payoffPrincipal + payoffInterest,
+    cashReceived: 0,
+    accumDep:     null,             // null → computeGainSchedule straight-lines it
+  }
+
+  const buildingPct = prop.building_alloc_pct != null ? Number(prop.building_alloc_pct)
+    : (snapPct != null ? snapPct : 0.75)
+
+  return { buildingPct, recoveryYears: prop.depreciation_years || 39, acquisition, disposition }
+}
+
+// Overlay saved per-field overrides onto the seed (saved non-empty value wins).
+function mergeGainSchedule(seed, saved) {
+  if (!saved) return seed
+  const keep = (sv, base) => (sv === undefined || sv === null || sv === '') ? base : sv
+  const mergeSection = (s, b) => {
+    const out = { ...b }
+    for (const k of Object.keys(b)) out[k] = keep(s?.[k], b[k])
+    return out
+  }
+  return {
+    buildingPct:  keep(saved.buildingPct, seed.buildingPct),
+    recoveryYears: keep(saved.recoveryYears, seed.recoveryYears),
+    acquisition:  mergeSection(saved.acquisition, seed.acquisition),
+    disposition:  mergeSection(saved.disposition, seed.disposition),
+  }
+}
+
+router.get('/:propertyId/gain-schedule', (req, res) => {
+  const seed = seedGainSchedule(req.params.propertyId)
+  if (!seed) return res.status(404).json({ error: 'Property not found' })
+  let saved = null
+  try {
+    const row = db.prepare('SELECT gain_schedule FROM properties WHERE id = ?').get(req.params.propertyId)
+    if (row?.gain_schedule) saved = JSON.parse(row.gain_schedule)
+  } catch { /* ignore */ }
+  res.json({ ...mergeGainSchedule(seed, saved), hasSaved: !!saved })
+})
+
+router.put('/:propertyId/gain-schedule', (req, res) => {
+  const { propertyId } = req.params
+  const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(propertyId)
+  if (!prop) return res.status(404).json({ error: 'Property not found' })
+  const b = req.body || {}
+  const pct = Number(b.buildingPct)
+  const buildingPct = isFinite(pct) && pct > 0 ? (pct > 1 ? pct / 100 : pct) : null
+  const payload = { buildingPct, recoveryYears: b.recoveryYears, acquisition: b.acquisition || {}, disposition: b.disposition || {} }
+  db.prepare('UPDATE properties SET building_alloc_pct = ?, gain_schedule = ? WHERE id = ?')
+    .run(buildingPct, JSON.stringify(payload), propertyId)
+  res.json({ ok: true })
+})
+
 // ── Settlement re-balance ─────────────────────────────────────────────────────
 // Re-reads the whole PDF from scratch (a fresh parse is far more reliable than
 // asking the model to minimally edit an already-wrong extraction), then the

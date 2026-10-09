@@ -605,3 +605,98 @@ export function computeVendorSummary(transactions, year = null) {
   }
   return [...byVendor.values()].sort((a, b) => b.total - a.total)
 }
+
+// ── Gain Schedule (accountant's acquisition + disposition / gain-on-sale) ─────
+// Mirrors the CPA's two-tab worksheet: Acquisition (how the buy is booked, with
+// the cost basis split Building/Land) and Disposition (the sale, less the net
+// book value, = GAIN ON SALE). Pure formulas over a set of inputs so the in-app
+// view and the Excel export render identically. Inputs are auto-seeded from the
+// ledger server-side, then user-editable — settlement structures vary per deal,
+// so an editable worksheet is the only reliably-correct approach.
+export const DEFAULT_BUILDING_PCT = 0.75   // 75% building / 25% land (Knox default)
+
+function monthsBetweenDates(a, b) {
+  if (!a || !b) return 0
+  const ay = Number(String(a).slice(0, 4)), am = Number(String(a).slice(5, 7))
+  const by = Number(String(b).slice(0, 4)), bm = Number(String(b).slice(5, 7))
+  return Math.max(0, (by - ay) * 12 + (bm - am))
+}
+
+// inputs = { acquisition:{...}, disposition:{...}, buildingPct, recoveryYears }
+// Returns the same shape plus computed outputs + balanced journal entries.
+export function computeGainSchedule(inputs = {}) {
+  const num = v => Number(v) || 0
+  const pct = (() => {
+    const p = Number(inputs.buildingPct)
+    if (!isFinite(p) || p <= 0) return DEFAULT_BUILDING_PCT
+    return p > 1 ? p / 100 : p           // accept 0.75 or 75
+  })()
+  const years = recoveryYears(inputs.recoveryYears)
+
+  const a = inputs.acquisition || {}
+  const d = inputs.disposition || {}
+
+  // ── Acquisition ──
+  const netPP      = num(a.purchasePrice) - num(a.sellerCredit)
+  const totalCost  = netPP + num(a.closingCosts)   // depreciable + land basis
+  const building   = totalCost * pct
+  const land       = totalCost - building
+
+  // Acquisition journal (debits +, credits −) — should net to ~0.
+  const acqJournal = [
+    { account: 'Building',   debit: building,                credit: 0 },
+    { account: 'Land',       debit: land,                    credit: 0 },
+    num(a.reTaxCredit)     && { account: 'R/E Taxes', debit: 0, credit: num(a.reTaxCredit) },
+    num(a.rentCredit)      && { account: 'Rent',      debit: 0, credit: num(a.rentCredit) },
+    num(a.insuranceCredit) && { account: 'Insurance', debit: 0, credit: num(a.insuranceCredit) },
+    num(a.loan)            && { account: 'Loan',      debit: 0, credit: num(a.loan) },
+    num(a.exchangeProceeds)&& { account: '1031 Exchange', debit: 0, credit: num(a.exchangeProceeds) },
+    (num(a.cash) + num(a.earnestMoney)) && { account: 'Cash', debit: 0, credit: num(a.cash) + num(a.earnestMoney) },
+  ].filter(Boolean)
+  const acqDebits  = acqJournal.reduce((s, r) => s + r.debit, 0)
+  const acqCredits = acqJournal.reduce((s, r) => s + r.credit, 0)
+
+  // ── Disposition ──
+  const holdMonths = monthsBetweenDates(a.dateAcquired, d.dateSold)
+  // Accumulated depreciation through the sale (on THIS schedule's building basis,
+  // so A/D is consistent with the basis shown). Manual override wins when given.
+  const autoAD = Math.min(building, (building / years) * (holdMonths / 12))
+  const accumDep = (d.accumDep === '' || d.accumDep == null) ? autoAD : num(d.accumDep)
+
+  const netBookValue = building + land - accumDep
+  const sellingCosts = num(d.commission) + num(d.closingCosts)
+  const gainOnSale   = num(d.salesPrice) - sellingCosts - netBookValue
+
+  // Disposition journal (debits +, credits −) — should net to ~0.
+  const dispJournal = [
+    num(d.loanPayoff)   && { account: 'Loan (payoff)',  debit: num(d.loanPayoff), credit: 0 },
+    num(d.interestExp)  && { account: 'Interest Exp',   debit: num(d.interestExp), credit: 0 },
+    num(d.insurance)    && { account: 'Insurance Exp',  debit: num(d.insurance),   credit: 0 },
+    num(d.reTaxes)      && { account: 'R/E Taxes',      debit: num(d.reTaxes),     credit: 0 },
+    num(d.cashReceived) && { account: 'Cash Received',  debit: num(d.cashReceived),credit: 0 },
+    accumDep            && { account: 'Accumulated Depreciation', debit: accumDep, credit: 0 },
+    building            && { account: 'Building (remove)', debit: 0, credit: building },
+    land                && { account: 'Land (remove)',     debit: 0, credit: land },
+    num(d.rent)         && { account: 'Rent Income',    debit: 0, credit: num(d.rent) },
+    gainOnSale          && { account: 'Gain on Sale',   debit: gainOnSale < 0 ? -gainOnSale : 0, credit: gainOnSale > 0 ? gainOnSale : 0 },
+  ].filter(Boolean)
+  const dispDebits  = dispJournal.reduce((s, r) => s + r.debit, 0)
+  const dispCredits = dispJournal.reduce((s, r) => s + r.credit, 0)
+
+  return {
+    buildingPct: pct,
+    recoveryYears: years,
+    acquisition: {
+      ...a,
+      netPP, totalCost, building, land,
+      journal: acqJournal, totalDebits: acqDebits, totalCredits: acqCredits,
+      balanceCheck: acqDebits - acqCredits,
+    },
+    disposition: {
+      ...d,
+      building, land, accumDep, autoAD, netBookValue, sellingCosts, gainOnSale, holdMonths,
+      journal: dispJournal, totalDebits: dispDebits, totalCredits: dispCredits,
+      balanceCheck: dispDebits - dispCredits,
+    },
+  }
+}

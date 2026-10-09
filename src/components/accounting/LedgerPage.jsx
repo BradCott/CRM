@@ -21,6 +21,7 @@ import Bills from './Bills'
 import Vendors from './Vendors'
 import Distributions from './Distributions'
 import CapitalAccounts from './CapitalAccounts'
+import GainSchedule from './GainSchedule'
 import PlaidConnect from './PlaidConnect'
 import SplitTransactionModal from './SplitTransactionModal'
 import AmortizationCard from './AmortizationCard'
@@ -674,6 +675,7 @@ export default function LedgerPage() {
             { key: 'pl',        label: 'P&L',           Icon: BarChart2 },
             { key: 'cashflow',  label: 'Cash Flow',     Icon: ArrowLeftRight },
             { key: 'schedulee', label: 'Schedule E',    Icon: FileSpreadsheet },
+            { key: 'gain',      label: 'Gain Schedule', Icon: Banknote },
             { key: 'budget',    label: 'Budget',        Icon: Target },
             { key: 'bills',     label: 'Bills',         Icon: Receipt },
             { key: 'vendors',   label: 'Vendors',       Icon: Store },
@@ -732,6 +734,11 @@ export default function LedgerPage() {
       {activeView === 'schedulee' && (
         <div className="flex-1 overflow-y-auto">
           <ScheduleE property={property} transactions={recordedTx} onChanged={reload} />
+        </div>
+      )}
+      {activeView === 'gain' && (
+        <div className="flex-1 overflow-y-auto">
+          <GainSchedule property={property} propertyId={propertyId} />
         </div>
       )}
       {activeView === 'budget' && (

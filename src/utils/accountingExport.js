@@ -1,7 +1,7 @@
 // Build + download the full accounting package (Ledger, Balance Sheet, P&L,
 // Cash Flow, Schedule E) for a property, as an Excel workbook or a print-to-PDF view.
 import XLSX from 'xlsx-js-style'
-import { computePL, computeCashFlow, computeScheduleE, computeBalanceSheet, computeDepreciation, recoveryYears, computeVendorSummary } from './accounting'
+import { computePL, computeCashFlow, computeScheduleE, computeBalanceSheet, computeDepreciation, recoveryYears, computeVendorSummary, computeGainSchedule } from './accounting'
 
 // ── Excel styling (via xlsx-js-style) — bundle only ───────────────────────────
 const FMT_USD  = '$#,##0.00;[Red]($#,##0.00)'   // currency; red parentheses for negatives
@@ -322,7 +322,7 @@ function coverSheet(property, year) {
   set(6, 0, 'Generated', ST.label); set(6, 1, new Date().toLocaleDateString(), ST.label)
   set(7, 0, 'Tax year', ST.label);  set(7, 1, String(year), ST.label)
   set(9, 0, 'Included in this workbook', ST.subTitle)
-  const tabs = ['General Ledger', 'Balance Sheet', 'Profit & Loss', 'Cash Flow', 'Schedule E', 'Depreciation Schedule', '1099 Vendor Summary', 'Investor Summary']
+  const tabs = ['General Ledger', 'Balance Sheet', 'Profit & Loss', 'Cash Flow', 'Schedule E', 'Depreciation Schedule', '1099 Vendor Summary', 'Investor Summary', 'Acquisition', 'Disposition — Gain on Sale']
   tabs.forEach((t, i) => set(10 + i, 0, '•  ' + t, ST.label))
   ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: 10 + tabs.length, c: 1 } })
   ws['!cols'] = [{ wch: 44 }, { wch: 20 }]
@@ -351,7 +351,100 @@ function depreciationSheet(property, rows) {
   return ws
 }
 
-export function buildBundleWorkbook(property, transactions, investors, caps) {
+// ── Gain Schedule (accountant acquisition + disposition / gain-on-sale) ────────
+export function gainAcquisitionRows(gsInputs) {
+  const s = computeGainSchedule(gsInputs)
+  const a = s.acquisition
+  const bp = Math.round(s.buildingPct * 100)
+  return [
+    ['ACQUISITION', '', ''],
+    ['Date Acquired', a.dateAcquired || '', ''],
+    ['', '', ''],
+    ['Purchase Price', money(a.purchasePrice), ''],
+    ...(a.sellerCredit ? [['Less: Seller Credit', money(-a.sellerCredit), '']] : []),
+    ['Closing Costs', money(a.closingCosts), ''],
+    ['Total Cost', money(a.totalCost), ''],
+    [`Building (${bp}%)`, money(a.building), ''],
+    [`Land (${100 - bp}%)`, money(a.land), ''],
+    ['', '', ''],
+    ['FUNDING / PRORATIONS', '', ''],
+    ['Loan', money(a.loan), ''],
+    ...(a.rentCredit ? [['Rent Credit', money(a.rentCredit), '']] : []),
+    ...(a.reTaxCredit ? [['R/E Tax Credit', money(a.reTaxCredit), '']] : []),
+    ...(a.insuranceCredit ? [['Insurance Credit', money(a.insuranceCredit), '']] : []),
+    ...(a.exchangeProceeds ? [['1031 Exchange', money(a.exchangeProceeds), '']] : []),
+    ['Cash to Close', money(a.cash), ''],
+    ...(a.earnestMoney ? [['Earnest Money', money(a.earnestMoney), '']] : []),
+    ['', '', ''],
+    ['QUICKBOOKS ENTRY', 'Debit', 'Credit'],
+    ...a.journal.map(j => [j.account, j.debit ? money(j.debit) : '', j.credit ? money(j.credit) : '']),
+    ['Total', money(a.totalDebits), money(a.totalCredits)],
+    ['Balance Check (should be 0)', money(a.balanceCheck), ''],
+  ]
+}
+
+export function gainDispositionRows(gsInputs) {
+  const s = computeGainSchedule(gsInputs)
+  const d = s.disposition
+  const bp = Math.round(s.buildingPct * 100)
+  return [
+    ['DISPOSITION', '', ''],
+    ['Date Acquired', gsInputs?.acquisition?.dateAcquired || '', ''],
+    ['Date Sold', d.dateSold || '', ''],
+    ['Hold Period (months)', d.holdMonths || 0, ''],
+    ['', '', ''],
+    ['Sales Price', money(d.salesPrice), ''],
+    ['Commission', money(d.commission), ''],
+    ['Closing Costs', money(d.closingCosts), ''],
+    ['Selling Costs', money(d.sellingCosts), ''],
+    ['', '', ''],
+    ['COST BASIS', '', ''],
+    [`Building (${bp}%)`, money(d.building), ''],
+    [`Land (${100 - bp}%)`, money(d.land), ''],
+    ['Less: Accumulated Depreciation', money(-d.accumDep), ''],
+    ['Net Book Value', money(d.netBookValue), ''],
+    ['', '', ''],
+    ['GAIN ON SALE', money(d.gainOnSale), ''],
+    ['', '', ''],
+    ['QUICKBOOKS ENTRY', 'Debit', 'Credit'],
+    ...d.journal.map(j => [j.account, j.debit ? money(j.debit) : '', j.credit ? money(j.credit) : '']),
+    ['Total', money(d.totalDebits), money(d.totalCredits)],
+    ['Balance Check (should be 0)', money(d.balanceCheck), ''],
+  ]
+}
+
+// A 3-column (label / debit / value, credit) sheet for the gain schedule.
+function gainSheet(property, title, rows) {
+  const reserve = Array.from({ length: 6 }, () => [''])
+  const ws = XLSX.utils.aoa_to_sheet([...reserve, ...rows])
+  const merges = []
+  const start = brandHeader(ws, property, title, 3, merges)
+  const isTot = s => typeof s === 'string' && /^(Total|Net Book Value|GAIN ON SALE|Selling Costs|Total Cost|Balance Check)/i.test(s.trim())
+  rows.forEach((row, i) => {
+    const r = start + i
+    const label = row[0]
+    if (row[1] === 'Debit' && row[2] === 'Credit') { setS(ws, r, 0, ST.colHead); setS(ws, r, 1, ST.colHeadNum); setS(ws, r, 2, ST.colHeadNum); return }
+    if (isUpper(label)) { setS(ws, r, 0, ST.section); setS(ws, r, 1, ST.section); setS(ws, r, 2, ST.section); return }
+    const tot = isTot(label)
+    setS(ws, r, 0, tot ? ST.totLabel : ST.label)
+    setS(ws, r, 1, tot ? ST.totMoney : ST.money)
+    setS(ws, r, 2, tot ? ST.totMoney : ST.money)
+  })
+  ws['!cols'] = [{ wch: 36 }, { wch: 18 }, { wch: 18 }]
+  ws['!merges'] = merges
+  ws['!rows'] = [{ hpt: 24 }, { hpt: 15 }]
+  return ws
+}
+
+// Standalone two-tab export in the accountant's format.
+export function exportGainScheduleExcel(property, gsInputs) {
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, gainSheet(property, 'Acquisition', gainAcquisitionRows(gsInputs)), 'Acquisition')
+  XLSX.utils.book_append_sheet(wb, gainSheet(property, 'Disposition — Gain on Sale', gainDispositionRows(gsInputs)), 'Disposition')
+  XLSX.writeFile(wb, `${fileBase(property)}_gain_schedule.xlsx`)
+}
+
+export function buildBundleWorkbook(property, transactions, investors, caps, gsInputs = null) {
   const r = buildReports(property, transactions, investors)
   const capRows = capitalAccountsRows(caps)
   const wb = XLSX.utils.book_new()
@@ -373,15 +466,19 @@ export function buildBundleWorkbook(property, transactions, investors, caps) {
     headerIdx: 0, spec: ['text', 'money', 'money', 'money', 'money', 'mult'], widths: [34, 15, 15, 17, 15, 9],
     totalRows: capRows.length > 2 ? [capRows.length - 1] : [],
   }))
+  if (gsInputs) {
+    add('Acquisition', gainSheet(property, 'Acquisition', gainAcquisitionRows(gsInputs)))
+    add('Disposition', gainSheet(property, 'Disposition — Gain on Sale', gainDispositionRows(gsInputs)))
+  }
   return wb
 }
 
 export const bundleFilename = (property) => `${fileBase(property)}_accountant_bundle.xlsx`
-export function downloadBundle(property, transactions, investors, caps) {
-  XLSX.writeFile(buildBundleWorkbook(property, transactions, investors, caps), bundleFilename(property))
+export function downloadBundle(property, transactions, investors, caps, gsInputs = null) {
+  XLSX.writeFile(buildBundleWorkbook(property, transactions, investors, caps, gsInputs), bundleFilename(property))
 }
-export function bundleBase64(property, transactions, investors, caps) {
-  return XLSX.write(buildBundleWorkbook(property, transactions, investors, caps), { type: 'base64', bookType: 'xlsx' })
+export function bundleBase64(property, transactions, investors, caps, gsInputs = null) {
+  return XLSX.write(buildBundleWorkbook(property, transactions, investors, caps, gsInputs), { type: 'base64', bookType: 'xlsx' })
 }
 
 // ── PDF (styled print view — user saves as PDF) ───────────────────────────────
