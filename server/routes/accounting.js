@@ -493,6 +493,7 @@ router.post('/:propertyId/sale-closeout', (req, res) => {
       `).run(propertyId, date, content)
     })
     run()
+    persistGainSeedSection(propertyId, 'disposition')  // auto-fill + save the Gain Schedule's disposition side
     res.status(201).json({ ok: true, distributed })
   } catch (err) {
     console.error('[accounting] sale-closeout:', err.message)
@@ -536,6 +537,7 @@ router.post('/:propertyId/reverse-closeout', (req, res) => {
       result = { transactions_deleted: tx.changes, distributions_deleted: di.changes, reversed_date: date }
     })
     run()
+    clearGainDisposition(propertyId)  // reversed sale → drop the stale disposition so a re-close re-seeds fresh
     res.json({ ok: true, ...result })
   } catch (err) {
     console.error('[accounting] reverse-closeout:', err.message)
@@ -1585,6 +1587,7 @@ router.post('/:propertyId/settlement-record', (req, res) => {
           .run(propertyId, JSON.stringify(b.snapshot))
       }
     })()
+    persistGainSeedSection(propertyId, 'acquisition')  // auto-fill + save the Gain Schedule's acquisition side
     res.status(201).json({ ok: true })
   } catch (err) {
     console.error('[accounting] settlement-record:', err.message)
@@ -2152,6 +2155,43 @@ function mergeGainSchedule(seed, saved) {
     acquisition:  mergeSection(saved.acquisition, seed.acquisition),
     disposition:  mergeSection(saved.disposition, seed.disposition),
   }
+}
+
+// Persist a freshly-seeded section into the saved worksheet so the Gain Schedule
+// fills in and saves itself when a statement is uploaded — buy → 'acquisition',
+// sale → 'disposition'. Fill-blanks only: a manually-entered value is never
+// clobbered (so e.g. a hand-keyed proration survives a re-upload). The OTHER
+// section is left exactly as-is (so a buy never writes empty disposition values).
+function persistGainSeedSection(propertyId, section) {
+  try {
+    const seed = seedGainSchedule(propertyId)
+    if (!seed) return
+    let saved = {}
+    const row = db.prepare('SELECT gain_schedule FROM properties WHERE id = ?').get(propertyId)
+    if (row?.gain_schedule) { try { saved = JSON.parse(row.gain_schedule) } catch { saved = {} } }
+    const keep = (sv, base) => (sv === undefined || sv === null || sv === '') ? base : sv
+    const mergeSec = (s, b) => { const out = { ...b }; for (const k of Object.keys(b)) out[k] = keep(s?.[k], b[k]); return out }
+    const next = {
+      buildingPct:  keep(saved.buildingPct, seed.buildingPct),
+      recoveryYears: keep(saved.recoveryYears, seed.recoveryYears),
+      acquisition:  saved.acquisition || {},
+      disposition:  saved.disposition || {},
+    }
+    next[section] = mergeSec(saved[section], seed[section])
+    db.prepare('UPDATE properties SET gain_schedule = ? WHERE id = ?').run(JSON.stringify(next), propertyId)
+  } catch (e) { console.warn('[accounting] persistGainSeedSection:', e.message) }
+}
+
+// Drop the saved disposition section (used when a sale close-out is reversed, so
+// a later re-close seeds fresh instead of keeping the reversed sale's numbers).
+function clearGainDisposition(propertyId) {
+  try {
+    const row = db.prepare('SELECT gain_schedule FROM properties WHERE id = ?').get(propertyId)
+    if (!row?.gain_schedule) return
+    const saved = JSON.parse(row.gain_schedule)
+    saved.disposition = {}
+    db.prepare('UPDATE properties SET gain_schedule = ? WHERE id = ?').run(JSON.stringify(saved), propertyId)
+  } catch (e) { console.warn('[accounting] clearGainDisposition:', e.message) }
 }
 
 router.get('/:propertyId/gain-schedule', (req, res) => {
