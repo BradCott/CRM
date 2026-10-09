@@ -424,11 +424,12 @@ function gainSheet(property, title, rows) {
     const r = start + i
     const label = row[0]
     if (row[1] === 'Debit' && row[2] === 'Credit') { setS(ws, r, 0, ST.colHead); setS(ws, r, 1, ST.colHeadNum); setS(ws, r, 2, ST.colHeadNum); return }
+    // Integer-count rows (e.g. "Hold Period (months)") must NOT be money-formatted.
+    if (typeof label === 'string' && /months\)?$/i.test(label.trim())) { setS(ws, r, 0, ST.label); setS(ws, r, 1, ST.cellInt); setS(ws, r, 2, ST.cell); return }
+    // Totals FIRST, so "GAIN ON SALE" (uppercase but a real number) keeps its money format.
+    if (isTot(label)) { setS(ws, r, 0, ST.totLabel); setS(ws, r, 1, ST.totMoney); setS(ws, r, 2, ST.totMoney); return }
     if (isUpper(label)) { setS(ws, r, 0, ST.section); setS(ws, r, 1, ST.section); setS(ws, r, 2, ST.section); return }
-    const tot = isTot(label)
-    setS(ws, r, 0, tot ? ST.totLabel : ST.label)
-    setS(ws, r, 1, tot ? ST.totMoney : ST.money)
-    setS(ws, r, 2, tot ? ST.totMoney : ST.money)
+    setS(ws, r, 0, ST.label); setS(ws, r, 1, ST.money); setS(ws, r, 2, ST.money)
   })
   ws['!cols'] = [{ wch: 36 }, { wch: 18 }, { wch: 18 }]
   ws['!merges'] = merges

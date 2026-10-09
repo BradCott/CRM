@@ -2077,14 +2077,9 @@ function seedGainSchedule(propertyId) {
 
   // Acquisition — from the stored settlement snapshot's `fields`, when present.
   let fields = {}
-  let snapPct = null
   try {
     const row = db.prepare('SELECT data FROM property_settlements WHERE property_id = ?').get(propertyId)
-    if (row?.data) {
-      const snap = JSON.parse(row.data)
-      fields = snap?.fields || {}
-      if (snap?.buildingPct != null) snapPct = Number(snap.buildingPct) / 100
-    }
+    if (row?.data) fields = JSON.parse(row.data)?.fields || {}
   } catch { /* ignore bad snapshot */ }
 
   // Fallbacks from the ledger when there's no snapshot.
@@ -2116,22 +2111,28 @@ function seedGainSchedule(propertyId) {
   const sellingCosts = Math.abs(sumDesc('Selling Costs (commission, title, transfer tax)'))
   const payoffPrincipal = Math.abs(sumDesc('Loan Payoff at Sale (principal)'))
   const payoffInterest  = Math.abs(sumDesc('Loan Payoff at Sale (accrued interest)'))
+  const salesPrice = num(prop.sale_price)
+  // Net cash the seller received ≈ price − selling costs − loan payoff (principal
+  // + accrued interest). Seeds the disposition journal so it ties out by default;
+  // the user adjusts to the actual closing wire.
+  const cashReceived = Math.max(0, salesPrice - sellingCosts - payoffPrincipal - payoffInterest)
   const disposition = {
     dateSold:     prop.sold_date || null,
-    salesPrice:   num(prop.sale_price),
+    salesPrice,
     commission:   sellingCosts,     // lumped on our side; user can split out closing costs
     closingCosts: 0,
     reTaxes:      0,
     insurance:    0,
     rent:         0,
     interestExp:  payoffInterest,
-    loanPayoff:   payoffPrincipal + payoffInterest,
-    cashReceived: 0,
+    loanPayoff:   payoffPrincipal,  // PRINCIPAL only — interest rides on interestExp (no double-count)
+    cashReceived,
     accumDep:     null,             // null → computeGainSchedule straight-lines it
   }
 
-  const buildingPct = prop.building_alloc_pct != null ? Number(prop.building_alloc_pct)
-    : (snapPct != null ? snapPct : 0.75)
+  // Default building/land split is the Knox 75/25 unless overridden on the
+  // property; the settlement wizard's own split is intentionally NOT reused here.
+  const buildingPct = prop.building_alloc_pct != null ? Number(prop.building_alloc_pct) : 0.75
 
   return { buildingPct, recoveryYears: prop.depreciation_years || 39, acquisition, disposition }
 }
