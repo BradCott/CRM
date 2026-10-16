@@ -167,7 +167,7 @@ export default function GainSchedule({ property, propertyId }) {
 
       <p className="text-xs text-slate-400 flex items-start gap-1.5">
         <Info className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-        Acquisition is seeded from the settlement; disposition from the sale close-out. Accumulated depreciation is straight-lined on the building basis over {out.recoveryYears} years through the sale date unless you enter a value. These two tabs are also included in the Accountant Bundle.
+        Acquisition is seeded from the settlement; disposition from the sale close-out. Accumulated depreciation is straight-lined on the building basis over {out.recoveryYears} years through the sale date unless you enter a value — and is $0 when a property is bought and sold in the same tax year (no depreciation is allowed that year). These two tabs are also included in the Accountant Bundle.
       </p>
     </div>
   )

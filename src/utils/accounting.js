@@ -658,9 +658,14 @@ export function computeGainSchedule(inputs = {}) {
 
   // ── Disposition ──
   const holdMonths = monthsBetweenDates(a.dateAcquired, d.dateSold)
-  // Accumulated depreciation through the sale (on THIS schedule's building basis,
-  // so A/D is consistent with the basis shown). Manual override wins when given.
-  const autoAD = Math.min(building, (building / years) * (holdMonths / 12))
+  // No depreciation is allowed in a tax year where the property is both placed in
+  // service AND disposed of (IRS Pub 946 — same-year acquisition + sale). So when
+  // the buy and sale fall in the same calendar year, accumulated depreciation is
+  // zero. Otherwise straight-line on THIS schedule's building basis through the
+  // sale, so A/D is consistent with the basis shown. Manual override wins.
+  const sameTaxYear = a.dateAcquired && d.dateSold &&
+    String(a.dateAcquired).slice(0, 4) === String(d.dateSold).slice(0, 4)
+  const autoAD = sameTaxYear ? 0 : Math.min(building, (building / years) * (holdMonths / 12))
   const accumDep = (d.accumDep === '' || d.accumDep == null) ? autoAD : num(d.accumDep)
 
   const netBookValue = building + land - accumDep
