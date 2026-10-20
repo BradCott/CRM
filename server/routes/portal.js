@@ -251,7 +251,7 @@ router.get('/portfolio', requirePortalAuth, (req, res) => {
 
   const links = db.prepare(`
     SELECT ipl.id, ipl.property_id, ipl.contribution, ipl.ownership_percentage, ipl.preferred_return_rate, ipl.created_at,
-           p.address, p.city, p.state, p.close_date, tb.name AS tenant_brand
+           p.address, p.city, p.state, p.close_date, p.sold_date, p.listing_status, tb.name AS tenant_brand
     FROM investor_property_links ipl
     JOIN properties p ON p.id = ipl.property_id
     LEFT JOIN tenant_brands tb ON tb.id = p.tenant_brand_id
@@ -278,6 +278,8 @@ router.get('/portfolio', requirePortalAuth, (req, res) => {
       property: { address: l.address, city: l.city, state: l.state, tenant_brand: l.tenant_brand },
       contribution: funded,
       funded_date: l.close_date || l.created_at,
+      sold_date: l.sold_date || null,
+      is_sold: l.listing_status === 'sold',        // realized/closed position
       ownership_percentage: l.ownership_percentage,
       preferred_return_rate: l.preferred_return_rate,
       distributions_received: received,
@@ -287,6 +289,7 @@ router.get('/portfolio', requirePortalAuth, (req, res) => {
       net_preferred_return_owed: Math.max(0, accrued - received),
     }
   })
+  const activeHoldings = holdings.filter(h => !h.is_sold)
 
   const distributions = db.prepare(`
     SELECT d.id, d.amount, d.distribution_date AS date, d.distribution_type AS type, d.notes,
@@ -315,17 +318,18 @@ router.get('/portfolio', requirePortalAuth, (req, res) => {
     property: { address: r.address, city: r.city, state: r.state, tenant_brand: r.tenant_brand },
   }))
 
-  const total_funded      = holdings.reduce((s, h) => s + h.contribution, 0)
+  const total_funded      = activeHoldings.reduce((s, h) => s + h.contribution, 0)
   const return_of_capital = holdings.reduce((s, h) => s + h.return_of_capital, 0)
   const summary = {
     investor: inv?.name || req.portal.name,
     total_invested:      total_funded,      // alias kept for older clients
-    total_funded,
-    num_properties:      links.length,
+    total_funded,                            // ACTIVE capital still in deals
+    num_properties:      activeHoldings.length,
+    num_realized:        holdings.length - activeHoldings.length,
     total_distributions: distributions.reduce((s, d) => s + (Number(d.amount) || 0), 0),
     return_of_capital,
     balance:             Math.max(0, total_funded - return_of_capital),
-    net_preferred_return_owed: holdings.reduce((s, h) => s + h.net_preferred_return_owed, 0),
+    net_preferred_return_owed: activeHoldings.reduce((s, h) => s + h.net_preferred_return_owed, 0),
   }
 
   res.json({ summary, holdings, distributions, contributions })

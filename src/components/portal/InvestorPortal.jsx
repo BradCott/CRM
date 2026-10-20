@@ -303,9 +303,12 @@ function Thumb() {
 function InvestmentsSection({ pf, onSelect }) {
   const s = pf.summary
   const holdings = pf.holdings || []
+  const activeHoldings   = holdings.filter(h => !h.is_sold)
+  const realizedHoldings = holdings.filter(h => h.is_sold)
   const distributions = pf.distributions || []
 
-  const segments = holdings.map((h, i) => ({
+  // Allocation reflects CURRENT (active) capital only — sold deals are realized.
+  const segments = activeHoldings.map((h, i) => ({
     label: h.property.tenant_brand || h.property.address,
     value: Number(h.contribution) || 0,
     color: PALETTE[i % PALETTE.length],
@@ -328,8 +331,8 @@ function InvestmentsSection({ pf, onSelect }) {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div className="rounded-2xl border border-slate-200 bg-white p-5">
           <p className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-4">Portfolio Allocation</p>
-          {holdings.length === 0 ? (
-            <p className="text-sm text-slate-400 py-10 text-center">No investments yet.</p>
+          {activeHoldings.length === 0 ? (
+            <p className="text-sm text-slate-400 py-10 text-center">{realizedHoldings.length ? 'All positions realized.' : 'No investments yet.'}</p>
           ) : (
             <div className="flex items-center gap-5">
               <div className="relative">
@@ -378,7 +381,7 @@ function InvestmentsSection({ pf, onSelect }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {holdings.map(h => (
+                  {activeHoldings.map(h => (
                     <tr key={h.id} onClick={() => onSelect(h)} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/70 cursor-pointer">
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-3">
@@ -396,6 +399,34 @@ function InvestmentsSection({ pf, onSelect }) {
                       <td className="px-4 py-3 text-right tabular-nums text-emerald-700">{money(h.distributions_received)}</td>
                       <td className="px-4 py-3 text-right tabular-nums text-slate-600">{money(h.return_of_capital)}</td>
                       <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-800">{money(h.balance)}</td>
+                      <td className="px-2 py-3 text-slate-300"><ChevronRight className="w-4 h-4" /></td>
+                    </tr>
+                  ))}
+                  {realizedHoldings.length > 0 && (
+                    <tr className="bg-slate-50/70 border-b border-slate-100">
+                      <td colSpan={6} className="px-4 py-1.5 text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Realized / Sold</td>
+                    </tr>
+                  )}
+                  {realizedHoldings.map(h => (
+                    <tr key={h.id} onClick={() => onSelect(h)} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/70 cursor-pointer bg-slate-50/20">
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-3">
+                          <Thumb />
+                          <div className="min-w-0">
+                            <p className="font-semibold text-slate-600 truncate">{h.property.tenant_brand || h.property.address}
+                              <span className="ml-2 text-[10px] font-medium uppercase tracking-wide text-slate-500 bg-slate-200 rounded px-1.5 py-0.5">Sold</span>
+                            </p>
+                            <p className="text-xs text-slate-400 truncate">{[h.property.city, h.property.state].filter(Boolean).join(', ')}{h.sold_date ? ` · sold ${fmtDate(h.sold_date)}` : ''}</p>
+                          </div>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3 text-right whitespace-nowrap">
+                        <p className="tabular-nums text-slate-600">{money(h.contribution)}</p>
+                        <p className="text-[11px] text-slate-400">{fmtDate(h.funded_date)}</p>
+                      </td>
+                      <td className="px-4 py-3 text-right tabular-nums text-emerald-700">{money(h.distributions_received)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums text-slate-600">{money(h.return_of_capital)}</td>
+                      <td className="px-4 py-3 text-right tabular-nums font-medium text-slate-600">{money(h.balance)}</td>
                       <td className="px-2 py-3 text-slate-300"><ChevronRight className="w-4 h-4" /></td>
                     </tr>
                   ))}

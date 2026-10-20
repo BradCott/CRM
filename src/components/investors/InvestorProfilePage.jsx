@@ -519,6 +519,10 @@ export default function InvestorProfilePage() {
 
   const { portfolio_summary: ps, links, distributions } = investor
   const existingLinkIds = new Set((links || []).map(l => l.property_id))
+  // Active (current) positions vs realized (sold) ones — realized deals are shown
+  // read-only in their own section and don't count toward the active totals.
+  const activeLinks   = (links || []).filter(l => !l.realized)
+  const realizedLinks = (links || []).filter(l => l.realized)
 
   const inp = 'w-full px-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white'
 
@@ -634,10 +638,10 @@ export default function InvestorProfilePage() {
             </Button>
           </div>
 
-          {links.length === 0 ? (
+          {activeLinks.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-10 text-center">
               <Building2 className="w-8 h-8 text-slate-300 mb-2" />
-              <p className="text-sm text-slate-400">No properties linked yet</p>
+              <p className="text-sm text-slate-400">{realizedLinks.length ? 'No active holdings — all positions realized' : 'No properties linked yet'}</p>
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -650,7 +654,7 @@ export default function InvestorProfilePage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {links.map(link => (
+                  {activeLinks.map(link => (
                     editLink?.id === link.id ? (
                       <tr key={link.id} className="border-b border-blue-200 bg-blue-50/40">
                         <td className="px-4 py-2 font-medium text-slate-800">
@@ -733,6 +737,46 @@ export default function InvestorProfilePage() {
             </div>
           )}
         </div>
+
+        {/* Realized / Sold Holdings — read-only; pref frozen at the sale date */}
+        {realizedLinks.length > 0 && (
+          <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
+              <h2 className="text-sm font-semibold text-slate-700">Realized / Sold</h2>
+              <span className="text-xs text-slate-400">{realizedLinks.length} closed position{realizedLinks.length === 1 ? '' : 's'}</span>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-50 border-b border-slate-200">
+                  <tr>
+                    {['Property', 'Contribution', 'Pref Accrued', 'Paid Out', 'Sold', ''].map(h => (
+                      <th key={h} className="px-4 py-2.5 text-left text-xs font-semibold text-slate-500 uppercase tracking-wide whitespace-nowrap">{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {realizedLinks.map(link => (
+                    <tr key={link.id} className="border-b border-slate-100 last:border-0 bg-slate-50/30">
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-slate-700">{link.property_address}</p>
+                        {link.property_city && <p className="text-xs text-slate-400">{link.property_city}{link.property_state ? `, ${link.property_state}` : ''}</p>}
+                      </td>
+                      <td className="px-4 py-3 text-slate-600 tabular-nums">{fmt$(link.contribution)}</td>
+                      <td className="px-4 py-3 text-slate-600 tabular-nums">{fmt$(link.accrued_preferred_return)}</td>
+                      <td className="px-4 py-3 text-slate-600 tabular-nums">{fmt$(link.total_distributions_received)}</td>
+                      <td className="px-4 py-3 text-xs text-slate-400 whitespace-nowrap">{fmtDate(link.sold_date) || '—'}</td>
+                      <td className="px-4 py-3">
+                        <button onClick={() => setDeleteLink(link)} className="p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded">
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Distributions Table */}
         <div className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">

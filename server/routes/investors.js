@@ -693,7 +693,7 @@ router.get('/:id', (req, res) => {
     SELECT
       ipl.id, ipl.investor_id, ipl.property_id,
       ipl.contribution, ipl.ownership_percentage, ipl.preferred_return_rate,
-      ipl.created_at, p.close_date,
+      ipl.created_at, p.close_date, p.sold_date,
       p.address AS property_address, p.city AS property_city, p.state AS property_state,
       p.listing_status,
       COALESCE((
@@ -707,7 +707,9 @@ router.get('/:id', (req, res) => {
   `).all(req.params.id).map(link => {
     const accrued = calcPrefReturn(link)
     const net_owed = Math.max(0, accrued - (link.total_distributions_received || 0))
-    return { ...link, accrued_preferred_return: accrued, net_preferred_return_owed: net_owed }
+    // A sold property is a realized (closed) position — split out from active.
+    const realized = link.listing_status === 'sold'
+    return { ...link, accrued_preferred_return: accrued, net_preferred_return_owed: net_owed, realized }
   })
 
   // Distributions
@@ -724,20 +726,25 @@ router.get('/:id', (req, res) => {
     `SELECT id, name, email, phone, title FROM investor_contacts WHERE investor_id = ? ORDER BY id ASC`
   ).all(req.params.id)
 
-  // Portfolio summary
-  const total_invested      = links.reduce((s, l) => s + (l.contribution || 0), 0)
+  // Portfolio summary — ACTIVE (not-yet-sold) positions drive the headline
+  // numbers; sold deals are summarized separately as realized.
+  const active   = links.filter(l => !l.realized)
+  const realized = links.filter(l => l.realized)
+  const total_invested      = active.reduce((s, l) => s + (l.contribution || 0), 0)
   const total_distributions = distributions.reduce((s, d) => s + (d.amount || 0), 0)
-  const total_accrued       = links.reduce((s, l) => s + l.accrued_preferred_return, 0)
-  const net_preferred_owed  = links.reduce((s, l) => s + l.net_preferred_return_owed, 0)
+  const total_accrued       = active.reduce((s, l) => s + l.accrued_preferred_return, 0)
+  const net_preferred_owed  = active.reduce((s, l) => s + l.net_preferred_return_owed, 0)
 
   res.json({
     ...inv,
     portfolio_summary: {
       total_invested,
-      num_properties:   links.length,
+      num_properties:   active.length,
       total_distributions,
       total_accrued_preferred_return: total_accrued,
       net_preferred_return_owed: net_preferred_owed,
+      num_realized:     realized.length,
+      realized_invested: realized.reduce((s, l) => s + (l.contribution || 0), 0),
     },
     links,
     distributions,
@@ -1058,7 +1065,7 @@ router.get('/:id/links', (req, res) => {
   const links = db.prepare(`
     SELECT
       ipl.*, p.address AS property_address, p.city AS property_city,
-      p.state AS property_state, p.listing_status, p.close_date
+      p.state AS property_state, p.listing_status, p.close_date, p.sold_date
     FROM investor_property_links ipl
     JOIN properties p ON p.id = ipl.property_id
     WHERE ipl.investor_id = ?
