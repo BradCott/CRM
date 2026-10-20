@@ -308,23 +308,50 @@ Rules:
 - Max 15 items
 - Return ONLY the JSON object`
 
+// A meeting-note action item is due by the end of that meeting's week (Friday).
+// Prefer the date encoded in the notes filename (the Monday meeting date); fall
+// back to the week the notes are processed in. The week is Mon–Sun, so Friday is
+// day 5 of that same ISO week (works whether notes are parsed Mon, Tue, …).
+function dateFromFilename(name) {
+  if (!name) return null
+  let m = String(name).match(/(20\d{2})[.\-/](\d{1,2})[.\-/](\d{1,2})/)        // YYYY-MM-DD
+  if (m) { const d = new Date(+m[1], +m[2] - 1, +m[3]); return isNaN(d) ? null : d }
+  m = String(name).match(/\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})\b/)         // MM-DD-YY(YY)
+  if (m) { let y = +m[3]; if (y < 100) y += 2000; const d = new Date(y, +m[1] - 1, +m[2]); return isNaN(d) ? null : d }
+  return null
+}
+
+function meetingWeekFriday(filename) {
+  const ref = dateFromFilename(filename) || new Date()
+  const isoDow = ref.getDay() === 0 ? 7 : ref.getDay()   // Mon=1 … Sun=7
+  const fri = new Date(ref)
+  fri.setDate(ref.getDate() + (5 - isoDow))              // Friday of that same week
+  return fri.toLocaleDateString('en-CA')                 // YYYY-MM-DD, local
+}
+
+// Meeting-note action items flow into the Tasks table (Today's Plays retired).
+// Dedupe on source_ref (one row per file+item) so re-scanning a file never
+// duplicates an item, even after it's been completed or dismissed.
+const noteTaskExists = db.prepare(`SELECT id FROM tasks WHERE source_ref = ? LIMIT 1`)
+const insertNoteTask = db.prepare(`
+  INSERT INTO tasks (title, notes, status, priority, due_date, owner_id, source, source_ref, created_by, updated_by)
+  VALUES (?, ?, 'open', 'normal', ?, ?, 'meeting_notes', ?, 'meeting_notes', 'meeting_notes')
+`)
+
 export async function parseMeetingNotesText(filename, text, fileId) {
   const result = await claudeJson(`${NOTES_PROMPT}\n\nMeeting notes:\n\n${text.slice(0, 12000)}`)
   const items = Array.isArray(result.items) ? result.items : []
+  const due = meetingWeekFriday(filename)
   let created = 0
   items.forEach((item, i) => {
     if (!item.task) return
-    const userId = matchUser(item.assignee)
-    addPlay({
-      user_id: userId, source: 'notes', play_type: 'notes',
-      title: item.task,
-      detail: [item.context, `From meeting notes: ${filename}`].filter(Boolean).join(' · '),
-      priority: 80,
-      dedupe_key: `notes:${fileId}:${i}`,
-    })
+    const sourceRef = `notes:${fileId}:${i}`
+    if (noteTaskExists.get(sourceRef)) return   // already imported from this file
+    const notes = [item.context, `From meeting notes: ${filename}`].filter(Boolean).join(' · ')
+    insertNoteTask.run(item.task, notes, due, matchUser(item.assignee), sourceRef)
     created++
   })
-  console.log(`[plays] meeting notes "${filename}": ${created} plays created`)
+  console.log(`[plays] meeting notes "${filename}": ${created} tasks created (due ${due})`)
   return created
 }
 
