@@ -9,7 +9,7 @@ import {
 import { getDashboard, getDeals, getDashboardActivity, getDashboardMapProperties, getDashboardLeaseExpirations, getLauncherCounts } from '../../api/client'
 import knoxLogo from '../../assets/Knox.png'
 import PortfolioMap from './PortfolioMap'
-import TodaysPlays from './TodaysPlays'
+import MyTasksWidget from './MyTasksWidget'
 import GlobalSearch from './GlobalSearch'
 import BrokerLeaderboard from './BrokerLeaderboard'
 import MailEngine from './MailEngine'
@@ -204,7 +204,7 @@ export default function DashboardPage() {
         {/* ── Command center: plays + brokers | mail + stats + activity ──── */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
           <div className="lg:col-span-2 space-y-4">
-            <TodaysPlays />
+            <MyTasksWidget />
             <BrokerLeaderboard />
           </div>
 

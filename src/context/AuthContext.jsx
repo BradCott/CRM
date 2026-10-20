@@ -12,8 +12,8 @@ export const ROLES = {
 // Pages each role can access (route path prefix)
 const ROLE_ACCESS = {
   admin:        ['*'],  // everything
-  full_agent:   ['/dashboard', '/people', '/properties', '/portfolio', '/historical', '/accounting', '/investors', '/pipeline', '/reports', '/management', '/insurance', '/campaigns'],
-  junior_agent: ['/dashboard', '/people', '/properties', '/pipeline', '/reports'],
+  full_agent:   ['/dashboard', '/tasks', '/people', '/properties', '/portfolio', '/historical', '/accounting', '/investors', '/pipeline', '/reports', '/management', '/insurance', '/campaigns'],
+  junior_agent: ['/dashboard', '/tasks', '/people', '/properties', '/pipeline', '/reports'],
 }
 
 export function AuthProvider({ children }) {

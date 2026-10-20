@@ -7,7 +7,7 @@ import {
   CalendarClock, RefreshCcw, Search, X, DollarSign, Pencil, Check, ListFilter,
   ArrowLeft,
 } from 'lucide-react'
-import { getManagementDashboard, completeTask, getAllManagementTasks, getReimbursementSummary, updatePropertyDisplayName, updatePropertyDisplaySubtitle, getDashboardBreakdown } from '../../api/client'
+import { getManagementDashboard, completePropertyTask, getAllManagementTasks, getReimbursementSummary, updatePropertyDisplayName, updatePropertyDisplaySubtitle, getDashboardBreakdown } from '../../api/client'
 import InsurancePage from '../insurance/InsurancePage'
 import ReimbursementsView from './ReimbursementsView'
 
@@ -647,7 +647,7 @@ function AllTasksView() {
   async function handleComplete(id) {
     setCompletingIds(prev => new Set([...prev, id]))
     try {
-      await completeTask(id)
+      await completePropertyTask(id)
       await load()
     } catch (err) {
       alert('Error: ' + err.message)

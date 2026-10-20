@@ -210,6 +210,17 @@ export const setMailTarget       = (target)        => req('PUT',   '/plays/mail-
 export const getBrokerLeaderboard = (months)       => req('GET',   `/plays/brokers/leaderboard${months ? `?months=${months}` : ''}`)
 export const assignDealBroker    = (dealId, d)     => req('PATCH', `/plays/brokers/deals/${dealId}`, d)
 
+// Tasks — single source of truth for to-dos
+export const getTasks        = (params = {}) => {
+  const qs = new URLSearchParams(params).toString()
+  return req('GET', `/tasks${qs ? '?' + qs : ''}`)
+}
+export const getTask         = (id)       => req('GET',    `/tasks/${id}`)
+export const createTask      = (d)        => req('POST',   '/tasks', d)
+export const updateTask      = (id, d)    => req('PATCH',  `/tasks/${id}`, d)
+export const completeTask    = (id)       => req('POST',   `/tasks/${id}/complete`)
+export const getTaskUsers    = ()         => req('GET',    '/tasks/meta/users')
+
 // Dashboard
 export const globalSearch           = (q) => req('GET', `/search?q=${encodeURIComponent(q)}`)
 export const getDashboard           = () => req('GET', '/dashboard')
@@ -461,10 +472,10 @@ export const getAllManagementTasks   = (status = 'pending') =>
   req('GET', `/management/tasks?status=${status}`)
 
 // Tasks
-export const getPropertyTasks   = (propId)       => req('GET',    `/management/${propId}/tasks`)
-export const createTask         = (propId, data)  => req('POST',   `/management/${propId}/tasks`, data)
-export const updateTask         = (id, data)      => req('PUT',    `/management/tasks/${id}`, data)
-export const completeTask       = (id)            => req('POST',   `/management/tasks/${id}/complete`)
+export const getPropertyTasks     = (propId)       => req('GET',    `/management/${propId}/tasks`)
+export const createPropertyTask   = (propId, data)  => req('POST',   `/management/${propId}/tasks`, data)
+export const updatePropertyTask   = (id, data)      => req('PUT',    `/management/tasks/${id}`, data)
+export const completePropertyTask = (id)            => req('POST',   `/management/tasks/${id}/complete`)
 export const deleteTask         = (id)            => req('DELETE', `/management/tasks/${id}`)
 
 // Insurance

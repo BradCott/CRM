@@ -26,6 +26,7 @@ import usersRouter          from './routes/users.js'
 import managementRouter     from './routes/management.js'
 import handwryttenRouter   from './routes/handwrytten.js'
 import playsRouter          from './routes/plays.js'
+import tasksRouter           from './routes/tasks.js'
 import assistantRouter      from './routes/assistant.js'
 import backupRouter         from './routes/backup.js'
 import extRouter             from './routes/ext.js'
@@ -93,6 +94,7 @@ app.use('/api/reports',          requireAuth, reportsRouter)
 app.use('/api/saved-searches',   requireAuth, requireWrite, savedSearchesRouter)
 app.use('/api/dashboard',        requireAuth, dashboardRouter)
 app.use('/api/plays',            requireAuth, playsRouter)
+app.use('/api/tasks',            requireAuth, tasksRouter)
 app.use('/api/assistant',        requireAuth, assistantRouter)
 app.use('/api/emails',           requireAuth, requireWrite, emailsRouter)
 app.use('/api/plugin',           requireAuth, pluginRouter)

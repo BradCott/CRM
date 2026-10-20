@@ -17,6 +17,7 @@ import InvestorsPage          from './components/investors/InvestorsPage'
 import InvestorProfilePage   from './components/investors/InvestorProfilePage'
 import DashboardPage    from './components/dashboard/DashboardPage'
 import CriticalDatesPage from './components/dashboard/CriticalDatesPage'
+import TasksPage        from './components/tasks/TasksPage'
 import SettingsPage     from './components/settings/SettingsPage'
 import AccountingPage   from './components/accounting/AccountingPage'
 import LedgerPage       from './components/accounting/LedgerPage'
@@ -98,6 +99,7 @@ export default function App() {
 
               {/* All authenticated roles */}
               <Route path="/dashboard"  element={<DashboardPage />} />
+              <Route path="/tasks"      element={<TasksPage />} />
               <Route path="/people"     element={<PeoplePage />} />
               <Route path="/tenant-contacts" element={<TenantContactsPage />} />
               <Route path="/extension"  element={<ExtensionPage />} />

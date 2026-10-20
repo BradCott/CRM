@@ -1034,6 +1034,46 @@ const migrations = [
     UNIQUE(property_id, kind)
   )`,
   `CREATE INDEX IF NOT EXISTS idx_settlement_docs ON settlement_documents(property_id)`,
+
+  // ── Tasks — the single source of truth for every to-do (replaces Today's Plays) ──
+  // An open task stays open until someone closes it, so carry-over is automatic:
+  // yesterday's unfinished task simply shows up again today. Claude reads + writes
+  // this table (via the token API / MCP) to keep the morning routine current.
+  // `source_ref` is the dedupe key (e.g. a Gmail thread id or a critical_date id):
+  // a second create with the same source_ref returns the existing OPEN task rather
+  // than making a duplicate. It is intentionally NOT globally unique — a dismissed
+  // task can be recreated later — so dedupe is enforced in the POST route, not here.
+  `CREATE TABLE IF NOT EXISTS tasks (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    title            TEXT NOT NULL,
+    notes            TEXT,
+    status           TEXT NOT NULL DEFAULT 'open'
+                     CHECK(status IN ('open','waiting','done','dismissed')),
+    priority         TEXT NOT NULL DEFAULT 'normal'
+                     CHECK(priority IN ('high','normal','low')),
+    due_date         TEXT,
+    snoozed_until    TEXT,
+    owner_id         INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    waiting_on       TEXT,
+    follow_up_date   TEXT,
+    deal_id          INTEGER REFERENCES deals(id) ON DELETE SET NULL,
+    property_id      INTEGER REFERENCES properties(id) ON DELETE SET NULL,
+    person_id        INTEGER REFERENCES people(id) ON DELETE SET NULL,
+    critical_date_id INTEGER,
+    source           TEXT NOT NULL DEFAULT 'manual'
+                     CHECK(source IN ('manual','claude','critical_date','email','meeting_notes')),
+    source_ref       TEXT,
+    created_by       TEXT,
+    updated_by       TEXT,
+    created_at       TEXT DEFAULT (datetime('now')),
+    updated_at       TEXT DEFAULT (datetime('now')),
+    completed_at     TEXT
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_tasks_status     ON tasks(status)`,
+  `CREATE INDEX IF NOT EXISTS idx_tasks_owner      ON tasks(owner_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_tasks_due        ON tasks(due_date)`,
+  `CREATE INDEX IF NOT EXISTS idx_tasks_deal       ON tasks(deal_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_tasks_source_ref ON tasks(source_ref)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────
@@ -1151,6 +1191,25 @@ db.exec(`
 `)
 for (const sql of migrations) {
   try { db.exec(sql) } catch (_) { /* column already exists — ignore */ }
+}
+
+// One-time Tasks cleanup (Oct 2026): Today's Plays has been retired in favor of
+// the Tasks page. The ~25 existing `mailer_reply` plays were Cole's own outbound
+// emails misread as replies — junk. Dismiss them once so they don't linger if any
+// code still reads plays. Guarded by a flag so it runs once and never touches
+// mailer_reply plays created later (P2 fixes the detection itself).
+try {
+  const done = db.prepare(`SELECT value FROM app_settings WHERE key = 'tasks_cleanup_v1'`).get()
+  if (!done) {
+    const r = db.prepare(`
+      UPDATE plays SET status = 'dismissed'
+      WHERE play_type = 'mailer_reply' AND status IN ('open','suggested','snoozed')
+    `).run()
+    db.prepare(`INSERT OR REPLACE INTO app_settings (key, value) VALUES ('tasks_cleanup_v1', datetime('now'))`).run()
+    console.log(`[db] tasks cleanup: dismissed ${r.changes} junk mailer_reply plays`)
+  }
+} catch (e) {
+  console.warn('[db] tasks cleanup failed:', e.message)
 }
 
 // A lease left "processing" across a restart is dead (its background job died) —

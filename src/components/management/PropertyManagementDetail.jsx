@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import {
   getProperty,          markPropertySold,          sellProperty,
-  getPropertyTasks,      createTask,        updateTask,        completeTask,    deleteTask,
+  getPropertyTasks,      createPropertyTask, updatePropertyTask, completePropertyTask, deleteTask,
   getPropertyInsurance,  createInsurance,   updateInsurance,   deleteInsurance, uploadInsurancePdf, uploadInsuranceDoc, markInsurancePaid,
   getPropertyTaxes,      createTax,         updateTax,         deleteTax,        uploadTaxPdf, uploadTaxDoc, markTaxPaid, getTaxDocuments, taxDocUrl,
   getPropertyMaintenance, createMaintenance, updateMaintenance, deleteMaintenance,
@@ -137,8 +137,8 @@ function TasksSection({ propertyId }) {
     e.preventDefault()
     setSaving(true)
     try {
-      if (modal === 'add') await createTask(propertyId, form)
-      else                 await updateTask(modal.id, form)
+      if (modal === 'add') await createPropertyTask(propertyId, form)
+      else                 await updatePropertyTask(modal.id, form)
       setModal(null)
       await load()
     } catch (err) {
@@ -151,7 +151,7 @@ function TasksSection({ propertyId }) {
   async function handleComplete(id) {
     setCompletingIds(prev => new Set([...prev, id]))
     try {
-      await completeTask(id)
+      await completePropertyTask(id)
       await load()
     } catch (err) {
       alert('Error completing task: ' + err.message)
