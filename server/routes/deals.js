@@ -25,7 +25,7 @@ const SELECT = `
     d.renewal_options, d.renewal_notice, d.security_deposit, d.lease_notes, d.lease_abstract,
     d.renewal_option_count, d.renewal_option_length, d.renewal_option_increase,
     d.psa_abstract, d.effective_date, d.earnest_due_date, d.title_objection_date,
-    d.is_multi_tenant,
+    d.is_multi_tenant, d.direction,
     p.address    AS property_address,
     p.list_price AS property_list_price,
     p.lease_end,
@@ -67,6 +67,15 @@ router.post('/:id/close', (req, res) => {
   console.log('[deals] POST /:id/close — id:', req.params.id)
   const deal = dealResponse(req.params.id)   // includes tenants + rolled-up fields
   if (!deal) return res.status(404).json({ error: 'Not found' })
+
+  // A SALE closes OUT of the portfolio — no purchase→portfolio migration. The
+  // actual booking (sale price, gain, net proceeds → Historical) is done by the
+  // Sale Closeout Wizard on the property's ledger, which the client opens next.
+  if (deal.direction === 'sale') {
+    db.prepare("UPDATE deals SET status = 'closed' WHERE id = ?").run(req.params.id)
+    console.log('[deals] sale deal', req.params.id, 'marked closed → closeout for property', deal.property_id)
+    return res.json({ ok: true, direction: 'sale', property_id: deal.property_id || null })
+  }
 
   // Resolve (or create) the portfolio property, then carry the deal's details over.
   let propertyId = deal.property_id
@@ -277,19 +286,36 @@ router.get('/:id', (req, res) => {
 router.post('/', (req, res) => {
   const { property_id, stage = 'loi', purchase_price, close_date, notes,
           address, city, state, tenant, cap_rate, due_diligence_days, dd_deadline, earnest_money } = req.body
+  const direction = req.body.direction === 'sale' ? 'sale' : 'purchase'
   const r = db.prepare(`
     INSERT INTO deals (property_id, stage, purchase_price, close_date, notes,
-                       address, city, state, tenant, cap_rate, due_diligence_days, dd_deadline, earnest_money,
+                       address, city, state, tenant, cap_rate, due_diligence_days, dd_deadline, earnest_money, direction,
                        created_at, updated_at)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'), datetime('now'))
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'), datetime('now'))
   `).run(toStr(property_id), stage, toFloat(purchase_price), toStr(close_date), toStr(notes),
          toStr(address), toStr(city), toStr(state), toStr(tenant),
-         toFloat(cap_rate), toInt(due_diligence_days), toStr(dd_deadline), toFloat(earnest_money))
+         toFloat(cap_rate), toInt(due_diligence_days), toStr(dd_deadline), toFloat(earnest_money), direction)
   // Auto-link to market property if no explicit property_id was provided
   if (!property_id && address) {
     tryAutoLink(r.lastInsertRowid, address)
   }
   res.status(201).json(db.prepare(SELECT + ' WHERE d.id = ?').get(r.lastInsertRowid))
+})
+
+// POST /api/deals/sell/:propertyId — start a SALE (disposition) deal from an
+// owned property, pre-filled from the property record. Returns the new deal.
+router.post('/sell/:propertyId', (req, res) => {
+  const p = db.prepare('SELECT * FROM properties WHERE id = ?').get(req.params.propertyId)
+  if (!p) return res.status(404).json({ error: 'Property not found' })
+  const tenant = db.prepare('SELECT name FROM tenant_brands WHERE id = ?').get(p.tenant_brand_id)?.name || null
+  const r = db.prepare(`
+    INSERT INTO deals (property_id, stage, direction, address, city, state, tenant, cap_rate, noi,
+                       lease_type, lease_commencement, lease_expiration, annual_rent, property_type, building_size, year_built,
+                       created_at, updated_at)
+    VALUES (?, 'loi', 'sale', ?,?,?,?,?,?,?,?,?,?,?,?,?, datetime('now'), datetime('now'))
+  `).run(p.id, p.address, p.city, p.state, tenant, p.cap_rate, p.noi,
+         p.lease_type, p.lease_start, p.lease_end, p.annual_rent, p.property_type, p.building_size, p.year_built)
+  res.status(201).json(dealResponse(Number(r.lastInsertRowid)))
 })
 
 router.put('/:id', (req, res) => {
@@ -377,7 +403,7 @@ const DEAL_EDITABLE = {
   address:'text', city:'text', state:'text', tenant:'text', notes:'text', source:'text',
   purchase_price:'real', cap_rate:'real', noi:'real', list_price:'real',
   building_size:'real', year_built:'int', property_type:'text', earnest_money:'real',
-  due_diligence_days:'int', close_date:'date', dd_deadline:'date',
+  due_diligence_days:'int', close_date:'date', dd_deadline:'date', direction:'text',
   effective_date:'date', earnest_due_date:'date', title_objection_date:'date',
   lease_type:'text', guarantor:'text', permitted_use:'text',
   lease_commencement:'date', lease_expiration:'date', lease_term:'text',

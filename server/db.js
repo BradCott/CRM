@@ -409,6 +409,8 @@ const migrations = [
   // Multi-tenant deals — a rent roll of tenants/leases. When on, the deal's NOI
   // and annual rent roll up from the sum of these rows.
   `ALTER TABLE deals ADD COLUMN is_multi_tenant INTEGER DEFAULT 0`,
+  // Deal direction: 'purchase' (acquisition → portfolio) or 'sale' (disposition → closeout/historical).
+  `ALTER TABLE deals ADD COLUMN direction TEXT DEFAULT 'purchase'`,
   `CREATE TABLE IF NOT EXISTS deal_tenants (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     deal_id INTEGER NOT NULL,

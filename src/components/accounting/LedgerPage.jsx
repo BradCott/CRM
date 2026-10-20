@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, Plus, FileText, Landmark, Trash2, Loader2, Users, Pencil, Check, X, ChevronDown, ChevronRight, ChevronUp, ChevronsUpDown, Download, BarChart2, Scale, ArrowLeftRight, FileSpreadsheet, Target, Receipt, Store, HandCoins, Split, Sparkles, Link2, AlertTriangle, Banknote, RotateCcw } from 'lucide-react'
 import { getLedger, deleteTransaction, getInvestors, deleteInvestor, updateInvestorContribution, reconcileTransaction, recordTransaction, unrecordTransaction, recordAllTransactions, autoRecordTransactions, getReviewSuggestions, getAccountingSettings, getOpeningBalances, getPropertyInvestorsList, setTransactionInvestor, getInvestorSuggestions, updateTransaction, uploadAmortization, applyAmortization, getCRMInvestors, linkCapTableInvestor, removeInvestorExcelEntries, matchTransaction, unmatchTransaction, getMatchCandidates, recordEarnestAsEquity, fetchDriveFileAsFile, getCloseoutStatus, reverseCloseout } from '../../api/client'
 import OpeningBalancesModal from './OpeningBalancesModal'
@@ -56,6 +56,7 @@ function fmtDate(iso) {
 export default function LedgerPage() {
   const { propertyId } = useParams()
   const navigate       = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [property, setProperty]         = useState(null)
   const [transactions, setTransactions] = useState([])
@@ -68,6 +69,14 @@ export default function LedgerPage() {
   const [showBundle, setShowBundle]         = useState(false)
   const [showBank, setShowBank]             = useState(false)
   const [showCloseout, setShowCloseout]     = useState(false)
+  // Deep link from a pipeline sale deal (/accounting/:id?closeout=1) opens the wizard.
+  useEffect(() => {
+    if (searchParams.get('closeout') === '1') {
+      setShowCloseout(true)
+      searchParams.delete('closeout')
+      setSearchParams(searchParams, { replace: true })
+    }
+  }, [])  // eslint-disable-line react-hooks/exhaustive-deps
   const [exportOpen, setExportOpen]         = useState(false)
   const [showInvestors, setShowInvestors]   = useState(false)
   const [driveInitialFile, setDriveInitialFile] = useState(null)   // File pulled from Drive → settlement/investor modal

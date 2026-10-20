@@ -8,15 +8,15 @@ import TaxReimbursement from './TaxReimbursement'
 import DropZone from '../ui/DropZone'
 import ReconciliationSection from './ReconciliationSection'
 import CamSection from './CamSection'
-import { useParams, Link, useSearchParams } from 'react-router-dom'
+import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom'
 import {
   ArrowLeft, ClipboardList, Shield, Receipt, Wrench, Users,
   Plus, Pencil, Trash2, CheckCircle2, Loader2,
   Upload, AlertCircle, ChevronDown, ChevronUp, FileUp, FileText, LayoutDashboard, Calculator, Scale, Hammer,
-  Archive, RotateCcw,
+  Archive, RotateCcw, TrendingUp,
 } from 'lucide-react'
 import {
-  getProperty,          markPropertySold,
+  getProperty,          markPropertySold,          sellProperty,
   getPropertyTasks,      createTask,        updateTask,        completeTask,    deleteTask,
   getPropertyInsurance,  createInsurance,   updateInsurance,   deleteInsurance, uploadInsurancePdf, uploadInsuranceDoc, markInsurancePaid,
   getPropertyTaxes,      createTax,         updateTax,         deleteTax,        uploadTaxPdf, uploadTaxDoc, markTaxPaid, getTaxDocuments, taxDocUrl,
@@ -1538,8 +1538,10 @@ const TABS = [
 export default function PropertyManagementDetail() {
   const { propertyId }  = useParams()
   const [searchParams]  = useSearchParams()
+  const navigate        = useNavigate()
   const [property, setProperty] = useState(null)
   const [loading, setLoading]   = useState(true)
+  const [selling, setSelling]   = useState(false)
   const [tab, setTab]           = useState(searchParams.get('tab') || 'dash')
   const [soldModal, setSoldModal]   = useState(false)
   const [soldForm, setSoldForm]     = useState({ sold_date: '', sale_price: '' })
@@ -1584,6 +1586,19 @@ export default function PropertyManagementDetail() {
       setProperty(await getProperty(propertyId))
     } catch (err) {
       alert('Error: ' + err.message)
+    }
+  }
+
+  // Start a disposition: create a pre-filled SALE deal and jump to it in the pipeline.
+  async function handleSell() {
+    if (selling) return
+    setSelling(true)
+    try {
+      const deal = await sellProperty(propertyId)
+      navigate(`/pipeline/${deal.id}`)
+    } catch (err) {
+      alert('Error: ' + err.message)
+      setSelling(false)
     }
   }
 
@@ -1634,6 +1649,16 @@ export default function PropertyManagementDetail() {
           <div className="flex items-center gap-2 shrink-0">
             <TenantNotifyButton propertyId={propertyId} />
             <DriveDocsButton propertyId={propertyId} />
+            {!isSold && (
+              <button
+                onClick={handleSell}
+                disabled={selling}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium text-rose-700 border border-rose-200 bg-rose-50 hover:bg-rose-100 transition-colors disabled:opacity-50"
+                title="Start a sale (disposition) deal in the pipeline, pre-filled from this property"
+              >
+                <TrendingUp className="w-3.5 h-3.5" /> {selling ? 'Starting…' : 'Sell this property'}
+              </button>
+            )}
             {isSold ? (
               <button
                 onClick={handleRestore}

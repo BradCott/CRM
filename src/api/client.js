@@ -126,6 +126,8 @@ export const updateDealTenantField = (dealId, tid, column, value) => req('PATCH'
 export const deleteDealTenant     = (dealId, tid)            => req('DELETE', `/deals/${dealId}/tenants/${tid}`)
 export const getDroppedDeals = ()      => req('GET',    '/deals/dropped')
 export const createDeal     = (data)   => req('POST',   '/deals', data)
+// Start a disposition (sale) deal from an owned property, pre-filled from it.
+export const sellProperty   = (propertyId) => req('POST', `/deals/sell/${propertyId}`)
 export const updateDeal     = (id, d)  => req('PUT',    `/deals/${id}`, d)
 export const patchDealStage = (id, s)  => req('PATCH',  `/deals/${id}/stage`, { stage: s })
 export const deleteDeal     = (id)     => req('DELETE', `/deals/${id}`)

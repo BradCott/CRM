@@ -169,6 +169,7 @@ export default function DealDetailPage() {
   )
 
   const stage = STAGE_LABELS[deal.stage]
+  const isSale = deal.direction === 'sale'
   const impliedNOI = deal.noi || (deal.purchase_price && deal.cap_rate ? deal.purchase_price * (deal.cap_rate / 100) : null)
   const cityState = [deal.city, deal.state].filter(Boolean).join(', ')
   let abstract = null
@@ -186,6 +187,11 @@ export default function DealDetailPage() {
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div className="min-w-0">
               <div className="flex items-center gap-2 flex-wrap mb-1">
+                <button onClick={() => saveField('direction', isSale ? 'purchase' : 'sale')}
+                  title="Toggle purchase / sale"
+                  className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${isSale ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>
+                  {isSale ? 'SALE' : 'PURCHASE'}
+                </button>
                 {deal.tenant && <span className="text-xs font-semibold text-blue-700 bg-blue-50 px-2.5 py-0.5 rounded-full">{deal.tenant}</span>}
                 {stage && <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full ${stage.cls}`}>{stage.label}</span>}
               </div>
@@ -201,11 +207,21 @@ export default function DealDetailPage() {
               {cityState && <p className="text-sm text-slate-500 mt-0.5">{cityState}</p>}
             </div>
             <div className="flex items-center gap-6 shrink-0">
-              {deal.purchase_price && (<div className="text-right"><p className="text-xs text-slate-400">Purchase Price</p><p className="text-lg font-bold text-slate-900">{fmt$(deal.purchase_price)}</p></div>)}
+              {deal.purchase_price && (<div className="text-right"><p className="text-xs text-slate-400">{isSale ? 'Sale Price' : 'Purchase Price'}</p><p className="text-lg font-bold text-slate-900">{fmt$(deal.purchase_price)}</p></div>)}
               {deal.cap_rate != null && (<div className="text-right"><p className="text-xs text-slate-400">Cap Rate</p><p className="text-lg font-bold text-emerald-700">{fmtPct(deal.cap_rate)}</p></div>)}
             </div>
           </div>
         </div>
+
+        {isSale && deal.property_id && (
+          <div className="flex items-center justify-between gap-3 bg-rose-50 border border-rose-200 rounded-xl px-4 py-3">
+            <p className="text-sm text-rose-800">This is a <strong>disposition</strong>. When the sale closes, book it (sale price, costs, gain → Historical) in the closeout.</p>
+            <button onClick={() => navigate(`/accounting/${deal.property_id}?closeout=1`)}
+              className="shrink-0 flex items-center gap-1.5 text-sm font-semibold text-white bg-rose-600 hover:bg-rose-700 px-3 py-1.5 rounded-lg">
+              Close Out Sale <ExternalLink className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
 
         {saveError && (
           <div className="flex items-start gap-1.5 text-[11px] text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2">
@@ -256,7 +272,7 @@ export default function DealDetailPage() {
         {/* Purchase details */}
         <Card icon={Building2} title="Purchase Details">
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-x-6 gap-y-4">
-            <EF label="Purchase Price" field="purchase_price" value={deal.purchase_price} type="currency" {...efProps} />
+            <EF label={isSale ? 'Sale Price' : 'Purchase Price'} field="purchase_price" value={deal.purchase_price} type="currency" {...efProps} />
             <EF label="Cap Rate"       field="cap_rate"       value={deal.cap_rate}       type="percent" accent {...efProps} />
             <EF label="NOI"            field="noi"            value={deal.noi}            type="currency" {...efProps} />
             <EF label="List Price"     field="list_price"     value={deal.list_price}     type="currency" {...efProps} />

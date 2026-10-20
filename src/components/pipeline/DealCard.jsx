@@ -27,18 +27,23 @@ export default function DealCard({ deal, index, onEdit, onDelete, onLink }) {
         >
           {/* Tenant Brand + actions */}
           <div className="flex items-start justify-between gap-2 mb-1.5">
-            {deal.property_id ? (
-              <button
-                onClick={e => { e.stopPropagation(); navigate(`/properties?open=${deal.property_id}`) }}
-                className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full hover:bg-blue-100 hover:underline text-left"
-              >
-                {deal.tenant_brand_name || 'No tenant'}
-              </button>
-            ) : (
-              <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full">
-                {deal.tenant_brand_name || 'No tenant'}
-              </span>
-            )}
+            <div className="flex items-center gap-1.5 min-w-0">
+              {deal.direction === 'sale' && (
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 shrink-0" title="Disposition (sale)">SALE</span>
+              )}
+              {deal.property_id ? (
+                <button
+                  onClick={e => { e.stopPropagation(); navigate(`/properties?open=${deal.property_id}`) }}
+                  className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full hover:bg-blue-100 hover:underline text-left truncate"
+                >
+                  {deal.tenant_brand_name || 'No tenant'}
+                </button>
+              ) : (
+                <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-full truncate">
+                  {deal.tenant_brand_name || 'No tenant'}
+                </span>
+              )}
+            </div>
             <div className="flex items-center gap-0.5 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
               <button
                 onClick={e => { e.stopPropagation(); navigate(`/pipeline/${deal.id}`) }}
