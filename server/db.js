@@ -1212,6 +1212,51 @@ try {
   console.warn('[db] tasks cleanup failed:', e.message)
 }
 
+// One-time (Oct 2026): meeting-note action items used to be written as plays
+// (source='notes') surfaced in Today's Plays. That widget is retired and the
+// extractor now writes Tasks, so migrate any still-open notes plays into tasks —
+// due that meeting's Friday — and dismiss the originals so nothing is stranded.
+// Reuses each play's dedupe_key as the task source_ref, so if the same notes file
+// is ever re-scanned the new code finds the migrated task and won't duplicate it.
+// Guarded by a flag so it runs exactly once.
+try {
+  const done = db.prepare(`SELECT value FROM app_settings WHERE key = 'notes_to_tasks_v1'`).get()
+  if (!done) {
+    const openNotes = db.prepare(
+      `SELECT id, user_id, title, detail, dedupe_key FROM plays WHERE status = 'open' AND source = 'notes'`
+    ).all()
+    // Friday of the meeting's week, parsed from the filename embedded in detail
+    // ("… From meeting notes: 10.19.26"), else the current week.
+    const fridayFor = (detail) => {
+      const name = (String(detail || '').match(/From meeting notes:\s*(.+)$/) || [])[1] || ''
+      let ref = null, d
+      if ((d = name.match(/(20\d{2})[.\-/](\d{1,2})[.\-/](\d{1,2})/))) ref = new Date(+d[1], +d[2] - 1, +d[3])
+      else if ((d = name.match(/\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})\b/))) { let y = +d[3]; if (y < 100) y += 2000; ref = new Date(y, +d[1] - 1, +d[2]) }
+      if (!ref || isNaN(ref)) ref = new Date()
+      const iso = ref.getDay() === 0 ? 7 : ref.getDay()
+      ref.setDate(ref.getDate() + (5 - iso))
+      return ref.toLocaleDateString('en-CA')
+    }
+    const exists = db.prepare(`SELECT id FROM tasks WHERE source_ref = ? LIMIT 1`)
+    const ins = db.prepare(`
+      INSERT INTO tasks (title, notes, status, priority, due_date, owner_id, source, source_ref, created_by, updated_by)
+      VALUES (?, ?, 'open', 'normal', ?, ?, 'meeting_notes', ?, 'meeting_notes', 'meeting_notes')
+    `)
+    let migrated = 0
+    for (const p of openNotes) {
+      const ref = p.dedupe_key || `play:${p.id}`
+      if (exists.get(ref)) continue
+      ins.run(p.title, p.detail || null, fridayFor(p.detail), p.user_id || null, ref)
+      migrated++
+    }
+    db.prepare(`UPDATE plays SET status = 'dismissed' WHERE status = 'open' AND source = 'notes'`).run()
+    db.prepare(`INSERT OR REPLACE INTO app_settings (key, value) VALUES ('notes_to_tasks_v1', datetime('now'))`).run()
+    console.log(`[db] notes→tasks: migrated ${migrated} meeting-note plays into tasks`)
+  }
+} catch (e) {
+  console.warn('[db] notes→tasks migration failed:', e.message)
+}
+
 // A lease left "processing" across a restart is dead (its background job died) —
 // clear it so the tab shows an error + re-upload instead of an endless spinner.
 try {
