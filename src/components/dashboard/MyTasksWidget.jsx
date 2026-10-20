@@ -31,11 +31,16 @@ export default function MyTasksWidget() {
     waiting: active.filter(t => t.status === 'waiting').length,
   }
 
-  // Focus list: overdue, due today, or high priority — the stuff worth surfacing.
-  const focus = active
-    .filter(t => t.status !== 'waiting' && ((t.due_date && t.due_date <= today) || t.priority === 'high'))
-    .sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999'))
-    .slice(0, 10)
+  // Surface urgent work first (overdue / due today / high priority), then fall
+  // back to the rest of the open backlog so the widget reflects that there are
+  // open tasks instead of reading "all clear" while the list sits full. Waiting
+  // tasks are tracked in the counts, not shown as rows.
+  const nonWaiting = active.filter(t => t.status !== 'waiting')
+  const isUrgent = t => (t.due_date && t.due_date <= today) || t.priority === 'high'
+  const byDue = (a, b) => (a.due_date || '9999-99-99').localeCompare(b.due_date || '9999-99-99')
+  const urgent = nonWaiting.filter(isUrgent).sort(byDue)
+  const rest   = nonWaiting.filter(t => !isUrgent(t)).sort(byDue)
+  const focus  = [...urgent, ...rest].slice(0, 10)
 
   async function act(id, fn) {
     setBusy(id)
