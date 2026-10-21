@@ -12,6 +12,8 @@ import {
 } from '../../api/client'
 import InvestorUpload from '../accounting/InvestorUpload'
 import InvestorEmailComposer from '../accounting/InvestorEmailComposer'
+import Timeline from '../correspondence/Timeline'
+import Parties from '../correspondence/Parties'
 
 const STAGE_LABELS = {
   loi:             { label: 'LOI',             cls: 'bg-blue-100 text-blue-700' },
@@ -458,6 +460,10 @@ export default function DealDetailPage() {
         <Card icon={FileText} title="Deal Notes">
           <EF label="" field="notes" value={deal.notes} type="textarea" placeholder="Notes on this deal…" {...efProps} />
         </Card>
+
+        {/* Parties + correspondence timeline */}
+        <Parties dealId={deal.id} propertyId={deal.property_id} />
+        <Timeline dealId={deal.id} title="Deal Timeline" />
 
       </div>
 

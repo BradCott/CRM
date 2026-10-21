@@ -18,6 +18,7 @@ import InvestorProfilePage   from './components/investors/InvestorProfilePage'
 import DashboardPage    from './components/dashboard/DashboardPage'
 import CriticalDatesPage from './components/dashboard/CriticalDatesPage'
 import TasksPage        from './components/tasks/TasksPage'
+import UnmatchedPage    from './components/correspondence/UnmatchedPage'
 import SettingsPage     from './components/settings/SettingsPage'
 import AccountingPage   from './components/accounting/AccountingPage'
 import LedgerPage       from './components/accounting/LedgerPage'
@@ -107,6 +108,7 @@ export default function App() {
               <Route path="/pipeline"   element={<PipelinePage />} />
               <Route path="/pipeline/:dealId" element={<DealDetailPage />} />
               <Route path="/critical-dates" element={<CriticalDatesPage />} />
+              <Route path="/correspondence/unmatched" element={<UnmatchedPage />} />
               <Route path="/reports"    element={<ReportsPage />} />
 
               {/* Admin + Full Agent only */}

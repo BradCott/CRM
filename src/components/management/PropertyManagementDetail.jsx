@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import DriveDocsButton from '../properties/DriveDocsButton'
 import TenantNotifyButton from '../properties/TenantNotifyButton'
+import Timeline from '../correspondence/Timeline'
+import Parties from '../correspondence/Parties'
 import LeaseSection from './LeaseSection'
 import DashboardSection from './DashboardSection'
 import InsuranceReimbursement from './InsuranceReimbursement'
@@ -10,7 +12,7 @@ import ReconciliationSection from './ReconciliationSection'
 import CamSection from './CamSection'
 import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom'
 import {
-  ArrowLeft, ClipboardList, Shield, Receipt, Wrench, Users,
+  ArrowLeft, ClipboardList, Shield, Receipt, Wrench, Users, Clock,
   Plus, Pencil, Trash2, CheckCircle2, Loader2,
   Upload, AlertCircle, ChevronDown, ChevronUp, FileUp, FileText, LayoutDashboard, Calculator, Scale, Hammer,
   Archive, RotateCcw, TrendingUp,
@@ -1533,6 +1535,7 @@ const TABS = [
   { id: 'reconciliation', label: 'Reconciliation', icon: Scale },
   { id: 'maintenance', label: 'Maintenance', icon: Wrench },
   { id: 'contacts',    label: 'Contacts',    icon: Users },
+  { id: 'timeline',    label: 'Timeline',    icon: Clock },
 ]
 
 export default function PropertyManagementDetail() {
@@ -1732,6 +1735,7 @@ export default function PropertyManagementDetail() {
         {tab === 'reconciliation' && <ReconciliationSection propertyId={propertyId} />}
         {tab === 'maintenance' && <MaintenanceSection propertyId={propertyId} />}
         {tab === 'contacts'    && <ContactsSection    propertyId={propertyId} />}
+        {tab === 'timeline'    && <div className="space-y-4"><Parties propertyId={propertyId} /><Timeline propertyId={propertyId} title="Property Timeline" /></div>}
       </div>
     </div>
   )
