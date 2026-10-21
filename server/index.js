@@ -28,6 +28,7 @@ import handwryttenRouter   from './routes/handwrytten.js'
 import playsRouter          from './routes/plays.js'
 import tasksRouter           from './routes/tasks.js'
 import criticalDatesRouter    from './routes/criticalDates.js'
+import correspondenceRouter    from './routes/correspondence.js'
 import assistantRouter      from './routes/assistant.js'
 import backupRouter         from './routes/backup.js'
 import extRouter             from './routes/ext.js'
@@ -99,6 +100,10 @@ app.use('/api/plays',            requireAuth, playsRouter)
 // Tasks + critical dates accept either the browser cookie OR a Claude bearer token.
 app.use('/api/tasks',            bearerOrSession, tasksRouter)
 app.use('/api/critical-dates',   bearerOrSession, criticalDatesRouter)
+
+// Correspondence (deal timeline, email links, parties, unmatched, deal-context).
+// Per-route auth (bearerOrSession) inside the router, so sharing /api is safe.
+app.use('/api', correspondenceRouter)
 
 // MCP connector (Streamable HTTP) — Claude custom connector, bearer-token only.
 app.all('/mcp', requireClaudeToken, handleMcp)

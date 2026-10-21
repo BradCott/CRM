@@ -392,7 +392,16 @@ router.post('/:id/create-property', (req, res) => {
 router.patch('/:id/stage', (req, res) => {
   const { stage } = req.body
   if (!stage) return res.status(400).json({ error: 'stage is required' })
+  const prev = db.prepare('SELECT stage FROM deals WHERE id = ?').get(req.params.id)
   db.prepare(`UPDATE deals SET stage = ?, updated_at = datetime('now') WHERE id = ?`).run(stage, req.params.id)
+  // Log the stage change onto the deal timeline (fire-and-forget).
+  if (!prev || prev.stage !== stage) {
+    const actor = req.apiClient || (req.user?.name || '').split(/\s+/)[0]?.toLowerCase() || 'user'
+    import('../services/correspondence.js').then(({ logActivity }) => logActivity({
+      deal_id: Number(req.params.id), type: 'status_change',
+      summary: prev?.stage ? `Stage changed: ${prev.stage} → ${stage}` : `Stage set: ${stage}`,
+    }, actor)).catch(() => {})
+  }
   res.json(db.prepare(SELECT + ' WHERE d.id = ?').get(req.params.id))
 })
 

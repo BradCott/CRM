@@ -228,6 +228,27 @@ export const getCriticalDatesApi = (params = {}) => {
 }
 export const patchCriticalDate = (id, d) => req('PATCH', `/critical-dates/${encodeURIComponent(id)}`, d)
 
+// Correspondence — deal/property timeline, email links, parties, unmatched queue
+export const getDealActivity = (params = {}) => {
+  const qs = new URLSearchParams(params).toString()
+  return req('GET', `/deal-activity${qs ? '?' + qs : ''}`)
+}
+export const logDealActivity  = (d)        => req('POST',   '/deal-activity', d)
+export const getDealParties   = (params = {}) => {
+  const qs = new URLSearchParams(params).toString()
+  return req('GET', `/deal-parties${qs ? '?' + qs : ''}`)
+}
+export const addDealParty     = (d)        => req('POST',   '/deal-parties', d)
+export const removeDealParty  = (id)       => req('DELETE', `/deal-parties/${id}`)
+export const getThreadLink    = (threadId) => req('GET',    `/email-links?thread_id=${encodeURIComponent(threadId)}`)
+export const linkEmailThread  = (d)        => req('POST',   '/email-links', d)
+export const getUnmatched     = (status = 'pending') => req('GET', `/correspondence/unmatched?status=${status}`)
+export const assignUnmatched  = (id, d)    => req('PATCH',  `/correspondence/unmatched/${id}`, d)
+export const getDealContext   = (params = {}) => {
+  const qs = new URLSearchParams(params).toString()
+  return req('GET', `/deal-context${qs ? '?' + qs : ''}`)
+}
+
 // Dashboard
 export const globalSearch           = (q) => req('GET', `/search?q=${encodeURIComponent(q)}`)
 export const getDashboard           = () => req('GET', '/dashboard')

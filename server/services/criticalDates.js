@@ -256,6 +256,12 @@ export function completeCriticalDate(id, actor = 'cole', userId = null) {
   db.prepare(`UPDATE tasks SET status = 'done', completed_at = datetime('now'),
               updated_by = ?, updated_at = datetime('now')
               WHERE critical_date_id = ? AND status NOT IN ('done', 'dismissed')`).run(actor, id)
+  // Log onto the deal/property timeline (fire-and-forget; dynamic import avoids a cycle).
+  import('./correspondence.js').then(({ logActivity }) => logActivity({
+    deal_id: k.entity_type === 'deal' ? k.entity_id : null,
+    property_id: k.entity_type === 'property' ? k.entity_id : null,
+    type: 'status_change', summary: `Critical date completed: ${k.kind} (${k.date})`,
+  }, actor)).catch(() => {})
   return true
 }
 

@@ -1074,6 +1074,71 @@ const migrations = [
   `CREATE INDEX IF NOT EXISTS idx_tasks_due        ON tasks(due_date)`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_deal       ON tasks(deal_id)`,
   `CREATE INDEX IF NOT EXISTS idx_tasks_source_ref ON tasks(source_ref)`,
+
+  // ── Correspondence tracking — deal/property activity log + email linking ──────
+  // Every deal/property gets a timeline. An entry links to a deal and/or property
+  // (at least one). Email entries carry the Gmail ids; the unique index on
+  // gmail_message_id guarantees one timeline entry per message (dedupe).
+  `CREATE TABLE IF NOT EXISTS deal_activity (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    deal_id          INTEGER REFERENCES deals(id) ON DELETE CASCADE,
+    property_id      INTEGER REFERENCES properties(id) ON DELETE CASCADE,
+    type             TEXT NOT NULL
+                     CHECK(type IN ('email','note','status_change','document','call','task_completed','system')),
+    summary          TEXT,
+    detail           TEXT,
+    gmail_thread_id  TEXT,
+    gmail_message_id TEXT,
+    participants     TEXT,
+    occurred_at      TEXT,
+    created_by       TEXT,
+    created_at       TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_deal_activity_deal     ON deal_activity(deal_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_deal_activity_property ON deal_activity(property_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_deal_activity_occurred ON deal_activity(occurred_at)`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS idx_deal_activity_msg ON deal_activity(gmail_message_id) WHERE gmail_message_id IS NOT NULL`,
+
+  // A Gmail thread linked to a deal/property. Once linked, every message in the
+  // thread belongs to that deal/property (gmailSync attributes future messages).
+  `CREATE TABLE IF NOT EXISTS email_thread_links (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    gmail_thread_id TEXT UNIQUE NOT NULL,
+    deal_id         INTEGER REFERENCES deals(id) ON DELETE CASCADE,
+    property_id     INTEGER REFERENCES properties(id) ON DELETE CASCADE,
+    linked_by       TEXT,            -- auto | cole | brad | claude
+    confidence      REAL,
+    created_at      TEXT DEFAULT (datetime('now'))
+  )`,
+
+  // Deal/property parties — contacts (People) with a role on a deal or property.
+  `CREATE TABLE IF NOT EXISTS deal_parties (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    deal_id     INTEGER REFERENCES deals(id) ON DELETE CASCADE,
+    property_id INTEGER REFERENCES properties(id) ON DELETE CASCADE,
+    person_id   INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE,
+    role        TEXT,
+    created_at  TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_deal_parties_deal     ON deal_parties(deal_id)`,
+  `CREATE INDEX IF NOT EXISTS idx_deal_parties_property ON deal_parties(property_id)`,
+
+  // Emails Claude couldn't confidently match to a deal/property — the /unmatched
+  // review queue. Assigning one creates the thread link + a timeline entry.
+  `CREATE TABLE IF NOT EXISTS unmatched_emails (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    gmail_thread_id  TEXT,
+    gmail_message_id TEXT UNIQUE,
+    summary          TEXT,
+    from_address     TEXT,
+    subject          TEXT,
+    occurred_at      TEXT,
+    status           TEXT NOT NULL DEFAULT 'pending'
+                     CHECK(status IN ('pending','assigned','ignored')),
+    created_by       TEXT,
+    created_at       TEXT DEFAULT (datetime('now'))
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_unmatched_status ON unmatched_emails(status)`,
 ]
 
 // ── Auth — users and invitations ─────────────────────────────────────────────

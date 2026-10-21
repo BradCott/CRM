@@ -14,6 +14,9 @@ import { z } from 'zod'
 import db from './db.js'
 import { listTasks, getTask, createTask, updateTask, completeTask } from './services/taskStore.js'
 import { allCriticalDates, completeCriticalDate } from './services/criticalDates.js'
+import {
+  logActivity, linkEmailThread, getThreadLink, addUnmatched, listUnmatched, getDealContext,
+} from './services/correspondence.js'
 
 const ACTOR = 'claude'
 
@@ -157,6 +160,47 @@ function buildServer() {
     const d = db.prepare(`${DEAL_SELECT} WHERE d.id = ?`).get(id)
     return d ? ok(d) : fail('Deal not found')
   })
+
+  // Correspondence ──────────────────────────────────────────────────────────────
+  server.registerTool('get_deal_context', {
+    description: 'Everything about a deal/property in ONE call: deal + property fields (incl. PSA/lease abstract summaries), parties with roles + emails, open critical dates, open tasks, last 30 days of timeline, and linked Gmail threads. Accepts deal_id, property_id, or a free-text name (e.g. "Plano").',
+    inputSchema: { deal_id: z.number().optional(), property_id: z.number().optional(), name: z.string().optional() },
+  }, async (a) => { const r = getDealContext(a); return r.error ? fail(r.error) : ok(r) })
+
+  server.registerTool('log_deal_activity', {
+    description: 'Add a timeline entry to a deal/property (at least one of deal_id/property_id). type: email|note|status_change|document|call|task_completed|system. Email entries dedupe on gmail_message_id.',
+    inputSchema: {
+      deal_id: z.number().optional(), property_id: z.number().optional(),
+      type: z.enum(['email', 'note', 'status_change', 'document', 'call', 'task_completed', 'system']),
+      summary: z.string().optional(), detail: z.string().optional(),
+      gmail_thread_id: z.string().optional(), gmail_message_id: z.string().optional(),
+      participants: z.string().optional(), occurred_at: z.string().optional(),
+    },
+  }, async (a) => { const r = logActivity(a, ACTOR); return r.error ? fail(r.error) : ok(r.deduped ? { ...r.entry, deduped: true } : r.entry) })
+
+  server.registerTool('link_email_thread', {
+    description: 'Link a Gmail thread to a deal/property. Future messages in the thread belong to it. Idempotent per thread id.',
+    inputSchema: { gmail_thread_id: z.string(), deal_id: z.number().optional(), property_id: z.number().optional(), confidence: z.number().optional() },
+  }, async (a) => { const r = linkEmailThread(a, ACTOR); return r.error ? fail(r.error) : ok(r.link) })
+
+  server.registerTool('get_thread_link', {
+    description: 'Check whether a Gmail thread is already linked to a deal/property (returns the link or null).',
+    inputSchema: { gmail_thread_id: z.string() },
+  }, async ({ gmail_thread_id }) => ok(getThreadLink(gmail_thread_id)))
+
+  server.registerTool('add_unmatched_email', {
+    description: 'Add an email Claude could not confidently match to the /unmatched review queue. Dedupes on gmail_message_id.',
+    inputSchema: {
+      gmail_thread_id: z.string().optional(), gmail_message_id: z.string().optional(),
+      summary: z.string().optional(), from_address: z.string().optional(),
+      subject: z.string().optional(), occurred_at: z.string().optional(),
+    },
+  }, async (a) => { const r = addUnmatched(a, ACTOR); return ok(r.deduped ? { ...r.entry, deduped: true } : r.entry) })
+
+  server.registerTool('list_unmatched', {
+    description: 'List emails in the unmatched review queue (status: pending|assigned|ignored, default pending).',
+    inputSchema: { status: z.enum(['pending', 'assigned', 'ignored']).optional() },
+  }, async ({ status }) => ok(listUnmatched(status || 'pending')))
 
   return server
 }

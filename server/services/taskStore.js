@@ -5,6 +5,18 @@
 import db from '../db.js'
 import { syncCriticalDateFromTask } from './criticalDates.js'
 
+// Fire-and-forget: log a completed task onto its deal/property timeline. Dynamic
+// import avoids a static cycle (correspondence imports taskStore).
+function logTaskCompletion(task) {
+  if (!task || (!task.deal_id && !task.property_id)) return
+  import('./correspondence.js')
+    .then(({ logActivity }) => logActivity({
+      deal_id: task.deal_id, property_id: task.property_id, type: 'task_completed',
+      summary: `Task completed: ${task.title}`,
+    }, task.updated_by || 'system'))
+    .catch(() => {})
+}
+
 export const STATUSES   = ['open', 'waiting', 'done', 'dismissed']
 export const PRIORITIES = ['high', 'normal', 'low']
 export const SOURCES    = ['manual', 'claude', 'critical_date', 'email', 'meeting_notes']
@@ -135,12 +147,15 @@ export function updateTask(id, b = {}, actor = 'user', userId = null) {
   db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).run(...args)
 
   const updated = getTask(id)
-  if ('status' in b) { try { syncCriticalDateFromTask(updated, userId) } catch (e) { console.error('[taskStore] cd sync:', e.message) } }
+  if ('status' in b) {
+    try { syncCriticalDateFromTask(updated, userId) } catch (e) { console.error('[taskStore] cd sync:', e.message) }
+    if (b.status === 'done' && existing.status !== 'done') logTaskCompletion(updated)
+  }
   return { task: updated }
 }
 
 export function completeTask(id, actor = 'user', userId = null) {
-  const existing = db.prepare('SELECT id FROM tasks WHERE id = ?').get(id)
+  const existing = db.prepare('SELECT id, status FROM tasks WHERE id = ?').get(id)
   if (!existing) return { notFound: true }
   db.prepare(`
     UPDATE tasks SET status = 'done', completed_at = datetime('now'),
@@ -149,6 +164,7 @@ export function completeTask(id, actor = 'user', userId = null) {
   `).run(actor, id)
   const updated = getTask(id)
   try { syncCriticalDateFromTask(updated, userId) } catch (e) { console.error('[taskStore] cd sync:', e.message) }
+  if (existing.status !== 'done') logTaskCompletion(updated)
   return { task: updated }
 }
 
