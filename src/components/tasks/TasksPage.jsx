@@ -6,7 +6,7 @@ import {
   ListTodo, Check, X, Clock3, Loader2, Plus, PauseCircle, Pencil,
   ChevronDown, AlertCircle, Filter,
 } from 'lucide-react'
-import { getTasks, createTask, updateTask, completeTask, getTaskUsers } from '../../api/client'
+import { getTasks, createTask, updateTask, completeTask, getTaskUsers, getDeals, getAllProperties } from '../../api/client'
 import { useAuth } from '../../context/AuthContext'
 import TaskPanel from './TaskPanel'
 
@@ -56,8 +56,8 @@ const PRIORITY_DOT = {
 }
 
 // ── Light shorthand parsing for quick add ─────────────────────────────────────
-// "Plano insurance quote fri !high @brad" → { title, due_date, priority, owner }
-function parseShorthand(raw, users) {
+// "insurance quote #plano fri !high @brad" → { title, due_date, priority, owner, deal/property }
+function parseShorthand(raw, users, links = []) {
   let text = ' ' + raw.trim() + ' '
   const out = {}
 
@@ -69,6 +69,17 @@ function parseShorthand(raw, users) {
     const handle = ownerMatch[1].toLowerCase()
     const u = users.find(u => (u.name || '').toLowerCase().split(/\s+/)[0] === handle)
     if (u) { out.owner_id = u.id; text = text.replace(ownerMatch[0], ' ') }
+  }
+
+  // "#name" links to a deal or property whose name/address/tenant matches.
+  const hashMatch = text.match(/\s#([\w-]+)\s/)
+  if (hashMatch) {
+    const token = hashMatch[1].toLowerCase()
+    const link = links.find(l => l.search.includes(token))
+    if (link) {
+      if (link.type === 'deal') out.deal_id = link.id; else out.property_id = link.id
+      text = text.replace(hashMatch[0], ' ')
+    }
   }
 
   const DOW = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 }
@@ -111,6 +122,10 @@ export default function TasksPage() {
   const [qDue, setQDue]         = useState('')
   const [qPriority, setQPriority] = useState('normal')
   const [qOwner, setQOwner]     = useState('')
+  const [qLink, setQLink]       = useState(null)   // { type, id, label }
+
+  // Deals + properties for the link picker / "#" shorthand
+  const [links, setLinks] = useState([])
 
   // Bulk selection
   const [selected, setSelected] = useState(new Set())
@@ -128,6 +143,17 @@ export default function TasksPage() {
 
   useEffect(() => { load() }, [load])
   useEffect(() => { getTaskUsers().then(setUsers).catch(() => {}) }, [])
+  useEffect(() => {
+    Promise.all([getDeals().catch(() => []), getAllProperties().catch(() => [])]).then(([deals, props]) => {
+      const mk = (type, id, label, parts) => ({ type, id, label, search: parts.filter(Boolean).join(' ').toLowerCase() })
+      setLinks([
+        ...deals.map(d => mk('deal', d.id, d.address || d.title || d.tenant || `Deal #${d.id}`,
+          [d.address, d.city, d.state, d.tenant, d.tenant_brand_name, d.title])),
+        ...props.map(p => mk('property', p.id, p.address || p.display_name || `Property #${p.id}`,
+          [p.address, p.city, p.state, p.display_name, p.tenant_brand_name])),
+      ])
+    })
+  }, [])
 
   // Close the snooze menu on outside click
   useEffect(() => {
@@ -164,17 +190,22 @@ export default function TasksPage() {
   async function handleAdd(e) {
     e.preventDefault()
     if (!qTitle.trim()) return
-    const parsed = parseShorthand(qTitle, users)
+    const parsed = parseShorthand(qTitle, users, links)
     const payload = {
       title: parsed.title || qTitle.trim(),
       due_date: parsed.due_date || qDue || null,
       priority: parsed.priority || qPriority,
       owner_id: parsed.owner_id ?? (qOwner ? Number(qOwner) : undefined),
     }
+    // Link: "#" shorthand wins, else the picker selection.
+    if (parsed.deal_id)      payload.deal_id = parsed.deal_id
+    else if (parsed.property_id) payload.property_id = parsed.property_id
+    else if (qLink?.type === 'deal')     payload.deal_id = qLink.id
+    else if (qLink?.type === 'property') payload.property_id = qLink.id
     try {
       const created = await createTask(payload)
       setTasks(prev => [created, ...prev])
-      setQTitle(''); setQDue(''); setQPriority('normal'); setQOwner('')
+      setQTitle(''); setQDue(''); setQPriority('normal'); setQOwner(''); setQLink(null)
     } catch (e) { console.error(e) }
   }
 
@@ -241,7 +272,7 @@ export default function TasksPage() {
               value={qTitle}
               onChange={e => setQTitle(e.target.value)}
               onFocus={() => setQOpen(true)}
-              placeholder="Add a task…  (try: Plano insurance quote fri !high @brad)"
+              placeholder="Add a task…  (try: insurance quote #plano fri !high @brad)"
               className="flex-1 text-sm focus:outline-none bg-transparent"
             />
             <button type="button" onClick={() => setQOpen(o => !o)} className="text-slate-400 hover:text-slate-600 p-1">
@@ -265,6 +296,7 @@ export default function TasksPage() {
                   {users.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                 </select>
               </label>
+              <LinkPicker links={links} value={qLink} onChange={setQLink} />
             </div>
           )}
         </form>
@@ -396,6 +428,48 @@ function Group({ label, count, style, children, collapsible, defaultOpen = true 
         <span className="text-xs text-slate-400">{count}</span>
       </button>
       {open && <ul className="bg-white rounded-2xl border border-slate-200 shadow-sm divide-y divide-slate-100 overflow-hidden">{children}</ul>}
+    </div>
+  )
+}
+
+// Typeahead for linking a task to a deal or property in quick-add.
+function LinkPicker({ links, value, onChange }) {
+  const [q, setQ] = useState('')
+  const [open, setOpen] = useState(false)
+  const ref = useRef(null)
+  useEffect(() => {
+    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false) }
+    document.addEventListener('mousedown', h)
+    return () => document.removeEventListener('mousedown', h)
+  }, [])
+
+  if (value) {
+    return (
+      <span className="text-xs text-slate-500 flex items-center gap-1">Link
+        <span className={`inline-flex items-center gap-1 ml-1 px-1.5 py-1 rounded-md max-w-[180px] ${value.type === 'deal' ? 'bg-blue-50 text-blue-700' : 'bg-emerald-50 text-emerald-700'}`}>
+          <span className="truncate">{value.label}</span>
+          <button type="button" onClick={() => onChange(null)} className="hover:text-red-500 shrink-0"><X className="w-3 h-3" /></button>
+        </span>
+      </span>
+    )
+  }
+  const qq = q.trim().toLowerCase()
+  const matches = (qq ? links.filter(l => l.search.includes(qq)) : links).slice(0, 8)
+  return (
+    <div className="relative text-xs text-slate-500" ref={ref}>Deal/Property
+      <input value={q} onChange={e => { setQ(e.target.value); setOpen(true) }} onFocus={() => setOpen(true)}
+        placeholder="search…" className="ml-1.5 text-xs border border-slate-200 rounded-md px-2 py-1 w-36" />
+      {open && matches.length > 0 && (
+        <div className="absolute left-0 top-full mt-1 z-20 bg-white border border-slate-200 rounded-lg shadow-lg py-1 w-64 max-h-56 overflow-y-auto">
+          {matches.map(l => (
+            <button type="button" key={`${l.type}-${l.id}`} onClick={() => { onChange(l); setQ(''); setOpen(false) }}
+              className="w-full text-left px-3 py-1.5 hover:bg-slate-50 flex items-center gap-2">
+              <span className={`text-[9px] font-bold px-1 py-0.5 rounded shrink-0 ${l.type === 'deal' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'}`}>{l.type === 'deal' ? 'DEAL' : 'PROP'}</span>
+              <span className="truncate">{l.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }

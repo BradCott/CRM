@@ -27,6 +27,7 @@ import managementRouter     from './routes/management.js'
 import handwryttenRouter   from './routes/handwrytten.js'
 import playsRouter          from './routes/plays.js'
 import tasksRouter           from './routes/tasks.js'
+import criticalDatesRouter    from './routes/criticalDates.js'
 import assistantRouter      from './routes/assistant.js'
 import backupRouter         from './routes/backup.js'
 import extRouter             from './routes/ext.js'
@@ -95,6 +96,7 @@ app.use('/api/saved-searches',   requireAuth, requireWrite, savedSearchesRouter)
 app.use('/api/dashboard',        requireAuth, dashboardRouter)
 app.use('/api/plays',            requireAuth, playsRouter)
 app.use('/api/tasks',            requireAuth, tasksRouter)
+app.use('/api/critical-dates',   requireAuth, criticalDatesRouter)
 app.use('/api/assistant',        requireAuth, assistantRouter)
 app.use('/api/emails',           requireAuth, requireWrite, emailsRouter)
 app.use('/api/plugin',           requireAuth, pluginRouter)
@@ -152,4 +154,17 @@ app.listen(PORT, '0.0.0.0', () => {
     setTimeout(run, 20_000)            // shortly after boot
     setInterval(run, 15 * 60 * 1000)   // then every 15 minutes
   }).catch(err => console.warn('[gmailSync] could not start:', err.message))
+  // Critical dates → tasks — catch-up on boot, then daily at 5:30 AM (before the
+  // 6 AM digest). Reads/writes also regenerate on demand (throttled).
+  import('./services/criticalDates.js').then(({ generateCriticalDateTasks }) => {
+    setTimeout(() => {
+      try { generateCriticalDateTasks({ force: true }) } catch (err) { console.error('[criticalDates] startup gen:', err.message) }
+    }, 5_000)
+    import('node-cron').then(({ default: cron }) => {
+      cron.schedule('30 5 * * *', () => {
+        try { generateCriticalDateTasks({ force: true }) } catch (err) { console.error('[criticalDates] daily gen:', err.message) }
+      })
+      console.log('[criticalDates] task generation scheduled — daily 5:30 AM')
+    }).catch(() => {})
+  }).catch(err => console.warn('[criticalDates] could not start:', err.message))
 })

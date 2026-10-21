@@ -8,6 +8,23 @@ import { normalizeAddr } from '../utils/normalize.js'
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 30 * 1024 * 1024 } })
 
+// After any successful deal write, refresh critical-date tasks — a deal's dates
+// (DD, closing, earnest, etc.) are critical dates, so creating/editing one should
+// create or reconcile its task immediately. Runs post-response so it never delays
+// or breaks the write.
+router.use((req, res, next) => {
+  if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method)) {
+    res.on('finish', () => {
+      if (res.statusCode < 400) {
+        import('../services/criticalDates.js')
+          .then(({ generateCriticalDateTasks }) => { try { generateCriticalDateTasks({ force: true }) } catch { /* noop */ } })
+          .catch(() => {})
+      }
+    })
+  }
+  next()
+})
+
 const SELECT = `
   SELECT
     d.id, d.property_id, d.stage, d.close_date, d.notes, d.title, d.source,

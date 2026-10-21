@@ -221,6 +221,13 @@ export const updateTask      = (id, d)    => req('PATCH',  `/tasks/${id}`, d)
 export const completeTask    = (id)       => req('POST',   `/tasks/${id}/complete`)
 export const getTaskUsers    = ()         => req('GET',    '/tasks/meta/users')
 
+// Critical dates (derived; id is the composite key entity_type:entity_id:kind:date)
+export const getCriticalDatesApi = (params = {}) => {
+  const qs = new URLSearchParams(params).toString()
+  return req('GET', `/critical-dates${qs ? '?' + qs : ''}`)
+}
+export const patchCriticalDate = (id, d) => req('PATCH', `/critical-dates/${encodeURIComponent(id)}`, d)
+
 // Dashboard
 export const globalSearch           = (q) => req('GET', `/search?q=${encodeURIComponent(q)}`)
 export const getDashboard           = () => req('GET', '/dashboard')

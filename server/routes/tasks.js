@@ -9,6 +9,7 @@
 // 'claude' for token requests.
 import { Router } from 'express'
 import db from '../db.js'
+import { generateCriticalDateTasks, syncCriticalDateFromTask } from '../services/criticalDates.js'
 
 const router = Router()
 
@@ -67,6 +68,9 @@ const getTask = (id) => shape(db.prepare(`${SELECT} WHERE t.id = ?`).get(id))
 // Query: status, owner ('me' | 'all' | user id), due_before (YYYY-MM-DD),
 // deal_id, property_id, priority, source, include_done.
 router.get('/', (req, res) => {
+  // Keep critical-date tasks current (throttled) so the list reflects deadlines.
+  try { generateCriticalDateTasks({ force: false }) } catch (e) { console.error('[tasks] cdt gen:', e.message) }
+
   const { status, owner, due_before, deal_id, property_id, priority, source, include_done } = req.query
   const where = []
   const args  = []
@@ -203,7 +207,10 @@ router.patch('/:id', (req, res) => {
   args.push(existing.id)
 
   db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).run(...args)
-  res.json(getTask(existing.id))
+  const updated = getTask(existing.id)
+  // If this task is linked to a critical date and its status changed, mirror it.
+  if ('status' in b) { try { syncCriticalDateFromTask(updated, Number(req.user?.sub) || null) } catch (e) { console.error('[tasks] cd sync:', e.message) } }
+  res.json(updated)
 })
 
 // ── POST /api/tasks/:id/complete — mark done ──────────────────────────────────
@@ -215,7 +222,9 @@ router.post('/:id/complete', (req, res) => {
       updated_by = ?, updated_at = datetime('now')
     WHERE id = ?
   `).run(taskActor(req), existing.id)
-  res.json(getTask(existing.id))
+  const updated = getTask(existing.id)
+  try { syncCriticalDateFromTask(updated, Number(req.user?.sub) || null) } catch (e) { console.error('[tasks] cd sync:', e.message) }
+  res.json(updated)
 })
 
 export default router
