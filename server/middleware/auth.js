@@ -1,4 +1,5 @@
 import jwt from 'jsonwebtoken'
+import crypto from 'node:crypto'
 
 export const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-change-in-production'
 
@@ -89,6 +90,54 @@ export function requireExtKey(req, res, next) {
   const key = req.get('x-crm-key') || ''
   if (key && key === EXTENSION_API_KEY) return next()
   return res.status(401).json({ ok: false, error: 'Invalid or missing CRM key' })
+}
+
+// ── Claude bearer-token auth (REST token API + MCP connector) ─────────────────
+// Claude (claude.ai custom connector, or Claude Code) authenticates headlessly
+// with `Authorization: Bearer <CLAUDE_API_KEY>`. This is an ADDITIONAL path on
+// top of the browser session cookie — never a replacement. The key lives only in
+// a Railway env var; if it is unset the token path is disabled (cookie-only).
+export const CLAUDE_API_KEY = process.env.CLAUDE_API_KEY || ''
+
+if (!process.env.CLAUDE_API_KEY) {
+  console.warn('[auth] CLAUDE_API_KEY not set — the Claude token API + MCP connector are disabled until you set it.')
+}
+
+function timingSafeEqual(a, b) {
+  const ba = Buffer.from(String(a)), bb = Buffer.from(String(b))
+  if (ba.length !== bb.length) return false
+  return crypto.timingSafeEqual(ba, bb)
+}
+
+/** True if the request carries a valid Claude bearer token. */
+export function hasClaudeToken(req) {
+  const m = (req.get('authorization') || '').match(/^Bearer\s+(.+)$/i)
+  return !!(m && CLAUDE_API_KEY && timingSafeEqual(m[1], CLAUDE_API_KEY))
+}
+
+/**
+ * Accept EITHER a valid Claude bearer token OR a browser session cookie.
+ * A token request runs as a synthetic 'claude' admin so writes are tagged
+ * created_by/updated_by = 'claude'. Used for /api/tasks, /api/critical-dates, /mcp.
+ */
+export function bearerOrSession(req, res, next) {
+  if (hasClaudeToken(req)) {
+    req.apiClient = 'claude'
+    req.user = { sub: null, email: 'claude@knoxcre.com', name: 'Claude', role: 'admin' }
+    return next()
+  }
+  return requireAuth(req, res, next)
+}
+
+/** Require a valid Claude bearer token (no cookie fallback). For the MCP endpoint. */
+export function requireClaudeToken(req, res, next) {
+  if (!CLAUDE_API_KEY) return res.status(503).json({ error: 'MCP connector not configured' })
+  if (hasClaudeToken(req)) {
+    req.apiClient = 'claude'
+    req.user = { sub: null, email: 'claude@knoxcre.com', name: 'Claude', role: 'admin' }
+    return next()
+  }
+  return res.status(401).json({ error: 'Invalid or missing bearer token' })
 }
 
 /** Require one of the given roles. Must be used after requireAuth. */

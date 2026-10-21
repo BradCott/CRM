@@ -37,7 +37,8 @@ import extDistRouter         from './routes/extDist.js'
 import portalRouter          from './routes/portal.js'
 import hoaRouter             from './routes/hoa.js'
 
-import { requireAuth, requireWrite, requireRole, requireExtKey } from './middleware/auth.js'
+import { requireAuth, requireWrite, requireRole, requireExtKey, bearerOrSession, requireClaudeToken } from './middleware/auth.js'
+import { handleMcp } from './mcp.js'
 
 // Initialize DB schema (also runs migrations)
 import './db.js'
@@ -95,8 +96,12 @@ app.use('/api/reports',          requireAuth, reportsRouter)
 app.use('/api/saved-searches',   requireAuth, requireWrite, savedSearchesRouter)
 app.use('/api/dashboard',        requireAuth, dashboardRouter)
 app.use('/api/plays',            requireAuth, playsRouter)
-app.use('/api/tasks',            requireAuth, tasksRouter)
-app.use('/api/critical-dates',   requireAuth, criticalDatesRouter)
+// Tasks + critical dates accept either the browser cookie OR a Claude bearer token.
+app.use('/api/tasks',            bearerOrSession, tasksRouter)
+app.use('/api/critical-dates',   bearerOrSession, criticalDatesRouter)
+
+// MCP connector (Streamable HTTP) — Claude custom connector, bearer-token only.
+app.all('/mcp', requireClaudeToken, handleMcp)
 app.use('/api/assistant',        requireAuth, assistantRouter)
 app.use('/api/emails',           requireAuth, requireWrite, emailsRouter)
 app.use('/api/plugin',           requireAuth, pluginRouter)
