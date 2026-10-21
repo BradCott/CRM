@@ -128,6 +128,7 @@ function renderLookup(body, data, lookup, fab) {
     if (ph) body.appendChild(ph)
     body.appendChild(searchBlock(body, data, fab, 'Log to a different contact'))
     body.appendChild(createContactBtn(body, data, fab))
+    body.appendChild(dealLinkBlock(data))
     return
   }
 
@@ -143,6 +144,55 @@ function renderLookup(body, data, lookup, fab) {
     body.appendChild(el('<div class="knox-sub">Suggested matches</div>'))
     for (const c of lookup.candidates) body.appendChild(candidateRow(c, data, body, fab))
   }
+
+  body.appendChild(dealLinkBlock(data))
+}
+
+// "Link to deal / property" — links the open Gmail thread to a deal/property so
+// this and future messages in it land on that deal/property timeline in the CRM.
+function dealLinkBlock(data) {
+  const wrap = el('<div class="knox-search"></div>')
+  if (!data.threadId) {
+    wrap.appendChild(el('<div class="knox-line knox-muted">Open a thread to link it to a deal.</div>'))
+    return wrap
+  }
+  const btn = el('<button class="knox-primary knox-alt">🔗 Link to deal / property</button>')
+  wrap.appendChild(btn)
+  btn.addEventListener('click', () => {
+    btn.remove()
+    const input   = el('<input class="knox-input" placeholder="Search deal or property…" />')
+    const results = el('<div class="knox-results"></div>')
+    wrap.appendChild(input); wrap.appendChild(results); input.focus()
+    let t = null
+    input.addEventListener('input', () => {
+      clearTimeout(t)
+      const q = input.value.trim()
+      if (q.length < 2) { results.innerHTML = ''; return }
+      t = setTimeout(async () => {
+        try {
+          const rows = await api(`/api/ext/deal-search?q=${encodeURIComponent(q)}`)
+          results.innerHTML = ''
+          if (!rows.length) { results.innerHTML = '<div class="knox-line knox-muted">No matches</div>'; return }
+          for (const r of rows) {
+            const tag = r.type === 'deal' ? 'DEAL' : 'PROP'
+            const rowEl = el(`<button class="knox-cand"><b>${tag}</b> ${esc(r.label)}${r.sub ? ` <span class="knox-sub">${esc(r.sub)}</span>` : ''}</button>`)
+            rowEl.addEventListener('click', async () => {
+              const payload = { gmail_thread_id: data.threadId }
+              payload[r.type === 'deal' ? 'deal_id' : 'property_id'] = r.id
+              try {
+                const resp = await api('/api/ext/link-thread', { method: 'POST', body: JSON.stringify(payload) })
+                wrap.innerHTML = resp.ok
+                  ? `<div class="knox-line knox-ok">✓ Linked to ${esc(r.label)}</div>`
+                  : `<div class="knox-line knox-warn">✗ ${esc(resp.error || 'failed')}</div>`
+              } catch (_) { wrap.innerHTML = '<div class="knox-line knox-warn">✗ CRM unreachable</div>' }
+            })
+            results.appendChild(rowEl)
+          }
+        } catch (_) { results.innerHTML = '<div class="knox-line knox-warn">Search failed</div>' }
+      }, 250)
+    })
+  })
+  return wrap
 }
 
 function createContactBtn(body, data, fab) {

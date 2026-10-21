@@ -2,6 +2,7 @@ import { Router } from 'express'
 import db from '../db.js'
 import { normalizeName, nameSimilarity } from '../services/investorMatch.js'
 import { normalizeName as nameKey } from '../utils/normalize.js'
+import { linkEmailThread } from '../services/correspondence.js'
 
 // Endpoints for the Knox CRM Gmail browser extension.
 // Auth is the shared x-crm-key header (requireExtKey), NOT the login cookie —
@@ -239,6 +240,41 @@ router.post('/log', (req, res) => {
   }
 
   res.json({ ok: true, personId: person.id, personName: person.name })
+})
+
+// ── GET /api/ext/deal-search?q= — typeahead for "Link to deal/property" ────────
+router.get('/deal-search', (req, res) => {
+  const q = String(req.query.q || '').trim()
+  if (!q) return res.json([])
+  const like = `%${q}%`
+  const deals = db.prepare(`
+    SELECT d.id, COALESCE(d.address, p.address) AS label, d.city AS city, COALESCE(d.tenant, t.name) AS tenant
+    FROM deals d LEFT JOIN properties p ON p.id = d.property_id LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE COALESCE(d.status,'active') = 'active'
+      AND (d.address LIKE ? OR d.city LIKE ? OR d.tenant LIKE ? OR d.title LIKE ?)
+    ORDER BY d.created_at DESC LIMIT 8
+  `).all(like, like, like, like).map(d => ({
+    type: 'deal', id: d.id, label: d.label || `Deal #${d.id}`, sub: [d.tenant, d.city].filter(Boolean).join(' · '),
+  }))
+  const props = db.prepare(`
+    SELECT id, COALESCE(NULLIF(display_name,''), address) AS label, city FROM properties
+    WHERE address LIKE ? OR city LIKE ? OR display_name LIKE ? ORDER BY address LIMIT 8
+  `).all(like, like, like).map(p => ({ type: 'property', id: p.id, label: p.label || `Property #${p.id}`, sub: p.city || '' }))
+  res.json([...deals, ...props])
+})
+
+// ── POST /api/ext/link-thread — link a Gmail thread to a deal/property ─────────
+// Body: { gmail_thread_id, deal_id? | property_id? }. Writes the thread link +
+// a timeline entry (via linkEmailThread).
+router.post('/link-thread', (req, res) => {
+  const b = req.body || {}
+  if (!b.gmail_thread_id) return res.status(400).json({ ok: false, error: 'gmail_thread_id required' })
+  const r = linkEmailThread({
+    gmail_thread_id: b.gmail_thread_id, deal_id: b.deal_id, property_id: b.property_id,
+    linked_by: 'cole', confidence: 1,
+  }, 'cole')
+  if (r.error) return res.status(400).json({ ok: false, error: r.error })
+  res.json({ ok: true, link: r.link })
 })
 
 export default router

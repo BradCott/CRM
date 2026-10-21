@@ -1,6 +1,7 @@
 import { google } from 'googleapis'
 import db from '../db.js'
 import { getAuthedClient } from './googleClient.js'
+import { attributeEmail } from './correspondence.js'
 
 /**
  * Sync Gmail emails to CRM contacts.
@@ -68,6 +69,17 @@ export async function syncGmail() {
       const subject  = headers['subject'] || '(no subject)'
       const date     = headers['date']    ? new Date(headers['date']).toISOString() : new Date().toISOString()
       const snippet  = detail.data.snippet || ''
+
+      // Auto-attribute to a linked deal/property thread — independent of whether
+      // the sender is a known contact. Future messages on a linked thread land on
+      // the deal/property timeline (deduped by message id).
+      try {
+        attributeEmail({
+          gmail_thread_id: detail.data.threadId, gmail_message_id: msg.id,
+          summary: subject, from_address: headers['from'] || '', to_address: headers['to'] || '',
+          date, body_preview: snippet,
+        }, 'auto')
+      } catch (_) {}
 
       const personId = emailMap[fromAddr] ?? emailMap[toAddr] ?? null
       if (!personId) continue
