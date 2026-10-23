@@ -106,7 +106,8 @@ app.use('/api/critical-dates',   bearerOrSession, criticalDatesRouter)
 app.use('/api', correspondenceRouter)
 
 // MCP connector (Streamable HTTP) — Claude custom connector, bearer-token only.
-app.all('/mcp', requireClaudeToken, handleMcp)
+// Accept both /mcp and /mcp/ (some clients add the trailing slash).
+app.all(['/mcp', '/mcp/'], requireClaudeToken, handleMcp)
 app.use('/api/assistant',        requireAuth, assistantRouter)
 app.use('/api/emails',           requireAuth, requireWrite, emailsRouter)
 app.use('/api/plugin',           requireAuth, pluginRouter)
@@ -123,9 +124,18 @@ app.use('/api/portfolio-import', requireAuth, requireRole('admin'), portfolioImp
 app.use('/api/loi-import',       requireAuth, requireRole('admin'), loiImportRouter)
 
 // ── SPA fallback: serve index.html for all remaining routes ──────────────────
-// Handles client-side routing (React Router) — must be last.
+// Handles client-side routing (React Router) — must be last. But NEVER serve the
+// app shell for API / MCP / OAuth-discovery paths: returning 200 text/html there
+// made claude.ai's connector think a broken OAuth server existed and fail to
+// register. Those must 404 so the connector falls back to the static X-Api-Key.
 if (isProd && existsSync(distPath)) {
-  app.use((_req, res) => res.sendFile(join(distPath, 'index.html')))
+  app.use((req, res) => {
+    if (req.path.startsWith('/api/') || req.path === '/mcp' || req.path.startsWith('/mcp/') ||
+        req.path.startsWith('/.well-known/')) {
+      return res.status(404).json({ error: 'Not found' })
+    }
+    res.sendFile(join(distPath, 'index.html'))
+  })
 }
 
 app.listen(PORT, '0.0.0.0', () => {
