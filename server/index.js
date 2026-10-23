@@ -105,9 +105,10 @@ app.use('/api/critical-dates',   bearerOrSession, criticalDatesRouter)
 // Per-route auth (bearerOrSession) inside the router, so sharing /api is safe.
 app.use('/api', correspondenceRouter)
 
-// MCP connector (Streamable HTTP) — Claude custom connector, bearer-token only.
-// Accept both /mcp and /mcp/ (some clients add the trailing slash).
-app.all(['/mcp', '/mcp/'], requireClaudeToken, handleMcp)
+// MCP connector (Streamable HTTP) — Claude custom connector. Auth is enforced
+// inside handleMcp (token required for tool calls; handshake/discovery is open so
+// claude.ai's URL validation sees a live server). Accept /mcp and /mcp/.
+app.all(['/mcp', '/mcp/'], handleMcp)
 app.use('/api/assistant',        requireAuth, assistantRouter)
 app.use('/api/emails',           requireAuth, requireWrite, emailsRouter)
 app.use('/api/plugin',           requireAuth, pluginRouter)

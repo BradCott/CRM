@@ -12,6 +12,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import db from './db.js'
+import { hasClaudeToken } from './middleware/auth.js'
 import { listTasks, getTask, createTask, updateTask, completeTask } from './services/taskStore.js'
 import { allCriticalDates, completeCriticalDate } from './services/criticalDates.js'
 import {
@@ -209,6 +210,19 @@ function buildServer() {
 const transports = {}   // sessionId -> transport
 
 export async function handleMcp(req, res) {
+  // Require the X-Api-Key / bearer token for tool EXECUTION, but allow the MCP
+  // handshake and tool discovery (initialize, tools/list, ping, notifications)
+  // unauthenticated. claude.ai's connector validates the URL before the configured
+  // header is applied — a hard 401 there reads as "server not found." Only
+  // tools/call returns data, and that stays protected.
+  const msgs = Array.isArray(req.body) ? req.body : [req.body]
+  const needsAuth = msgs.some(m => m && m.method === 'tools/call')
+  if (needsAuth && !hasClaudeToken(req)) {
+    return res.status(401).json({
+      jsonrpc: '2.0', id: (req.body && req.body.id) ?? null,
+      error: { code: -32001, message: 'Unauthorized — set the X-Api-Key header to call tools.' },
+    })
+  }
   try {
     const sessionId = req.headers['mcp-session-id']
     let transport = sessionId ? transports[sessionId] : undefined
