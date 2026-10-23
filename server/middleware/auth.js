@@ -109,10 +109,20 @@ function timingSafeEqual(a, b) {
   return crypto.timingSafeEqual(ba, bb)
 }
 
-/** True if the request carries a valid Claude bearer token. */
+/**
+ * True if the request carries a valid Claude key. Two accepted forms:
+ *  - `Authorization: Bearer <CLAUDE_API_KEY>` (Claude Code / direct API clients)
+ *  - `X-Api-Key: <CLAUDE_API_KEY>` (claude.ai custom connectors reserve the
+ *    Authorization header for their OAuth flow, so the connector sends the raw
+ *    key in X-Api-Key instead).
+ */
 export function hasClaudeToken(req) {
+  if (!CLAUDE_API_KEY) return false
   const m = (req.get('authorization') || '').match(/^Bearer\s+(.+)$/i)
-  return !!(m && CLAUDE_API_KEY && timingSafeEqual(m[1], CLAUDE_API_KEY))
+  if (m && timingSafeEqual(m[1], CLAUDE_API_KEY)) return true
+  const xk = req.get('x-api-key') || ''
+  if (xk && timingSafeEqual(xk, CLAUDE_API_KEY)) return true
+  return false
 }
 
 /**
