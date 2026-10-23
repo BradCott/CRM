@@ -1,15 +1,10 @@
 // MCP server — exposes the CRM's tasks, critical dates, and deals to Claude as a
-// custom connector (Streamable HTTP at /mcp). Auth is the CLAUDE_API_KEY bearer
-// token (see middleware/auth.js requireClaudeToken), applied before this handler.
-// All writes run as actor 'claude' so they're tagged created_by/updated_by.
-//
-// Session-managed transport: the first request (initialize) creates a transport
-// keyed by a generated mcp-session-id; later requests reuse it. State is in-memory
-// (fine for Knox's single Railway instance).
-import { randomUUID } from 'node:crypto'
+// custom connector (Streamable HTTP at /mcp). Stateless transport; auth is the
+// CLAUDE_API_KEY, sent as `X-Api-Key: <key>` or `Authorization: Bearer <key>`,
+// required on tool calls (handshake + discovery are open). All writes run as
+// actor 'claude' so they're tagged created_by/updated_by.
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js'
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import db from './db.js'
 import { hasClaudeToken } from './middleware/auth.js'
@@ -206,42 +201,28 @@ function buildServer() {
   return server
 }
 
-// ── Session-managed Streamable HTTP handler ───────────────────────────────────
-const transports = {}   // sessionId -> transport
-
+// ── Stateless Streamable HTTP handler ─────────────────────────────────────────
+// A fresh server + transport per request (sessionIdGenerator: undefined), so
+// there's no session state to lose on a restart and no "unknown session" to
+// reject — each POST is self-contained. Auth is enforced here: the handshake and
+// tool discovery (initialize, tools/list, ping) are open so claude.ai's URL
+// validation sees a live server, but tools/call requires the key.
 export async function handleMcp(req, res) {
-  // Require the X-Api-Key / bearer token for tool EXECUTION, but allow the MCP
-  // handshake and tool discovery (initialize, tools/list, ping, notifications)
-  // unauthenticated. claude.ai's connector validates the URL before the configured
-  // header is applied — a hard 401 there reads as "server not found." Only
-  // tools/call returns data, and that stays protected.
   const msgs = Array.isArray(req.body) ? req.body : [req.body]
   const needsAuth = msgs.some(m => m && m.method === 'tools/call')
   if (needsAuth && !hasClaudeToken(req)) {
+    const hdr = req.get('x-api-key') ? 'x-api-key' : req.get('authorization') ? 'authorization' : 'none'
+    console.warn(`[mcp] 401 on tools/call — auth header: ${hdr}`)   // never logs the key value
     return res.status(401).json({
       jsonrpc: '2.0', id: (req.body && req.body.id) ?? null,
       error: { code: -32001, message: 'Unauthorized — set the X-Api-Key header to call tools.' },
     })
   }
+  const server = buildServer()
+  const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined })
+  res.on('close', () => { transport.close().catch(() => {}); server.close().catch(() => {}) })
   try {
-    const sessionId = req.headers['mcp-session-id']
-    let transport = sessionId ? transports[sessionId] : undefined
-
-    if (!transport) {
-      if (sessionId || !isInitializeRequest(req.body)) {
-        return res.status(400).json({
-          jsonrpc: '2.0', id: null,
-          error: { code: -32000, message: 'Bad Request: no valid session (send an initialize request first)' },
-        })
-      }
-      transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID(),
-        onsessioninitialized: (sid) => { transports[sid] = transport },
-      })
-      transport.onclose = () => { if (transport.sessionId) delete transports[transport.sessionId] }
-      await buildServer().connect(transport)
-    }
-
+    await server.connect(transport)
     await transport.handleRequest(req, res, req.body)
   } catch (e) {
     console.error('[mcp] error:', e.message)

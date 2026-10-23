@@ -118,10 +118,13 @@ function timingSafeEqual(a, b) {
  */
 export function hasClaudeToken(req) {
   if (!CLAUDE_API_KEY) return false
+  const key = CLAUDE_API_KEY.trim()
+  // Trim the received value — a key pasted into a connector header field often
+  // carries a trailing newline/space, which would fail an exact compare.
   const m = (req.get('authorization') || '').match(/^Bearer\s+(.+)$/i)
-  if (m && timingSafeEqual(m[1], CLAUDE_API_KEY)) return true
-  const xk = req.get('x-api-key') || ''
-  if (xk && timingSafeEqual(xk, CLAUDE_API_KEY)) return true
+  if (m && timingSafeEqual(m[1].trim(), key)) return true
+  const xk = (req.get('x-api-key') || '').trim()
+  if (xk && timingSafeEqual(xk, key)) return true
   return false
 }
 
