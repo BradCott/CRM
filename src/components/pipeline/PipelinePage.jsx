@@ -40,6 +40,7 @@ export default function PipelinePage() {
   const [initialStage, setInitialStage] = useState('loi')
   const [loiPrefill, setLoiPrefill]   = useState(null)
   const [linkTarget, setLinkTarget]   = useState(null) // deal being linked to a property
+  const [dirFilter, setDirFilter]     = useState('all') // all | buying | selling
 
   const openDeals          = deals.filter(d => !['closed_won', 'closed_lost', 'money_hard'].includes(d.stage))
   const loiDeals           = deals.filter(d => d.stage === 'loi')
@@ -83,7 +84,11 @@ export default function PipelinePage() {
     moveDeal(parseInt(draggableId, 10), destination.droppableId)
   }
 
-  const dealsByStage = (key) => deals.filter(d => d.stage === key)
+  // Buy vs. sell filter — "selling" = disposition deals, "buying" = acquisitions.
+  const visibleDeals = dirFilter === 'all' ? deals
+    : dirFilter === 'selling' ? deals.filter(d => d.direction === 'sale')
+    : deals.filter(d => d.direction !== 'sale')
+  const dealsByStage = (key) => visibleDeals.filter(d => d.stage === key)
 
   const handleLinkProperty = async (propertyId) => {
     if (!linkTarget) return
@@ -123,6 +128,18 @@ export default function PipelinePage() {
         <div className="flex items-center justify-between mb-5">
           <h1 className="text-xl font-semibold text-slate-900">Pipeline</h1>
           <div className="flex items-center gap-2">
+            {view !== 'dropped' && (
+              <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
+                {[['all', 'All'], ['buying', 'Buying'], ['selling', 'Selling']].map(([k, label]) => (
+                  <button key={k} onClick={() => setDirFilter(k)}
+                    className={`px-3 py-1.5 rounded-md text-xs font-medium transition-colors ${
+                      dirFilter === k ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+                    }`}>
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
             <div className="flex items-center rounded-lg border border-slate-200 bg-slate-50 p-0.5">
               <button
                 onClick={() => switchView('table')}
@@ -172,7 +189,7 @@ export default function PipelinePage() {
       <div className="flex-1 overflow-x-auto overflow-y-auto scrollbar-thin pt-4">
         {view === 'table' && (
           <DealTable
-            deals={deals}
+            deals={visibleDeals}
             onDelete={setDeleteTarget}
             onCellSave={handleCellSave}
             onCloseDeal={closeDeal}
@@ -183,7 +200,7 @@ export default function PipelinePage() {
 
         {view === 'dropped' && <DroppedDeals />}
 
-        {view === 'kanban' && deals.length > 0 && (
+        {view === 'kanban' && visibleDeals.length > 0 && (
           <DragDropContext onDragEnd={handleDragEnd}>
             <div className="flex gap-4 h-fit px-6 pb-6">
               {stages.map(stage => (

@@ -370,9 +370,12 @@ export default function DealTable({ deals, onDelete, onCellSave, onCloseDeal, on
                 {/* Actions cell */}
                 <td className="px-3 py-3 pr-6 border-b border-slate-100">
                   <div className="flex items-center gap-1.5 flex-wrap">
-                    {deal.direction === 'sale' && (
-                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700" title="Disposition (sale)">SALE</span>
-                    )}
+                    <span
+                      className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${deal.direction === 'sale' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'}`}
+                      title={deal.direction === 'sale' ? 'Disposition (sale)' : 'Acquisition (buy)'}
+                    >
+                      {deal.direction === 'sale' ? 'SELL' : 'BUY'}
+                    </span>
                     {/* Open deal detail */}
                     <button
                       onClick={e => { e.stopPropagation(); navigate(`/pipeline/${deal.id}`) }}

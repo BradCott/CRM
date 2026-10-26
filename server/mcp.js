@@ -9,7 +9,7 @@ import { z } from 'zod'
 import db from './db.js'
 import { hasClaudeToken } from './middleware/auth.js'
 import { listTasks, getTask, createTask, updateTask, completeTask } from './services/taskStore.js'
-import { allCriticalDates, completeCriticalDate } from './services/criticalDates.js'
+import { allCriticalDates, completeCriticalDate, generateCriticalDateTasks } from './services/criticalDates.js'
 import {
   logActivity, linkEmailThread, getThreadLink, addUnmatched, listUnmatched, getDealContext,
 } from './services/correspondence.js'
@@ -197,6 +197,66 @@ function buildServer() {
     description: 'List emails in the unmatched review queue (status: pending|assigned|ignored, default pending).',
     inputSchema: { status: z.enum(['pending', 'assigned', 'ignored']).optional() },
   }, async ({ status }) => ok(listUnmatched(status || 'pending')))
+
+  // Properties ────────────────────────────────────────────────────────────────
+  server.registerTool('list_properties', {
+    description: 'List owned portfolio properties (id, address, city, state, tenant, lease_end). Excludes sold ones.',
+    inputSchema: {},
+  }, async () => ok(db.prepare(`
+    SELECT p.id, p.address, p.city, p.state, t.name AS tenant, p.lease_end
+    FROM properties p LEFT JOIN tenant_brands t ON t.id = p.tenant_brand_id
+    WHERE p.is_portfolio = 1 AND (p.listing_status IS NULL OR p.listing_status <> 'sold')
+    ORDER BY p.address LIMIT 200
+  `).all()))
+
+  server.registerTool('log_property_activity', {
+    description: "Add an entry to a property's timeline. Dedupes on gmail_message_id (same as log_deal_activity).",
+    inputSchema: {
+      property_id: z.number(), summary: z.string(),
+      gmail_message_id: z.string().optional(), gmail_thread_id: z.string().optional(), date: z.string().optional(),
+    },
+  }, async ({ property_id, summary, gmail_message_id, gmail_thread_id, date }) => {
+    const r = logActivity({
+      property_id, type: (gmail_message_id || gmail_thread_id) ? 'email' : 'note',
+      summary, gmail_message_id, gmail_thread_id, occurred_at: date,
+    }, ACTOR)
+    return r.error ? fail(r.error) : ok(r.deduped ? { ...r.entry, deduped: true } : r.entry)
+  })
+
+  server.registerTool('link_property_thread', {
+    description: 'Link a Gmail thread to a property so future replies auto-attach to its timeline.',
+    inputSchema: { property_id: z.number(), gmail_thread_id: z.string() },
+  }, async ({ property_id, gmail_thread_id }) => {
+    const r = linkEmailThread({ property_id, gmail_thread_id }, ACTOR)
+    return r.error ? fail(r.error) : ok(r.link)
+  })
+
+  // Deal update (whitelisted fields; no deletes) ───────────────────────────────
+  server.registerTool('update_deal', {
+    description: 'Update whitelisted fields of a deal: direction (purchase/sale), stage, close_date, dd_deadline, earnest_due_date, title_objection_date, purchase_price, notes. No deletes.',
+    inputSchema: {
+      id: z.number(),
+      direction: z.enum(['purchase', 'sale']).optional(),
+      stage: z.string().optional(), close_date: z.string().optional(),
+      dd_deadline: z.string().optional(), earnest_due_date: z.string().optional(),
+      title_objection_date: z.string().optional(),
+      purchase_price: z.number().optional(), notes: z.string().optional(),
+    },
+  }, async ({ id, ...fields }) => {
+    const existing = db.prepare('SELECT id, stage FROM deals WHERE id = ?').get(id)
+    if (!existing) return fail('Deal not found')
+    const WL = ['direction', 'stage', 'close_date', 'dd_deadline', 'earnest_due_date', 'title_objection_date', 'purchase_price', 'notes']
+    const sets = [], args = []
+    for (const f of WL) if (fields[f] !== undefined) { sets.push(`${f} = ?`); args.push(fields[f]) }
+    if (!sets.length) return fail('No updatable fields provided')
+    args.push(id)
+    db.prepare(`UPDATE deals SET ${sets.join(', ')}, updated_at = datetime('now') WHERE id = ?`).run(...args)
+    if (fields.stage && fields.stage !== existing.stage) {
+      try { logActivity({ deal_id: id, type: 'status_change', summary: `Stage changed: ${existing.stage} → ${fields.stage}` }, ACTOR) } catch { /* noop */ }
+    }
+    try { generateCriticalDateTasks({ force: true, actor: ACTOR }) } catch { /* noop */ }
+    return ok(db.prepare(`${DEAL_SELECT} WHERE d.id = ?`).get(id))
+  })
 
   return server
 }

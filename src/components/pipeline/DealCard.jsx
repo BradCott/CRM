@@ -28,9 +28,12 @@ export default function DealCard({ deal, index, onEdit, onDelete, onLink }) {
           {/* Tenant Brand + actions */}
           <div className="flex items-start justify-between gap-2 mb-1.5">
             <div className="flex items-center gap-1.5 min-w-0">
-              {deal.direction === 'sale' && (
-                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-rose-100 text-rose-700 shrink-0" title="Disposition (sale)">SALE</span>
-              )}
+              <span
+                className={`text-[10px] font-bold px-1.5 py-0.5 rounded shrink-0 ${deal.direction === 'sale' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'}`}
+                title={deal.direction === 'sale' ? 'Disposition (sale)' : 'Acquisition (buy)'}
+              >
+                {deal.direction === 'sale' ? 'SELL' : 'BUY'}
+              </span>
               {deal.property_id ? (
                 <button
                   onClick={e => { e.stopPropagation(); navigate(`/properties?open=${deal.property_id}`) }}
