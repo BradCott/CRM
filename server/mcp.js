@@ -14,6 +14,7 @@ import {
   logActivity, linkEmailThread, getThreadLink, addUnmatched, listUnmatched, getDealContext,
 } from './services/correspondence.js'
 import { normalizeAddr } from './utils/normalize.js'
+import { planMerge } from './services/propertyMerge.js'
 
 const ACTOR = 'claude'
 
@@ -318,6 +319,18 @@ function buildServer() {
       duplicate_properties,
       unlinked_deals,
     })
+  })
+
+  // Dry-run merge plan (READ-ONLY) ─────────────────────────────────────────────
+  server.registerTool('merge_duplicates_dry_run', {
+    description: "Plan how duplicate property rows would be merged onto one canonical record — READ-ONLY, writes nothing. Returns the keeper per address group, the duplicate ids, how many child rows (deals/leases/taxes/insurance/investors/docs/timeline) would move, and review flags (test_seed, suite_or_unit, multiple_portfolio, mixed_sold_status, child_collision) that make a group unsafe to auto-merge. Optional 'only': 'all' (default), 'clean' (auto-mergeable), or 'review'.",
+    inputSchema: { only: z.enum(['all', 'clean', 'review']).optional() },
+  }, async ({ only = 'all' }) => {
+    const plan = planMerge()
+    let groups = plan.groups
+    if (only === 'clean')  groups = groups.filter(g => !g.needs_review)
+    if (only === 'review') groups = groups.filter(g => g.needs_review)
+    return ok({ summary: plan.summary, shown: groups.length, groups })
   })
 
   return server

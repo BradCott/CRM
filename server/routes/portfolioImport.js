@@ -2,6 +2,7 @@ import { Router } from 'express'
 import multer from 'multer'
 import { parse } from 'csv-parse/sync'
 import db from '../db.js'
+import { normalizeAddr } from '../utils/normalize.js'
 
 const router = Router()
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } })
@@ -164,39 +165,24 @@ router.post('/', upload.single('file'), (req, res) => {
   const findOwner   = db.prepare(`SELECT id FROM people WHERE name = ? LIMIT 1`)
   const insertOwner = db.prepare(`INSERT OR IGNORE INTO people (name, role) VALUES (?, 'owner_company')`)
 
-  const insertProp = db.prepare(`
-    INSERT INTO properties (
-      address, city, state, zip,
-      tenant_brand_id, owner_id,
-      store_number, lease_type, lease_start, lease_end,
-      annual_rent, expense, noi, interest_rate,
-      maturity_date, total_debt_pmt, interest_pmt, principal_pmt,
-      rtd_ratio, outstanding_debt, bank,
-      purchase_price, estimated_value,
-      store_manager, district_manager, qb_account,
-      parking_lot, roof_year, hvac_year,
-      ins_broker, policy_number, account_number, insurance_exp,
-      taxes, insurance, rent_bumps, renewal_options,
-      year_built, year_purchased, building_size,
-      notes, is_portfolio
-    ) VALUES (
-      ?,?,?,?,
-      ?,?,
-      ?,?,?,?,
-      ?,?,?,?,
-      ?,?,?,?,
-      ?,?,?,
-      ?,?,
-      ?,?,?,
-      ?,?,?,
-      ?,?,?,?,
-      ?,?,?,?,
-      ?,?,?,
-      ?,1
-    )
-  `)
+  // Column set (in a stable order) used to build both the INSERT and the
+  // fill-blanks UPDATE. is_portfolio + addr_key are handled explicitly below.
+  const PROP_COLS = [
+    'address', 'city', 'state', 'zip', 'tenant_brand_id', 'owner_id',
+    'store_number', 'lease_type', 'lease_start', 'lease_end',
+    'annual_rent', 'expense', 'noi', 'interest_rate',
+    'maturity_date', 'total_debt_pmt', 'interest_pmt', 'principal_pmt',
+    'rtd_ratio', 'outstanding_debt', 'bank',
+    'purchase_price', 'estimated_value',
+    'store_manager', 'district_manager', 'qb_account',
+    'parking_lot', 'roof_year', 'hvac_year',
+    'ins_broker', 'policy_number', 'account_number', 'insurance_exp',
+    'taxes', 'insurance', 'rent_bumps', 'renewal_options',
+    'year_built', 'year_purchased', 'building_size', 'notes',
+  ]
+  const findByKey = db.prepare('SELECT id FROM properties WHERE addr_key = ? LIMIT 1')
 
-  let imported = 0, skipped = 0
+  let imported = 0, merged = 0, skipped = 0
 
   db.exec('BEGIN')
   try {
@@ -238,50 +224,74 @@ router.post('/', upload.single('file'), (req, res) => {
       const baseNote = get(row, colMap, 'notes')
       const notes = [miscNote, baseNote].filter(Boolean).join('\n') || null
 
-      insertProp.run(
-        address,
-        city,
-        state,
-        get(row, colMap, 'zip'),
-        brandId,
-        ownerId,
-        get(row, colMap, 'store_number'),
-        get(row, colMap, 'lease_type'),
-        get(row, colMap, 'lease_start'),
-        get(row, colMap, 'lease_end'),
-        toNum(get(row, colMap, 'annual_rent')),
-        toNum(get(row, colMap, 'expense')),
-        toNum(get(row, colMap, 'noi')),
-        toNum(get(row, colMap, 'interest_rate')),
-        get(row, colMap, 'maturity_date'),
-        toNum(get(row, colMap, 'total_debt_pmt')),
-        toNum(get(row, colMap, 'interest_pmt')),
-        toNum(get(row, colMap, 'principal_pmt')),
-        toNum(get(row, colMap, 'rtd_ratio')),
-        toNum(get(row, colMap, 'outstanding_debt')),
-        get(row, colMap, 'bank'),
-        toNum(get(row, colMap, 'purchase_price')),
-        toNum(get(row, colMap, 'estimated_value')),
-        get(row, colMap, 'store_manager'),
-        get(row, colMap, 'district_manager'),
-        get(row, colMap, 'qb_account'),
-        get(row, colMap, 'parking'),
-        toInt(get(row, colMap, 'roof')),
-        toInt(get(row, colMap, 'hvac')),
-        get(row, colMap, 'ins_broker'),
-        get(row, colMap, 'policy_number'),
-        get(row, colMap, 'account_number'),
-        get(row, colMap, 'insurance_exp'),
-        toNum(get(row, colMap, 'taxes')),
-        toNum(get(row, colMap, 'insurance')),
-        get(row, colMap, 'rent_bumps'),
-        get(row, colMap, 'renewal_options'),
-        toInt(get(row, colMap, 'year_built')),
-        toInt(get(row, colMap, 'year_purchased')),
-        toNum(get(row, colMap, 'building_size')),
+      const vals = {
+        address, city, state,
+        zip:             get(row, colMap, 'zip'),
+        tenant_brand_id: brandId,
+        owner_id:        ownerId,
+        store_number:    get(row, colMap, 'store_number'),
+        lease_type:      get(row, colMap, 'lease_type'),
+        lease_start:     get(row, colMap, 'lease_start'),
+        lease_end:       get(row, colMap, 'lease_end'),
+        annual_rent:     toNum(get(row, colMap, 'annual_rent')),
+        expense:         toNum(get(row, colMap, 'expense')),
+        noi:             toNum(get(row, colMap, 'noi')),
+        interest_rate:   toNum(get(row, colMap, 'interest_rate')),
+        maturity_date:   get(row, colMap, 'maturity_date'),
+        total_debt_pmt:  toNum(get(row, colMap, 'total_debt_pmt')),
+        interest_pmt:    toNum(get(row, colMap, 'interest_pmt')),
+        principal_pmt:   toNum(get(row, colMap, 'principal_pmt')),
+        rtd_ratio:       toNum(get(row, colMap, 'rtd_ratio')),
+        outstanding_debt: toNum(get(row, colMap, 'outstanding_debt')),
+        bank:            get(row, colMap, 'bank'),
+        purchase_price:  toNum(get(row, colMap, 'purchase_price')),
+        estimated_value: toNum(get(row, colMap, 'estimated_value')),
+        store_manager:   get(row, colMap, 'store_manager'),
+        district_manager: get(row, colMap, 'district_manager'),
+        qb_account:      get(row, colMap, 'qb_account'),
+        parking_lot:     get(row, colMap, 'parking'),
+        roof_year:       toInt(get(row, colMap, 'roof')),
+        hvac_year:       toInt(get(row, colMap, 'hvac')),
+        ins_broker:      get(row, colMap, 'ins_broker'),
+        policy_number:   get(row, colMap, 'policy_number'),
+        account_number:  get(row, colMap, 'account_number'),
+        insurance_exp:   get(row, colMap, 'insurance_exp'),
+        taxes:           toNum(get(row, colMap, 'taxes')),
+        insurance:       toNum(get(row, colMap, 'insurance')),
+        rent_bumps:      get(row, colMap, 'rent_bumps'),
+        renewal_options: get(row, colMap, 'renewal_options'),
+        year_built:      toInt(get(row, colMap, 'year_built')),
+        year_purchased:  toInt(get(row, colMap, 'year_purchased')),
+        building_size:   toNum(get(row, colMap, 'building_size')),
         notes,
-      )
-      imported++
+      }
+
+      // Dedupe on normalized address. If the property already exists, enrich it
+      // (fill BLANK fields only — never clobber), flag it portfolio, and backfill
+      // its addr_key. No duplicate row is created.
+      const addrKey  = normalizeAddr(address, city || '', state || '', vals.zip || '') || null
+      const existing = addrKey ? findByKey.get(addrKey) : null
+
+      if (existing) {
+        const sets = ['is_portfolio = 1', 'addr_key = COALESCE(addr_key, ?)']
+        const args = [addrKey]
+        for (const col of PROP_COLS) {
+          if (col === 'address') continue
+          const v = vals[col]
+          if (v !== null && v !== undefined && v !== '') {
+            sets.push(`${col} = CASE WHEN ${col} IS NULL OR ${col} = '' THEN ? ELSE ${col} END`)
+            args.push(v)
+          }
+        }
+        args.push(existing.id)
+        db.prepare(`UPDATE properties SET ${sets.join(', ')} WHERE id = ?`).run(...args)
+        merged++
+      } else {
+        const cols = [...PROP_COLS, 'is_portfolio', 'addr_key']
+        const args = [...PROP_COLS.map(c => vals[c]), 1, addrKey]
+        db.prepare(`INSERT INTO properties (${cols.join(',')}) VALUES (${cols.map(() => '?').join(',')})`).run(...args)
+        imported++
+      }
     }
     db.exec('COMMIT')
   } catch (e) {
@@ -289,7 +299,7 @@ router.post('/', upload.single('file'), (req, res) => {
     return res.status(500).json({ error: e.message })
   }
 
-  res.json({ imported, skipped, total: meaningful.length })
+  res.json({ imported, merged, skipped, total: meaningful.length })
 })
 
 export default router
