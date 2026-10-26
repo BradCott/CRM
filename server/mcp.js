@@ -13,6 +13,7 @@ import { allCriticalDates, completeCriticalDate, generateCriticalDateTasks } fro
 import {
   logActivity, linkEmailThread, getThreadLink, addUnmatched, listUnmatched, getDealContext,
 } from './services/correspondence.js'
+import { normalizeAddr } from './utils/normalize.js'
 
 const ACTOR = 'claude'
 
@@ -256,6 +257,67 @@ function buildServer() {
     }
     try { generateCriticalDateTasks({ force: true, actor: ACTOR }) } catch { /* noop */ }
     return ok(db.prepare(`${DEAL_SELECT} WHERE d.id = ?`).get(id))
+  })
+
+  // Link (or unlink) a deal to its canonical property ──────────────────────────
+  server.registerTool('link_deal_property', {
+    description: 'Link a deal to an existing property so they share one page, or unlink it. Pass property_id to link, or property_id: null to unlink. Keeps all deal + property data on a single record.',
+    inputSchema: { deal_id: z.number(), property_id: z.number().nullable() },
+  }, async ({ deal_id, property_id }) => {
+    const deal = db.prepare('SELECT id FROM deals WHERE id = ?').get(deal_id)
+    if (!deal) return fail('Deal not found')
+    if (property_id != null) {
+      const prop = db.prepare('SELECT id FROM properties WHERE id = ?').get(property_id)
+      if (!prop) return fail('Property not found')
+    }
+    db.prepare('UPDATE deals SET property_id = ?, updated_at = datetime(\'now\') WHERE id = ?').run(property_id ?? null, deal_id)
+    return ok(db.prepare(`${DEAL_SELECT} WHERE d.id = ?`).get(deal_id))
+  })
+
+  // Property-data integrity audit (read-only) ──────────────────────────────────
+  server.registerTool('audit_property_data', {
+    description: 'Audit whether property data is consolidated on one record. Returns (a) duplicate_properties — groups of property rows sharing a normalized address, and (b) unlinked_deals — active deals with no property_id and whether an existing property matches their address. Read-only.',
+    inputSchema: {},
+  }, async () => {
+    // (a) Duplicate property rows: group by normalized street|city|state (ignore zip).
+    const props = db.prepare('SELECT id, address, city, state, zip, is_portfolio, listing_status FROM properties').all()
+    const groups = new Map()
+    for (const p of props) {
+      const key = normalizeAddr(p.address || '', p.city || '', p.state || '', '')
+      if (!key) continue
+      if (!groups.has(key)) groups.set(key, [])
+      groups.get(key).push(p)
+    }
+    const duplicate_properties = [...groups.values()]
+      .filter(g => g.length > 1)
+      .map(g => ({ address: `${g[0].address}, ${g[0].city || ''} ${g[0].state || ''}`.trim(), count: g.length, ids: g.map(x => x.id) }))
+
+    // (b) Unlinked active deals, with any address match.
+    const deals = db.prepare(`
+      SELECT id, address, city, state, tenant, direction, stage FROM deals
+      WHERE property_id IS NULL AND address IS NOT NULL AND TRIM(address) <> ''
+        AND (status IS NULL OR status = 'active')
+    `).all()
+    const unlinked_deals = deals.map(d => {
+      const key = normalizeAddr(d.address, d.city || '', d.state || '', '')
+      const matches = key ? db.prepare('SELECT id FROM properties WHERE addr_key = ? OR addr_key LIKE ? LIMIT 5').all(key, key + '|%') : []
+      return {
+        deal_id: d.id, address: `${d.address}, ${d.city || ''} ${d.state || ''}`.trim(),
+        tenant: d.tenant, direction: d.direction, stage: d.stage,
+        matching_property_ids: matches.map(m => m.id),
+        resolution: matches.length === 1 ? 'auto-linkable' : matches.length > 1 ? 'ambiguous — pick one' : 'no property exists — create one',
+      }
+    })
+
+    return ok({
+      summary: {
+        duplicate_property_groups: duplicate_properties.length,
+        unlinked_active_deals: unlinked_deals.length,
+        auto_linkable: unlinked_deals.filter(d => d.resolution === 'auto-linkable').length,
+      },
+      duplicate_properties,
+      unlinked_deals,
+    })
   })
 
   return server

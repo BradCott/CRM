@@ -58,16 +58,35 @@ const toFloat = v => (v !== undefined && v !== null && v !== '') ? parseFloat(v)
 const toInt   = v => (v !== undefined && v !== null && v !== '') ? parseInt(v, 10) : null
 const toStr   = v => v || null
 
-// ── Auto-link: match deal address to a market property ────────────────────────
-function tryAutoLink(dealId, address) {
+// ── Property matching: find the ONE canonical property row for an address ──────
+// Uses the same normalized addr_key the Properties UI matches on (handles
+// Blvd/Boulevard, St/Street, N/North, suite stripping, etc.), with an exact-string
+// fallback for any legacy row whose addr_key was never backfilled. This is the
+// single matcher every deal write path uses, so a deal, its portfolio property,
+// and its market record all resolve to the SAME properties.id — never a duplicate.
+function findPropertyIdByAddr(address, city, state, zip) {
   if (!address || !address.trim()) return null
-  const match = db.prepare(
-    `SELECT id FROM properties WHERE LOWER(TRIM(address)) = LOWER(TRIM(?))`
-  ).get(address)
-  if (match) {
-    db.prepare('UPDATE deals SET property_id = ? WHERE id = ?').run(match.id, dealId)
-    console.log(`[deals] auto-linked deal ${dealId} → property ${match.id} (address: "${address}")`)
-    return match.id
+  // Match zip-agnostically: deals carry no zip, but a property's addr_key is
+  // [street|city|state|zip], so compare on the street|city|state prefix. An exact
+  // match (property also has no zip) and a prefix match (property has a zip) both
+  // resolve to the same canonical row.
+  const key = normalizeAddr(address, city || '', state || '', '')
+  if (key) {
+    const m = db.prepare(
+      'SELECT id FROM properties WHERE addr_key = ? OR addr_key LIKE ? LIMIT 1'
+    ).get(key, key + '|%')
+    if (m) return m.id
+  }
+  const ex = db.prepare('SELECT id FROM properties WHERE LOWER(TRIM(address)) = LOWER(TRIM(?)) LIMIT 1').get(address)
+  return ex ? ex.id : null
+}
+
+function tryAutoLink(dealId, address, city, state) {
+  const pid = findPropertyIdByAddr(address, city, state, '')
+  if (pid) {
+    db.prepare('UPDATE deals SET property_id = ? WHERE id = ?').run(pid, dealId)
+    console.log(`[deals] auto-linked deal ${dealId} → property ${pid} (address: "${address}")`)
+    return pid
   }
   return null
 }
@@ -96,16 +115,26 @@ router.post('/:id/close', (req, res) => {
 
   // Resolve (or create) the portfolio property, then carry the deal's details over.
   let propertyId = deal.property_id
-  if (propertyId) {
-    console.log('[deals] closing — marking linked property', propertyId, 'as portfolio')
-    db.prepare('UPDATE properties SET is_portfolio = 1 WHERE id = ?').run(propertyId)
-  } else if (deal.address) {
-    console.log('[deals] closing — creating portfolio property from deal address:', deal.address)
-    const r = db.prepare(`INSERT INTO properties (address, city, state, is_portfolio) VALUES (?, ?, ?, 1)`)
-      .run(deal.address, deal.city || null, deal.state || null)
-    propertyId = Number(r.lastInsertRowid)
+  if (!propertyId && deal.address) {
+    // Not linked — reuse the EXISTING property for this address if one exists
+    // (so we never duplicate a market/portfolio row), otherwise create one.
+    propertyId = findPropertyIdByAddr(deal.address, deal.city, deal.state, deal.zip)
+    if (propertyId) {
+      console.log('[deals] closing — matched existing property', propertyId, 'by address (no duplicate created)')
+    } else {
+      console.log('[deals] closing — creating portfolio property from deal address:', deal.address)
+      const r = db.prepare(`INSERT INTO properties (address, city, state, is_portfolio, addr_key) VALUES (?, ?, ?, 1, ?)`)
+        .run(deal.address, deal.city || null, deal.state || null,
+             normalizeAddr(deal.address, deal.city || '', deal.state || '', deal.zip || '') || null)
+      propertyId = Number(r.lastInsertRowid)
+    }
   }
   if (propertyId) {
+    db.prepare('UPDATE properties SET is_portfolio = 1 WHERE id = ?').run(propertyId)
+    // Persist the link back onto the deal so the two never drift apart.
+    if (deal.property_id !== propertyId) {
+      db.prepare('UPDATE deals SET property_id = ? WHERE id = ?').run(propertyId, req.params.id)
+    }
     try { migrateDealToProperty(deal, propertyId) }
     catch (e) { console.error('[deals] close migration failed:', e.message) }
   }
@@ -314,7 +343,7 @@ router.post('/', (req, res) => {
          toFloat(cap_rate), toInt(due_diligence_days), toStr(dd_deadline), toFloat(earnest_money), direction)
   // Auto-link to market property if no explicit property_id was provided
   if (!property_id && address) {
-    tryAutoLink(r.lastInsertRowid, address)
+    tryAutoLink(r.lastInsertRowid, address, city, state)
   }
   res.status(201).json(db.prepare(SELECT + ' WHERE d.id = ?').get(r.lastInsertRowid))
 })
@@ -368,6 +397,15 @@ router.post('/:id/create-property', (req, res) => {
   const state   = toStr(req.body?.state   ?? deal.state)
   const tenant  = toStr(req.body?.tenant  ?? deal.tenant)
   if (!address) return res.status(400).json({ error: 'An address is required to create a property.' })
+
+  // Dedupe: if a property for this address already exists, link to it instead of
+  // creating a twin. Keeps everything on one property page.
+  const existingId = findPropertyIdByAddr(address, city, state, toStr(req.body?.zip ?? deal.zip))
+  if (existingId) {
+    db.prepare('UPDATE deals SET property_id = ? WHERE id = ?').run(existingId, deal.id)
+    console.log(`[deals] create-property — matched existing property ${existingId}, linked instead of duplicating`)
+    return res.status(200).json(db.prepare(SELECT + ' WHERE d.id = ?').get(deal.id))
+  }
 
   // Resolve tenant name → tenant_brand_id (find existing or create), mirroring
   // how the rest of the app links tenant brands.

@@ -1401,6 +1401,35 @@ try {
   }
 } catch (e) { console.warn('[db] addr_key backfill failed:', e.message) }
 
+// ── Backfill: link unlinked deals to their existing property ──────────────────
+// Consolidation pass. An active deal with no property_id but whose address
+// resolves to EXACTLY ONE property gets linked to it, so the deal and its
+// property share one page instead of drifting apart. Zip-agnostic (deals carry
+// no zip; a property addr_key is [street|city|state|zip]) and conservative —
+// ambiguous addresses (0 or 2+ matches) are left alone for a human to resolve.
+// Idempotent: once linked a deal no longer qualifies, so re-running is a no-op.
+try {
+  const unlinked = db.prepare(`
+    SELECT id, address, city, state FROM deals
+    WHERE property_id IS NULL AND address IS NOT NULL AND TRIM(address) <> ''
+      AND (status IS NULL OR status = 'active')
+  `).all()
+  let linked = 0, ambiguous = 0
+  const link = db.prepare('UPDATE deals SET property_id = ? WHERE id = ?')
+  for (const d of unlinked) {
+    const key = normalizeAddr(d.address, d.city || '', d.state || '', '')
+    if (!key) continue
+    const matches = db.prepare(
+      'SELECT id FROM properties WHERE addr_key = ? OR addr_key LIKE ? LIMIT 2'
+    ).all(key, key + '|%')
+    if (matches.length === 1) { link.run(matches[0].id, d.id); linked++ }
+    else if (matches.length > 1) { ambiguous++ }
+  }
+  if (linked || ambiguous) {
+    console.log(`[db] deal→property link backfill: linked ${linked}, left ${ambiguous} ambiguous of ${unlinked.length} unlinked`)
+  }
+} catch (e) { console.warn('[db] deal→property link backfill failed:', e.message) }
+
 // ── Seed a safe "test tenant" for exercising bulk mail sends ─────────────────
 // A fake tenant with two dummy owner-properties, both addressed to the Knox
 // office, so Brad/Cole can fire a real bulk campaign end-to-end (signature, card,
