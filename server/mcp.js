@@ -12,9 +12,11 @@ import { listTasks, getTask, createTask, updateTask, completeTask } from './serv
 import { allCriticalDates, completeCriticalDate, generateCriticalDateTasks } from './services/criticalDates.js'
 import {
   logActivity, linkEmailThread, getThreadLink, addUnmatched, listUnmatched, getDealContext,
+  listParties, addParty,
 } from './services/correspondence.js'
 import { normalizeAddr } from './utils/normalize.js'
 import { planMerge } from './services/propertyMerge.js'
+import { findPropertyIdByAddr, closeDeal } from './routes/deals.js'
 
 const ACTOR = 'claude'
 
@@ -26,6 +28,52 @@ function coleId() {
 
 const ok   = (data) => ({ content: [{ type: 'text', text: JSON.stringify(data, null, 2) }] })
 const fail = (msg)  => ({ content: [{ type: 'text', text: `Error: ${msg}` }], isError: true })
+
+// Find-or-create a tenant brand by name → id (mirrors how the deal/property paths link brands).
+function findOrCreateTenantBrand(name) {
+  const n = String(name || '').trim()
+  if (!n) return null
+  const b = db.prepare('SELECT id FROM tenant_brands WHERE name = ? COLLATE NOCASE').get(n)
+  return b ? b.id : Number(db.prepare('INSERT INTO tenant_brands (name) VALUES (?)').run(n).lastInsertRowid)
+}
+
+// Find-or-create a company (a people row, role owner_company) → id, for a party's company.
+function findOrCreateCompany(name) {
+  const n = String(name || '').trim()
+  if (!n) return null
+  const c = db.prepare("SELECT id FROM people WHERE name = ? COLLATE NOCASE AND role = 'owner_company' LIMIT 1").get(n)
+  return c ? c.id : Number(db.prepare("INSERT INTO people (name, role) VALUES (?, 'owner_company')").run(n).lastInsertRowid)
+}
+
+// Party role (free text on deal_parties.role) → the coarse people.role the CHECK allows.
+function peopleRoleFor(partyRole) {
+  const r = String(partyRole || '').toLowerCase()
+  if (r.includes('broker')) return 'broker'
+  if (r === 'tenant_contact') return 'tenant_contact'
+  return 'owner'
+}
+
+// Find-or-create a person. Dedupes on email first, then exact name. Fills only BLANK
+// contact fields on an existing person (never clobbers). Returns the people.id.
+function findOrCreatePerson({ name, email, phone, notes, company, role }) {
+  const nm = String(name || '').trim()
+  let person = null
+  if (email) person = db.prepare('SELECT * FROM people WHERE email = ? COLLATE NOCASE LIMIT 1').get(email)
+  if (!person && nm) person = db.prepare('SELECT * FROM people WHERE name = ? COLLATE NOCASE LIMIT 1').get(nm)
+  const companyId = company ? findOrCreateCompany(company) : null
+  if (person) {
+    const sets = [], args = []
+    if (email && !person.email)          { sets.push('email = ?');      args.push(email) }
+    if (phone && !person.phone)          { sets.push('phone = ?');      args.push(phone) }
+    if (notes && !person.notes)          { sets.push('notes = ?');      args.push(notes) }
+    if (companyId && !person.company_id) { sets.push('company_id = ?'); args.push(companyId) }
+    if (sets.length) { args.push(person.id); db.prepare(`UPDATE people SET ${sets.join(', ')} WHERE id = ?`).run(...args) }
+    return person.id
+  }
+  const r = db.prepare('INSERT INTO people (name, role, email, phone, notes, company_id) VALUES (?, ?, ?, ?, ?, ?)')
+    .run(nm, peopleRoleFor(role), email || null, phone || null, notes || null, companyId)
+  return Number(r.lastInsertRowid)
+}
 
 const DEAL_SELECT = `
   SELECT d.id, COALESCE(d.address, p.address) AS address, COALESCE(d.city, p.city) AS city,
@@ -331,6 +379,224 @@ function buildServer() {
     if (only === 'clean')  groups = groups.filter(g => !g.needs_review)
     if (only === 'review') groups = groups.filter(g => g.needs_review)
     return ok({ summary: plan.summary, shown: groups.length, groups })
+  })
+
+  // ── Deal & property writes (create/close/sell/update) ─────────────────────────
+  // All write as actor 'claude', log every write to the timeline, whitelist fields,
+  // and never hard-delete. Address matching reuses findPropertyIdByAddr, so a deal,
+  // its portfolio property, and its market record all resolve to ONE properties.id.
+
+  server.registerTool('create_deal', {
+    description: 'Create a pipeline deal. direction purchase|sale. SALE requires an owned portfolio property (pass property_id or an address that matches one). PURCHASE links to a matching property if one exists, else stays unlinked (the property is created at closing). Dedupes: an active deal for the same property/address + direction is returned instead of a second one. Logs "Deal created (claude)" to the timeline.',
+    inputSchema: {
+      direction: z.enum(['purchase', 'sale']),
+      address: z.string().optional(), city: z.string().optional(), state: z.string().optional(),
+      tenant: z.string().optional(), stage: z.string().optional(),
+      purchase_price: z.number().optional(), property_id: z.number().optional(),
+      close_date: z.string().optional(), dd_deadline: z.string().optional(),
+      earnest_due_date: z.string().optional(), title_objection_date: z.string().optional(),
+      earnest_money: z.number().optional(), notes: z.string().optional(),
+    },
+  }, async (a) => {
+    const direction = a.direction
+    let propertyId = a.property_id ?? null
+    if (propertyId == null && a.address) propertyId = findPropertyIdByAddr(a.address, a.city, a.state, '')
+    if (propertyId != null) {
+      const prop = db.prepare('SELECT id, is_portfolio FROM properties WHERE id = ?').get(propertyId)
+      if (!prop) return fail(`Property ${propertyId} not found`)
+      if (direction === 'sale' && !prop.is_portfolio) return fail('A sale must be linked to an owned portfolio property.')
+    }
+    if (direction === 'sale' && propertyId == null)
+      return fail('A sale needs an owned portfolio property — pass property_id, or an address that matches one.')
+    if (propertyId == null && !a.address) return fail('address or property_id is required')
+
+    // Dedupe: an existing active deal for the same property/address + direction.
+    let dupe = null
+    if (propertyId != null) {
+      dupe = db.prepare(`SELECT id FROM deals WHERE direction = ? AND property_id = ? AND COALESCE(status,'active') = 'active' ORDER BY id LIMIT 1`).get(direction, propertyId)
+    }
+    if (!dupe && a.address) {
+      dupe = db.prepare(`SELECT id FROM deals WHERE direction = ? AND COALESCE(status,'active') = 'active' AND address IS NOT NULL AND LOWER(TRIM(address)) = LOWER(TRIM(?)) ORDER BY id LIMIT 1`).get(direction, a.address)
+    }
+    if (dupe) return ok({ deduped: true, ...db.prepare(`${DEAL_SELECT} WHERE d.id = ?`).get(dupe.id) })
+
+    const stage = a.stage || 'loi'
+    const r = db.prepare(`
+      INSERT INTO deals (property_id, direction, stage, address, city, state, tenant, purchase_price,
+                         close_date, dd_deadline, earnest_due_date, title_objection_date, earnest_money, notes,
+                         status, source, created_at, updated_at)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?, 'active', 'claude', datetime('now'), datetime('now'))
+    `).run(propertyId, direction, stage, a.address || null, a.city || null, a.state || null, a.tenant || null,
+           a.purchase_price ?? null, a.close_date || null, a.dd_deadline || null, a.earnest_due_date || null,
+           a.title_objection_date || null, a.earnest_money ?? null, a.notes || null)
+    const dealId = Number(r.lastInsertRowid)
+    try { logActivity({ deal_id: dealId, type: 'note', summary: 'Deal created (claude)' }, ACTOR) } catch { /* noop */ }
+    try { generateCriticalDateTasks({ force: true, actor: ACTOR }) } catch { /* noop */ }
+    return ok(db.prepare(`${DEAL_SELECT} WHERE d.id = ?`).get(dealId))
+  })
+
+  server.registerTool('close_deal', {
+    description: 'Close a deal, running the same logic as the UI close so dashboards + Historical stay consistent. PURCHASE: creates/activates the portfolio property (is_portfolio=1), carries the deal\'s tenant/address/lease fields onto it, and links the deal. SALE: marks the deal closed and the linked property sold (drops off list_properties, lands in Historical with sale price + date). Reversible from the UI (deal restore / property sold toggle). Refuses if already closed or dropped. Logs to the timeline.',
+    inputSchema: {
+      deal_id: z.number(), actual_close_date: z.string().optional(),
+      final_price: z.number().optional(), notes: z.string().optional(),
+    },
+  }, async ({ deal_id, actual_close_date, final_price, notes }) => {
+    const d = db.prepare('SELECT id, status, direction, property_id FROM deals WHERE id = ?').get(deal_id)
+    if (!d) return fail('Deal not found')
+    if (d.status === 'closed')  return fail('Deal is already closed.')
+    if (d.status === 'dropped') return fail('Deal is dropped — restore it before closing.')
+    const today = new Date().toISOString().slice(0, 10)
+
+    // Record close date / final price / notes on the deal first (append notes, never overwrite).
+    if (actual_close_date) db.prepare('UPDATE deals SET close_date = ? WHERE id = ?').run(actual_close_date, deal_id)
+    if (final_price != null) db.prepare('UPDATE deals SET purchase_price = ? WHERE id = ?').run(final_price, deal_id)
+    if (notes) {
+      const cur = db.prepare('SELECT notes FROM deals WHERE id = ?').get(deal_id)?.notes
+      db.prepare('UPDATE deals SET notes = ? WHERE id = ?').run(cur ? `${cur}\n${notes}` : notes, deal_id)
+    }
+
+    if (d.direction === 'sale') {
+      const pid = d.property_id
+      db.prepare("UPDATE deals SET status = 'closed' WHERE id = ?").run(deal_id)
+      const changed = { deal_id, direction: 'sale', property_id: pid || null, marked_sold: false }
+      if (pid) {
+        db.prepare(`UPDATE properties SET listing_status = 'sold', sold_date = ?, sale_price = COALESCE(?, sale_price) WHERE id = ?`)
+          .run(actual_close_date || today, final_price ?? null, pid)
+        changed.marked_sold = true
+        try { logActivity({ property_id: pid, type: 'system', summary: `Sold — closed sale deal #${deal_id}${final_price != null ? ` at $${Math.round(final_price).toLocaleString()}` : ''} (claude)` }, ACTOR) } catch { /* noop */ }
+      }
+      try { logActivity({ deal_id, type: 'status_change', summary: 'Deal closed (sale) (claude)' }, ACTOR) } catch { /* noop */ }
+      try { generateCriticalDateTasks({ force: true, actor: ACTOR }) } catch { /* noop */ }
+      return ok(changed)
+    }
+
+    // PURCHASE → portfolio migration via the shared UI close logic.
+    const r = closeDeal(deal_id)
+    if (r.notFound) return fail('Deal not found')
+    try { logActivity({ deal_id, type: 'status_change', summary: 'Deal closed (purchase) → portfolio (claude)' }, ACTOR) } catch { /* noop */ }
+    if (r.property_id) { try { logActivity({ property_id: r.property_id, type: 'system', summary: `Activated in portfolio from closed deal #${deal_id} (claude)` }, ACTOR) } catch { /* noop */ } }
+    try { generateCriticalDateTasks({ force: true, actor: ACTOR }) } catch { /* noop */ }
+    return ok({ deal_id, direction: 'purchase', property_id: r.property_id || null, migrated: true })
+  })
+
+  server.registerTool('mark_property_sold', {
+    description: 'Mark an owned property sold outside the pipeline (no deal). Sets listing_status=sold + sold_date + sale_price, so it drops off list_properties/Property Management and lands in Historical. Reversible from the UI (sold toggle). Logs to the timeline.',
+    inputSchema: {
+      property_id: z.number(), sale_date: z.string(),
+      sale_price: z.number().optional(), buyer: z.string().optional(), notes: z.string().optional(),
+    },
+  }, async (a) => {
+    const p = db.prepare('SELECT id, listing_status FROM properties WHERE id = ?').get(a.property_id)
+    if (!p) return fail('Property not found')
+    if (p.listing_status === 'sold') return fail('Property is already marked sold.')
+    db.prepare(`UPDATE properties SET listing_status = 'sold', sold_date = ?, sale_price = COALESCE(?, sale_price) WHERE id = ?`)
+      .run(a.sale_date, a.sale_price ?? null, a.property_id)
+    const bits = [a.buyer && `buyer ${a.buyer}`, a.sale_price != null && `$${Math.round(a.sale_price).toLocaleString()}`, a.notes].filter(Boolean)
+    try { logActivity({ property_id: a.property_id, type: 'system', summary: `Marked sold ${a.sale_date}${bits.length ? ` — ${bits.join(' · ')}` : ''} (claude)` }, ACTOR) } catch { /* noop */ }
+    return ok(db.prepare('SELECT id, address, city, state, listing_status, sold_date, sale_price FROM properties WHERE id = ?').get(a.property_id))
+  })
+
+  server.registerTool('create_property', {
+    description: 'Create a property record. Normalizes the address and, if it duplicates an existing property, returns that existing one instead of a twin (deduped:true). is_portfolio defaults false. Logs "Property created (claude)" to the timeline.',
+    inputSchema: {
+      address: z.string(), city: z.string().optional(), state: z.string().optional(),
+      tenant: z.string().optional(), is_portfolio: z.boolean().optional(),
+      lease_end: z.string().optional(), notes: z.string().optional(),
+    },
+  }, async (a) => {
+    const address = String(a.address || '').trim()
+    if (!address) return fail('address is required')
+    const existingId = findPropertyIdByAddr(address, a.city, a.state, '')
+    if (existingId) return ok({ deduped: true, ...db.prepare('SELECT id, address, city, state, is_portfolio, listing_status FROM properties WHERE id = ?').get(existingId) })
+    const tenantBrandId = a.tenant ? findOrCreateTenantBrand(a.tenant) : null
+    const r = db.prepare(`
+      INSERT INTO properties (address, city, state, tenant_brand_id, is_portfolio, lease_end, notes, addr_key)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(address, a.city || null, a.state || null, tenantBrandId, a.is_portfolio ? 1 : 0,
+           a.lease_end || null, a.notes || null, normalizeAddr(address, a.city || '', a.state || '', '') || null)
+    const id = Number(r.lastInsertRowid)
+    try { logActivity({ property_id: id, type: 'system', summary: 'Property created (claude)' }, ACTOR) } catch { /* noop */ }
+    return ok(db.prepare('SELECT id, address, city, state, is_portfolio, lease_end FROM properties WHERE id = ?').get(id))
+  })
+
+  server.registerTool('update_property', {
+    description: 'Update whitelisted property fields: tenant, lease_end, maturity_date, notes, listing_status (e.g. listed, under_contract). No address changes, merges or deletes. To mark a property sold use mark_property_sold (not listing_status=sold). Logs to the timeline.',
+    inputSchema: {
+      property_id: z.number(),
+      tenant: z.string().optional(), lease_end: z.string().optional(),
+      maturity_date: z.string().optional(), notes: z.string().optional(),
+      listing_status: z.string().optional(),
+    },
+  }, async (a) => {
+    const p = db.prepare('SELECT id FROM properties WHERE id = ?').get(a.property_id)
+    if (!p) return fail('Property not found')
+    if (a.listing_status && a.listing_status.toLowerCase() === 'sold')
+      return fail('Use mark_property_sold to record a sale (it sets the sold date + price and Historical).')
+    const sets = [], args = [], changed = []
+    if (a.tenant !== undefined) { sets.push('tenant_brand_id = ?'); args.push(a.tenant ? findOrCreateTenantBrand(a.tenant) : null); changed.push('tenant') }
+    for (const f of ['lease_end', 'maturity_date', 'notes', 'listing_status']) {
+      if (a[f] !== undefined) { sets.push(`${f} = ?`); args.push(a[f]); changed.push(f) }
+    }
+    if (!sets.length) return fail('No updatable fields provided')
+    args.push(a.property_id)
+    db.prepare(`UPDATE properties SET ${sets.join(', ')} WHERE id = ?`).run(...args)
+    try { logActivity({ property_id: a.property_id, type: 'note', summary: `Updated ${changed.join(', ')} (claude)` }, ACTOR) } catch { /* noop */ }
+    return ok(db.prepare('SELECT id, address, lease_end, maturity_date, listing_status FROM properties WHERE id = ?').get(a.property_id))
+  })
+
+  // Parties — contacts (People) with a role on a deal or property ────────────────
+  server.registerTool('list_parties', {
+    description: 'List the parties (contacts + roles) on a deal or property. Pass deal_id or property_id.',
+    inputSchema: { deal_id: z.number().optional(), property_id: z.number().optional() },
+  }, async (a) => {
+    if (!a.deal_id && !a.property_id) return fail('deal_id or property_id is required')
+    return ok(listParties(a))
+  })
+
+  server.registerTool('add_party', {
+    description: 'Add a contact to a deal or property with a role (buyer, seller, buyer_broker, listing_broker, title, escrow, lender, attorney, tenant_contact, contractor, insurer, other). Dedupes on email + entity: if the person is already on that deal/property, updates their record instead of adding a duplicate. Logs to the timeline.',
+    inputSchema: {
+      deal_id: z.number().optional(), property_id: z.number().optional(),
+      name: z.string(), company: z.string().optional(),
+      role: z.enum(['buyer', 'seller', 'buyer_broker', 'listing_broker', 'title', 'escrow', 'lender', 'attorney', 'tenant_contact', 'contractor', 'insurer', 'other']).optional(),
+      email: z.string().optional(), phone: z.string().optional(), notes: z.string().optional(),
+    },
+  }, async (a) => {
+    if (!a.deal_id && !a.property_id) return fail('deal_id or property_id is required')
+    if (!String(a.name || '').trim()) return fail('name is required')
+    if (a.deal_id && !db.prepare('SELECT id FROM deals WHERE id = ?').get(a.deal_id)) return fail('Deal not found')
+    if (a.property_id && !db.prepare('SELECT id FROM properties WHERE id = ?').get(a.property_id)) return fail('Property not found')
+    const personId = findOrCreatePerson({ name: a.name, email: a.email, phone: a.phone, notes: a.notes, company: a.company, role: a.role })
+    const col = a.deal_id ? 'deal_id' : 'property_id'
+    const entId = a.deal_id ?? a.property_id
+    const existing = db.prepare(`SELECT id FROM deal_parties WHERE ${col} = ? AND person_id = ?`).get(entId, personId)
+    if (existing) {
+      if (a.role) db.prepare('UPDATE deal_parties SET role = ? WHERE id = ?').run(a.role, existing.id)
+      return ok({ updated: true, ...listParties({ deal_id: a.deal_id, property_id: a.property_id }).find(x => x.id === existing.id) })
+    }
+    const r = addParty({ deal_id: a.deal_id, property_id: a.property_id, person_id: personId, role: a.role })
+    if (r.error) return fail(r.error)
+    try { logActivity({ deal_id: a.deal_id, property_id: a.property_id, type: 'note', summary: `Added ${a.role || 'party'} ${a.name} (claude)` }, ACTOR) } catch { /* noop */ }
+    return ok(listParties({ deal_id: a.deal_id, property_id: a.property_id }).find(x => x.id === r.party.id) || r.party)
+  })
+
+  server.registerTool('update_party', {
+    description: "Update a party's role, or the person's phone, company or notes. Pass party_id (from list_parties).",
+    inputSchema: {
+      party_id: z.number(), role: z.string().optional(),
+      phone: z.string().optional(), company: z.string().optional(), notes: z.string().optional(),
+    },
+  }, async (a) => {
+    const party = db.prepare('SELECT * FROM deal_parties WHERE id = ?').get(a.party_id)
+    if (!party) return fail('Party not found')
+    if (a.role !== undefined) db.prepare('UPDATE deal_parties SET role = ? WHERE id = ?').run(a.role, a.party_id)
+    const psets = [], pargs = []
+    if (a.phone !== undefined)   { psets.push('phone = ?');      pargs.push(a.phone || null) }
+    if (a.notes !== undefined)   { psets.push('notes = ?');      pargs.push(a.notes || null) }
+    if (a.company !== undefined) { psets.push('company_id = ?'); pargs.push(a.company ? findOrCreateCompany(a.company) : null) }
+    if (psets.length) { pargs.push(party.person_id); db.prepare(`UPDATE people SET ${psets.join(', ')} WHERE id = ?`).run(...pargs) }
+    return ok(listParties({ deal_id: party.deal_id, property_id: party.property_id }).find(x => x.id === a.party_id))
   })
 
   return server

@@ -64,7 +64,7 @@ const toStr   = v => v || null
 // fallback for any legacy row whose addr_key was never backfilled. This is the
 // single matcher every deal write path uses, so a deal, its portfolio property,
 // and its market record all resolve to the SAME properties.id — never a duplicate.
-function findPropertyIdByAddr(address, city, state, zip) {
+export function findPropertyIdByAddr(address, city, state, zip) {
   if (!address || !address.trim()) return null
   // Match zip-agnostically: deals carry no zip, but a property's addr_key is
   // [street|city|state|zip], so compare on the street|city|state prefix. An exact
@@ -99,18 +99,18 @@ router.get('/dropped', (req, res) => {
   res.json(db.prepare(SELECT + " WHERE d.status = 'dropped' ORDER BY d.id DESC").all())
 })
 
-router.post('/:id/close', (req, res) => {
-  console.log('[deals] POST /:id/close — id:', req.params.id)
-  const deal = dealResponse(req.params.id)   // includes tenants + rolled-up fields
-  if (!deal) return res.status(404).json({ error: 'Not found' })
+// Close a deal: a SALE just marks the deal closed (the Sale Closeout Wizard books
+// the sale to Historical on the property ledger next); a PURCHASE resolves-or-creates
+// the portfolio property, carries the deal's details over, and links the two. Shared
+// by the UI route below and the MCP close_deal tool so the two never drift apart.
+export function closeDeal(id) {
+  const deal = dealResponse(id)   // includes tenants + rolled-up fields
+  if (!deal) return { notFound: true }
 
-  // A SALE closes OUT of the portfolio — no purchase→portfolio migration. The
-  // actual booking (sale price, gain, net proceeds → Historical) is done by the
-  // Sale Closeout Wizard on the property's ledger, which the client opens next.
   if (deal.direction === 'sale') {
-    db.prepare("UPDATE deals SET status = 'closed' WHERE id = ?").run(req.params.id)
-    console.log('[deals] sale deal', req.params.id, 'marked closed → closeout for property', deal.property_id)
-    return res.json({ ok: true, direction: 'sale', property_id: deal.property_id || null })
+    db.prepare("UPDATE deals SET status = 'closed' WHERE id = ?").run(id)
+    console.log('[deals] sale deal', id, 'marked closed → closeout for property', deal.property_id)
+    return { ok: true, direction: 'sale', property_id: deal.property_id || null }
   }
 
   // Resolve (or create) the portfolio property, then carry the deal's details over.
@@ -133,15 +133,22 @@ router.post('/:id/close', (req, res) => {
     db.prepare('UPDATE properties SET is_portfolio = 1 WHERE id = ?').run(propertyId)
     // Persist the link back onto the deal so the two never drift apart.
     if (deal.property_id !== propertyId) {
-      db.prepare('UPDATE deals SET property_id = ? WHERE id = ?').run(propertyId, req.params.id)
+      db.prepare('UPDATE deals SET property_id = ? WHERE id = ?').run(propertyId, id)
     }
     try { migrateDealToProperty(deal, propertyId) }
     catch (e) { console.error('[deals] close migration failed:', e.message) }
   }
 
-  db.prepare("UPDATE deals SET status = 'closed' WHERE id = ?").run(req.params.id)
-  console.log('[deals] deal', req.params.id, 'marked closed → property', propertyId)
-  res.json({ ok: true, property_id: propertyId || null })
+  db.prepare("UPDATE deals SET status = 'closed' WHERE id = ?").run(id)
+  console.log('[deals] deal', id, 'marked closed → property', propertyId)
+  return { ok: true, direction: 'purchase', property_id: propertyId || null }
+}
+
+router.post('/:id/close', (req, res) => {
+  console.log('[deals] POST /:id/close — id:', req.params.id)
+  const r = closeDeal(req.params.id)
+  if (r.notFound) return res.status(404).json({ error: 'Not found' })
+  res.json({ ok: true, direction: r.direction, property_id: r.property_id || null })
 })
 
 // Rent-weighted WALT (years remaining) across a rent roll.
